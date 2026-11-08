@@ -30,6 +30,68 @@ interface Iterator {
     return SkipIter#[Self] { .inner = self, .remaining = count };
   }
 
+  pub fn any(self, pred: Fn(Item) bool) bool {
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => {
+          if (pred(item)) {
+            return true;
+          }
+        },
+        .None => { return false; },
+      }
+    }
+
+    return false;
+  }
+
+  pub fn all(self, pred: Fn(Item) bool) bool {
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => {
+          if (!pred(item)) {
+            return false;
+          }
+        },
+        .None => { return true; },
+      }
+    }
+
+    return true;
+  }
+
+  pub fn last_item(self) Option[Item] {
+    let last: Option[Item] = Option.None;
+
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => { last = Option.Some(item); },
+        .None => { break; },
+      }
+    }
+
+    return last;
+  }
+
+  pub fn nth(self, index: usize) Option[Item] {
+    let current: usize = 0;
+
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => {
+          if (current == index) {
+            return Option.Some(item);
+          }
+
+          current += 1;
+        },
+        .None => { return Option.None; },
+      }
+    }
+
+    return Option.None;
+  }
+
   pub fn collect[C: FromIterator](self) C where C.Item = Item {
     let out = C.empty();
 
