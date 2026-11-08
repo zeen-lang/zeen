@@ -79,6 +79,9 @@ pub struct TypeChecker<'res> {
     generic_assoc_bindings: HashMap<(DefId, DefId), TypeId>,
     generic_assoc_bounds: HashMap<(DefId, DefId), Vec<DefId>>,
     current_self_ty: Option<TypeId>,
+    current_impl_assoc_bindings: Option<HashMap<DefId, TypeId>>,
+    current_impl_interface: Option<DefId>,
+    fn_impl_assoc_bindings: HashMap<DefId, HashMap<DefId, TypeId>>,
 
     struct_generics: HashMap<DefId, Vec<DefId>>,
     struct_methods: HashMap<DefId, HashMap<Spur, Vec<DefId>>>,
@@ -241,6 +244,9 @@ impl<'res> TypeChecker<'res> {
             generic_assoc_bindings: HashMap::default(),
             generic_assoc_bounds: HashMap::default(),
             current_self_ty: None,
+            current_impl_assoc_bindings: None,
+            current_impl_interface: None,
+            fn_impl_assoc_bindings: HashMap::default(),
             struct_generics: HashMap::default(),
             struct_methods: HashMap::default(),
             enum_variants: HashMap::default(),
@@ -973,6 +979,26 @@ impl<'res> TypeChecker<'res> {
                 );
             }
 
+            let impl_assoc_bindings = imp.interface.and_then(|iface_def| {
+                self.result
+                    .impl_registry
+                    .get(&(object_def, iface_def))
+                    .and_then(|entries| {
+                        entries.iter().find(|entry| {
+                            entry.object_args.as_slice() == object_args
+                                && entry.interface_args.as_slice() == interface_args
+                                && entry.is_specialized == is_specialized
+                        })
+                    })
+                    .map(|entry| entry.assoc_bindings.clone())
+            });
+
+            let previous_impl_assoc_bindings = self.current_impl_assoc_bindings.take();
+            let previous_impl_interface = self.current_impl_interface;
+
+            self.current_impl_assoc_bindings = impl_assoc_bindings.clone();
+            self.current_impl_interface = imp.interface;
+
             for method in &imp.methods {
                 self.declare_signature(method);
 
@@ -990,12 +1016,19 @@ impl<'res> TypeChecker<'res> {
                             .insert(method.def_id, iface_def);
                     }
                 }
+
+                if let Some(bindings) = &impl_assoc_bindings {
+                    self.fn_impl_assoc_bindings
+                        .insert(method.def_id, bindings.clone());
+                }
             }
 
-            self.current_self_ty = previous_self_ty;
-        }
+            self.substitute_impl_self_types(imp, object_def, &object_args);
 
-        self.substitute_impl_self_types(imp, object_def, &object_args);
+            self.current_self_ty = previous_self_ty;
+            self.current_impl_assoc_bindings = previous_impl_assoc_bindings;
+            self.current_impl_interface = previous_impl_interface;
+        }
 
         let Some(iface_def) = imp.interface else {
             return;
@@ -1899,7 +1932,12 @@ impl<'res> TypeChecker<'res> {
         }
 
         let previous_self_ty = self.current_self_ty;
+        let previous_impl_assoc_bindings = self.current_impl_assoc_bindings.take();
+        let previous_impl_interface = self.current_impl_interface;
+
         self.current_self_ty = self_base_ty;
+        self.current_impl_assoc_bindings = self.fn_impl_assoc_bindings.get(&def_id).cloned();
+        self.current_impl_interface = self.method_owning_interface.get(&def_id).copied();
 
         self.ctx.push_fn(FnCtx {
             fn_def: def_id,
@@ -1940,6 +1978,8 @@ impl<'res> TypeChecker<'res> {
         self.ctx.pop_fn();
 
         self.current_self_ty = previous_self_ty;
+        self.current_impl_assoc_bindings = previous_impl_assoc_bindings;
+        self.current_impl_interface = previous_impl_interface;
 
         self.bodies_in_progress.remove(&def_id);
         self.bodies_checked.insert(def_id);
@@ -8594,6 +8634,23 @@ impl<'res> TypeChecker<'res> {
     }
 
     fn associated_binding(&mut self, base: TypeId, def: DefId) -> Option<TypeId> {
+        if self.current_self_ty == Some(base) {
+            if let Some(bindings) = &self.current_impl_assoc_bindings
+                && let Some(bound) = bindings.get(&def)
+            {
+                return Some(*bound);
+            }
+
+            if let Some(iface) = self.current_impl_interface
+                && matches!(
+                    self.resolution.defs.get(&def).map(|info| &info.kind),
+                    Some(DefKind::AssociatedType { interface }) if *interface == iface
+                )
+            {
+                return None;
+            }
+        }
+
         match self.result.interner.get(base).clone() {
             Type::GenericParam(g) => self.generic_assoc_bindings.get(&(g, def)).copied(),
 
@@ -8773,6 +8830,14 @@ impl<'res> TypeChecker<'res> {
             .cloned()
             .unwrap_or_default();
 
+        let previous_self_ty = self.current_self_ty;
+        let previous_impl_assoc_bindings = self.current_impl_assoc_bindings.take();
+        let previous_impl_interface = self.current_impl_interface;
+
+        self.current_self_ty = Some(self_ty);
+        self.current_impl_assoc_bindings = Some(HashMap::default());
+        self.current_impl_interface = Some(iface_def);
+
         let mut raw: HashMap<DefId, TypeId> = HashMap::default();
         let mut spans: HashMap<DefId, SourceSpan> = HashMap::default();
 
@@ -8874,6 +8939,10 @@ impl<'res> TypeChecker<'res> {
         {
             entry.assoc_bindings = bindings;
         }
+
+        self.current_self_ty = previous_self_ty;
+        self.current_impl_assoc_bindings = previous_impl_assoc_bindings;
+        self.current_impl_interface = previous_impl_interface;
     }
 
     fn assoc_reference_edges(
@@ -10602,6 +10671,27 @@ impl<'res> TypeChecker<'res> {
             })
         };
 
+        let impl_assoc_bindings = self
+            .result
+            .impl_registry
+            .get(&(object_def, iface_def))
+            .and_then(|entries| {
+                entries.iter().find(|entry| {
+                    entry.object_args.as_slice() == sig_ctx.object_args
+                        && entry.interface_args.as_slice() == sig_ctx.interface_args
+                        && entry.is_specialized == sig_ctx.is_specialized
+                })
+            })
+            .map(|entry| entry.assoc_bindings.clone());
+
+        let previous_self_ty = self.current_self_ty;
+        let previous_impl_assoc_bindings = self.current_impl_assoc_bindings.take();
+        let previous_impl_interface = self.current_impl_interface;
+
+        self.current_self_ty = Some(self_ty);
+        self.current_impl_assoc_bindings = impl_assoc_bindings;
+        self.current_impl_interface = Some(iface_def);
+
         let mut impl_method_names: HashMap<String, DefId> = HashMap::default();
         for method in impl_methods {
             if let Some(name) = self.def_name(*method) {
@@ -10705,6 +10795,10 @@ impl<'res> TypeChecker<'res> {
                 }
             }
         }
+
+        self.current_self_ty = previous_self_ty;
+        self.current_impl_assoc_bindings = previous_impl_assoc_bindings;
+        self.current_impl_interface = previous_impl_interface;
     }
 
     fn register_default_method(
@@ -16509,6 +16603,100 @@ mod tests {
         assert_eq!(result.fn_item_monos.len(), 1);
         let args = result.fn_item_monos.values().next().expect("one entry");
         assert_eq!(args.len(), 1);
+    }
+
+    #[test]
+    fn multi_impl_binds_associated_type_per_interface_args() {
+        typecheck(
+            r#"
+            interface[T] Sink {
+                alias Item;
+
+                pub fn item(*self) Item;
+            }
+
+            struct Box {
+                value: i32,
+            }
+
+            implement Sink[i32] : Box {
+                alias Item = i32;
+
+                fn item(*self) Item {
+                    return 1;
+                }
+            }
+
+            implement Sink[f64] : Box {
+                alias Item = f64;
+
+                fn item(*self) Item {
+                    return 1.5;
+                }
+            }
+
+            fn main() {
+                let box = Box { .value = 0 };
+                let ints: i32 = box.item();
+                let floats: f64 = box.item();
+            }
+            "#,
+        )
+        .expect("each impl must bind its own associated type");
+    }
+
+    #[test]
+    fn multi_impl_resolves_sibling_associated_defaults() {
+        typecheck(
+            r#"
+            interface[T] Pair {
+                alias Item;
+                alias Wrapped;
+
+                pub fn item(*self) Item;
+                pub fn wrapped(*self) Wrapped;
+            }
+
+            struct Box {
+                value: i32,
+            }
+
+            implement Pair[i32] : Box {
+                alias Item = i32;
+                alias Wrapped = Item;
+
+                fn item(*self) Item {
+                    return 1;
+                }
+
+                fn wrapped(*self) Wrapped {
+                    return 11;
+                }
+            }
+
+            implement Pair[f64] : Box {
+                alias Item = f64;
+                alias Wrapped = Item;
+
+                fn item(*self) Item {
+                    return 1.5;
+                }
+
+                fn wrapped(*self) Wrapped {
+                    return 11.5;
+                }
+            }
+
+            fn main() {
+                let box = Box { .value = 0 };
+                let ints: i32 = box.item();
+                let floats: f64 = box.item();
+                let wrapped_ints: i32 = box.wrapped();
+                let wrapped_floats: f64 = box.wrapped();
+            }
+            "#,
+        )
+        .expect("sibling associated aliases must resolve inside their own impl");
     }
 
     #[test]
