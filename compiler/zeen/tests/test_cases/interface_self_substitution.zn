@@ -1,0 +1,74 @@
+interface Walker {
+    alias Item;
+
+    pub fn next(*self) Option[Item];
+
+    pub fn for_each(*self, f: Fn(Item) void) {
+        while (true) {
+            switch (self.next()) {
+                .Some(value) => { f(value); }
+                .None => { break; }
+            }
+        }
+    }
+}
+
+interface Filler {
+    alias Item;
+
+    pub fn write(*self, out: [*]Item) void;
+}
+
+interface Container {
+    pub fn wrap(*const self) Wrap[Self] {
+        return Wrap#[Self] { .inner = *self };
+    }
+}
+
+struct Wrap[T] {
+    pub inner: T,
+}
+
+struct Counter {
+    pub value: i32,
+}
+
+implement Walker : Counter {
+    alias Item = i32;
+
+    fn next(*self) Option[i32] {
+        if (self.value >= 3) {
+            return Option.None;
+        }
+
+        self.value += 1;
+
+        return Option.Some(self.value);
+    }
+}
+
+implement Filler : Counter {
+    alias Item = i32;
+
+    fn write(*self, out: [*]i32) void {
+        out[0] = self.value;
+    }
+}
+
+implement Container : Counter {}
+
+fn main() {
+    let counter = Counter { .value = 0 };
+
+    counter.for_each(fn(value: i32) void {
+        @println("{}", value);
+    });
+
+    let wrapped = counter.wrap();
+    @println("{}", wrapped.inner.value);
+
+    let values: [1]i32 = {0};
+
+    counter.write(@as([*]i32, &values[0]));
+    @println("{}", values[0]);
+}

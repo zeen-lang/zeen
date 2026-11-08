@@ -13290,6 +13290,27 @@ mod tests {
     }
 
     #[test]
+    fn struct_init_with_non_type_expression_is_reported() {
+        let errors = typecheck(
+            r#"
+            struct Foo {
+                value: i32,
+            }
+
+            fn main() {
+                let foo = Foo[1] { .value = 3 };
+            }
+            "#,
+        )
+        .expect_err("non type struct init target must fail");
+
+        assert!(
+            matches!(errors.first(), Some(TypeError::StructInitNotAType { .. })),
+            "expected struct init type error, got {errors:?}"
+        );
+    }
+
+    #[test]
     fn annotated_let_pins_associated_call_generics() {
         let result = typecheck(
             r#"
@@ -16523,6 +16544,75 @@ mod tests {
             "#,
         )
         .expect("projection through a bound must typecheck");
+    }
+
+    #[test]
+    fn default_method_substitutes_self_inside_fat_fn_param() {
+        typecheck_full(
+            r#"
+            interface Source {
+                alias Item;
+
+                pub fn read(*self) Item;
+
+                pub fn emit(*self, f: Fn(Item) void) {
+                    f(self.read());
+                }
+            }
+
+            struct Number {
+                value: i32,
+            }
+
+            implement Source : Number {
+                alias Item = i32;
+
+                fn read(*self) Item {
+                    return self.value;
+                }
+            }
+
+            fn main() {
+                let number = Number { .value = 3 };
+
+                number.emit(fn(value: i32) void { });
+            }
+            "#,
+        )
+        .expect("default method must substitute Self inside a fat fn parameter");
+    }
+
+    #[test]
+    fn default_method_substitutes_self_inside_many_pointer_param() {
+        typecheck(
+            r#"
+            interface Filler {
+                alias Item;
+
+                pub fn write(*self, out: [*]Item) void;
+            }
+
+            struct Number {
+                value: i32,
+            }
+
+            implement Filler : Number {
+                alias Item = i32;
+
+                fn write(*self, out: [*]i32) void {
+                    out[0] = self.value;
+                }
+            }
+
+            fn main() {
+                let number = Number { .value = 3 };
+                let values: [4]i32 = {0; 4};
+
+                number.write(@as([*]i32, &values[0]));
+            }
+            "#,
+        )
+        .expect("interface method must substitute Self inside a many pointer parameter");
     }
 
     #[test]
