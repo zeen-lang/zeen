@@ -159,6 +159,19 @@ pub enum TypeError {
         span: SourceSpan,
     },
 
+    #[error("struct init needs a struct or enum type")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::struct_init_not_a_type),
+        help("use `Type {{ ... }}` or `Type#[Args] {{ ... }}`")
+    )]
+    StructInitNotAType {
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
     #[error("`{object}` has no method `{name}`")]
     #[diagnostic(severity(Error), code(zeen::typechecker::unknown_method))]
     UnknownMethod {

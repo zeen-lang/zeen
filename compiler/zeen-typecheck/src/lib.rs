@@ -4115,9 +4115,15 @@ impl<'res> TypeChecker<'res> {
         expected: Option<TypeId>,
     ) -> TypeId {
         let Some(def_id) = ty_def else {
+            self.report(TypeError::StructInitNotAType {
+                src: init_source.src(),
+                span: ty_span,
+            });
+
             for f in fields {
                 self.synth_expr(&f.value);
             }
+
             return self.result.interner.error();
         };
 
