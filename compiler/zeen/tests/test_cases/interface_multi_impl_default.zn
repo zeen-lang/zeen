@@ -1,0 +1,37 @@
+interface[T] Source {
+  alias Item;
+
+  pub fn read(*self) Item;
+
+  pub fn twice(*self) Item {
+    return self.read();
+  }
+}
+
+struct Box {
+  pub value: i32,
+}
+
+implement Source[i32] : Box {
+  alias Item = i32;
+
+  fn read(*self) Item {
+    return self.value;
+  }
+}
+
+implement Source[f64] : Box {
+  alias Item = f64;
+
+  fn read(*self) Item {
+    return @as(f64, self.value) * 1.5;
+  }
+}
+
+fn main() {
+  const box: Box = .{ .value = 7 };
+  const ints: i32 = box.twice();
+  const floats: f64 = box.twice();
+
+  @println("{} {}", ints, floats);
+}

@@ -6597,6 +6597,13 @@ impl<'res> TypeChecker<'res> {
             }
 
             if let Some(entry) = &selected_entry {
+                for (assoc, bound) in &entry.assoc_bindings {
+                    let bound = self.substitute_generics(*bound, &call_bindings);
+                    call_bindings.insert(*assoc, bound);
+                }
+            }
+
+            if let Some(entry) = &selected_entry {
                 for g in &entry.generics {
                     let value = call_bindings
                         .get(g)
@@ -6617,6 +6624,14 @@ impl<'res> TypeChecker<'res> {
 
         let owner = iface_def.map(|_| struct_def);
 
+        if iface_def.is_some()
+            && let Some(entry) = &selected_entry
+        {
+            self.result
+                .default_call_impl_methods
+                .insert(call_id, entry.methods.clone());
+        }
+
         self.result.call_resolutions.insert(
             call_id,
             CallResolution {
@@ -6628,7 +6643,21 @@ impl<'res> TypeChecker<'res> {
             },
         );
 
-        let ret = self.substitute_generics(sig_ret, &bindings);
+        let ret = match iface_def {
+            Some(iface_def) => {
+                let self_ty = self.method_self_type(struct_def, &struct_generic_args);
+                let assoc_bindings = selected_entry
+                    .as_ref()
+                    .map(|entry| entry.assoc_bindings.clone());
+
+                self.with_impl_assoc_scope(self_ty, Some(iface_def), assoc_bindings, |this| {
+                    let ret = this.substitute_generics(sig_ret, &bindings);
+                    this.substitute_generics(ret, &bindings)
+                })
+            }
+
+            None => self.substitute_generics(sig_ret, &bindings),
+        };
 
         Some(self.normalize_associated(ret))
     }
@@ -9502,6 +9531,30 @@ impl<'res> TypeChecker<'res> {
         bindings
     }
 
+    fn with_impl_assoc_scope<R>(
+        &mut self,
+        self_ty: TypeId,
+        iface_def: Option<DefId>,
+        assoc_bindings: Option<HashMap<DefId, TypeId>>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let previous_self_ty = self.current_self_ty;
+        let previous_bindings = self.current_impl_assoc_bindings.take();
+        let previous_iface = self.current_impl_interface;
+
+        self.current_self_ty = Some(self_ty);
+        self.current_impl_assoc_bindings = assoc_bindings;
+        self.current_impl_interface = iface_def;
+
+        let value = f(self);
+
+        self.current_self_ty = previous_self_ty;
+        self.current_impl_assoc_bindings = previous_bindings;
+        self.current_impl_interface = previous_iface;
+
+        value
+    }
+
     fn resolve_binding(&self, ty: TypeId, bindings: &HashMap<DefId, TypeId>) -> TypeId {
         let mut current = ty;
         let mut seen: HashSet<DefId> = HashSet::default();
@@ -9824,17 +9877,29 @@ impl<'res> TypeChecker<'res> {
                 self.seed_inference_bindings(sig_ret, expected, &mut bindings);
             }
 
+            let assoc_bindings = entry.as_ref().map(|entry| entry.assoc_bindings.clone());
+
             let args_fit = user_params.iter().zip(args.iter()).all(|(&param_ty, arg)| {
                 let Some(&arg_ty) = self.result.expr_types.get(&arg.id) else {
                     return true;
                 };
-                let param_ty = self.substitute_generics(param_ty, &bindings);
+                let param_ty = self.with_impl_assoc_scope(
+                    self_ty,
+                    iface_def,
+                    assoc_bindings.clone(),
+                    |this| this.substitute_generics(param_ty, &bindings),
+                );
 
                 try_coerce(&mut self.result.interner, arg_ty, param_ty).is_ok()
             });
 
             let ret_fit = expected.is_none_or(|expected| {
-                let ret = self.substitute_generics(sig_ret, &bindings);
+                let ret = self.with_impl_assoc_scope(
+                    self_ty,
+                    iface_def,
+                    assoc_bindings.clone(),
+                    |this| this.substitute_generics(sig_ret, &bindings),
+                );
 
                 try_coerce(&mut self.result.interner, ret, expected).is_ok()
             });
@@ -16697,6 +16762,50 @@ mod tests {
             "#,
         )
         .expect("sibling associated aliases must resolve inside their own impl");
+    }
+
+    #[test]
+    fn multi_impl_default_method_calls_own_associated_impl() {
+        typecheck(
+            r#"
+            interface[T] Source {
+                alias Item;
+
+                pub fn read(*self) Item;
+
+                pub fn twice(*self) Item {
+                    return self.read();
+                }
+            }
+
+            struct Box {
+                value: i32,
+            }
+
+            implement Source[i32] : Box {
+                alias Item = i32;
+
+                fn read(*self) Item {
+                    return self.value;
+                }
+            }
+
+            implement Source[f64] : Box {
+                alias Item = f64;
+
+                fn read(*self) Item {
+                    return @as(f64, self.value);
+                }
+            }
+
+            fn main() {
+                let box = Box { .value = 7 };
+                let ints: i32 = box.twice();
+                let floats: f64 = box.twice();
+            }
+            "#,
+        )
+        .expect("default method must dispatch to the impl matching its interface args");
     }
 
     #[test]

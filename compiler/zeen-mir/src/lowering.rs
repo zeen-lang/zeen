@@ -161,6 +161,10 @@ pub struct MirLowering<'ctx> {
     program: MirProgram,
     mono_cache: MonoCache,
 
+    current_assoc_bindings: Option<HashMap<DefId, TypeId>>,
+    current_impl_methods: Option<Vec<DefId>>,
+    current_impl_interface: Option<DefId>,
+
     errors: Vec<MirError>,
     warnings: Vec<MirWarning>,
 
@@ -212,7 +216,14 @@ pub struct MonoCache {
     next_id: u32,
 }
 
-type MonoKey = (DefId, Option<DefId>, Vec<TypeId>, Vec<TypeId>);
+type MonoKey = (
+    DefId,
+    Option<DefId>,
+    Vec<TypeId>,
+    Vec<TypeId>,
+    Vec<(DefId, TypeId)>,
+    Vec<DefId>,
+);
 
 impl MonoCache {
     pub fn new() -> Self {
@@ -375,6 +386,9 @@ impl<'ctx> MirLowering<'ctx> {
             module,
             program: MirProgram::default(),
             mono_cache: MonoCache::new(),
+            current_assoc_bindings: None,
+            current_impl_methods: None,
+            current_impl_interface: None,
             hir_fns_by_def,
             fn_stack: Vec::new(),
             fat_adapter_cache: HashMap::default(),
@@ -1917,6 +1931,12 @@ impl<'ctx> MirLowering<'ctx> {
     }
 
     fn associated_binding_for(&mut self, base: TypeId, def: DefId) -> Option<TypeId> {
+        if let Some(bindings) = &self.current_assoc_bindings
+            && let Some(bound) = bindings.get(&def)
+        {
+            return Some(*bound);
+        }
+
         match self.typecheck.interner.get(base).clone() {
             Type::GenericParam(g) => self
                 .typecheck
@@ -4438,8 +4458,32 @@ impl<'ctx> MirLowering<'ctx> {
                 let raw_bindings = resolution.bindings.clone();
                 let resolution_interface_args = resolution.interface_args.clone();
                 let raw_args = resolution.generic_args.clone();
-                let resolution_bindings =
-                    raw_bindings.map(|bindings| self.substitute_call_bindings(fb, bindings));
+                let interface_self_receiver = match &callee.kind {
+                    HirExprKind::FieldAccess { object, .. } => self
+                        .typecheck
+                        .expr_types
+                        .get(&object.id)
+                        .is_some_and(|&ty| {
+                            let inner = match self.typecheck.interner.get(ty) {
+                                Type::Pointer { inner, .. } => *inner,
+                                _ => ty,
+                            };
+                            matches!(
+                                self.typecheck.interner.get(inner),
+                                Type::InterfaceSelfPlaceholder(_)
+                            )
+                        }),
+                    _ => false,
+                };
+                let resolution_bindings = raw_bindings
+                    .map(|bindings| self.substitute_call_bindings(fb, bindings))
+                    .or_else(|| {
+                        let interface_method =
+                            self.typecheck.interface_method_owners.contains_key(&fn_def);
+
+                        (interface_method && interface_self_receiver && !fb.bindings.is_empty())
+                            .then(|| self.substitute_call_bindings(fb, fb.bindings.clone()))
+                    });
                 let generic_args = self.substitute_generic_args(fb, &raw_args);
 
                 let mut dispatch_owner: Option<DefId> = None;
@@ -4505,6 +4549,25 @@ impl<'ctx> MirLowering<'ctx> {
 
                             let concrete = if let Some((struct_def, recv_args)) = recv_target {
                                 iface_def.and_then(|iface_def| {
+                                    if self.current_impl_interface == Some(iface_def)
+                                        && let Some(methods) = &self.current_impl_methods
+                                    {
+                                        let resolved = methods.iter().copied().find(|&def| {
+                                            self.resolution
+                                                .defs
+                                                .get(&def)
+                                                .map(|info| {
+                                                    self.rodeo.borrow().resolve(&info.name)
+                                                        == method_name.as_str()
+                                                })
+                                                .unwrap_or(false)
+                                        });
+
+                                        if let Some(method) = resolved {
+                                            return Some((method, recv_args.clone()));
+                                        }
+                                    }
+
                                     let iface_name = self
                                         .rodeo
                                         .borrow()
@@ -4595,6 +4658,12 @@ impl<'ctx> MirLowering<'ctx> {
                     }
                 }
 
+                let impl_methods = self
+                    .typecheck
+                    .default_call_impl_methods
+                    .get(&call_id)
+                    .cloned();
+
                 let call_target = self.resolve_call_target(
                     fn_def,
                     generic_args,
@@ -4602,6 +4671,7 @@ impl<'ctx> MirLowering<'ctx> {
                     &fat_args,
                     owner,
                     resolution_bindings,
+                    impl_methods,
                 );
 
                 let mut arg_operands = Vec::with_capacity(args.len() + 1);
@@ -5053,6 +5123,7 @@ impl<'ctx> MirLowering<'ctx> {
                         None,
                         &[],
                         Some(override_bindings),
+                        None,
                     ),
                     None => self.monomorphize_fn(*def_id, Vec::new(), None, &[]),
                 };
@@ -10144,6 +10215,7 @@ impl<'ctx> MirLowering<'ctx> {
             owner_struct,
             fat_args,
             Option::<HashMap<DefId, TypeId>>::None,
+            None,
         )
     }
 
@@ -10154,6 +10226,7 @@ impl<'ctx> MirLowering<'ctx> {
         owner_struct: Option<DefId>,
         fat_args: &[TypeId],
         bindings_override: Option<HashMap<DefId, TypeId>>,
+        impl_methods: Option<Vec<DefId>>,
     ) -> MirFunctionId {
         let hir_fn = if let Some(hir_fn) = self.hir_fns_by_def.get(&def_id) {
             hir_fn.clone()
@@ -10163,11 +10236,22 @@ impl<'ctx> MirLowering<'ctx> {
                 .cloned()
                 .expect("monomorphize_fn: function not found")
         };
+        let mut assoc_key: Vec<(DefId, TypeId)> = bindings_override
+            .as_ref()
+            .map(|bindings| bindings.iter().map(|(&def, &ty)| (def, ty)).collect())
+            .unwrap_or_default();
+        assoc_key.sort_unstable_by_key(|(def, ty)| (def.0, ty.0));
+
+        let mut method_key = impl_methods.clone().unwrap_or_default();
+        method_key.sort_unstable_by_key(|def| def.0);
+
         let key = (
             def_id,
             owner_struct,
             generic_args.clone(),
             fat_args.to_vec(),
+            assoc_key,
+            method_key,
         );
 
         if let Some(&existing) = self.mono_cache.cache.get(&key) {
@@ -10207,6 +10291,7 @@ impl<'ctx> MirLowering<'ctx> {
             owner_struct,
             fat_args,
             bindings_override,
+            impl_methods,
         );
         for local in &mir_func.locals {
             match self.typecheck.interner.get(local.ty).clone() {
@@ -10333,6 +10418,7 @@ impl<'ctx> MirLowering<'ctx> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn lower_fn_body(
         &mut self,
         def_id: DefId,
@@ -10341,6 +10427,7 @@ impl<'ctx> MirLowering<'ctx> {
         owner_struct: Option<DefId>,
         fat_args: &[TypeId],
         bindings_override: Option<HashMap<DefId, TypeId>>,
+        impl_methods: Option<Vec<DefId>>,
     ) -> MirFunction {
         let generic_defs: Vec<DefId> = hir_fn.generics.iter().map(|g| g.def_id).collect();
         let has_override = bindings_override.is_some();
@@ -10408,6 +10495,21 @@ impl<'ctx> MirLowering<'ctx> {
             .get(&def_id)
             .copied()
             .expect("function must have recorded fn type");
+
+        let previous_assoc_bindings = self.current_assoc_bindings.replace(bindings.clone());
+
+        let own_interface = self.typecheck.interface_method_owners.get(&def_id).copied();
+        let previous_impl_methods = self.current_impl_methods.clone();
+        let previous_impl_interface = self.current_impl_interface;
+
+        self.current_impl_interface = own_interface;
+        self.current_impl_methods = match impl_methods {
+            Some(methods) => Some(methods),
+            None if own_interface.is_some() && own_interface == previous_impl_interface => {
+                previous_impl_methods.clone()
+            }
+            None => None,
+        };
 
         let raw_ret_ty = match self.typecheck.interner.get(fn_ty) {
             Type::Fn { ret, .. } => *ret,
@@ -10507,6 +10609,9 @@ impl<'ctx> MirLowering<'ctx> {
 
         let Some(body) = &hir_fn.body else {
             fb.set_terminator(entry, Terminator::Unreachable);
+            self.current_assoc_bindings = previous_assoc_bindings;
+            self.current_impl_methods = previous_impl_methods;
+            self.current_impl_interface = previous_impl_interface;
             return fb.func;
         };
 
@@ -10582,6 +10687,10 @@ impl<'ctx> MirLowering<'ctx> {
         };
 
         let _ = final_block;
+
+        self.current_assoc_bindings = previous_assoc_bindings;
+        self.current_impl_methods = previous_impl_methods;
+        self.current_impl_interface = previous_impl_interface;
 
         fb.func
     }
@@ -10777,6 +10886,7 @@ impl<'ctx> MirLowering<'ctx> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn resolve_call_target(
         &mut self,
         fn_def: DefId,
@@ -10785,6 +10895,7 @@ impl<'ctx> MirLowering<'ctx> {
         fat_args: &[TypeId],
         owner: Option<DefId>,
         bindings_override: Option<HashMap<DefId, TypeId>>,
+        impl_methods: Option<Vec<DefId>>,
     ) -> CallTarget {
         if hir_fn.is_extern && hir_fn.body.is_none() {
             let idx = self.register_extern_fn(fn_def, hir_fn);
@@ -10796,6 +10907,7 @@ impl<'ctx> MirLowering<'ctx> {
                 owner,
                 fat_args,
                 bindings_override,
+                impl_methods,
             );
             CallTarget::Direct(mir_id)
         }

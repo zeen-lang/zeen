@@ -48,6 +48,7 @@ pub struct TypeCheckResult {
     pub interface_method_owners: HashMap<DefId, DefId>,
     pub for_iterator_next_methods: HashMap<HirId, DefId>,
     pub default_method_bindings: HashMap<(DefId, DefId), HashMap<DefId, TypeId>>,
+    pub default_call_impl_methods: HashMap<HirId, Vec<DefId>>,
 }
 
 #[derive(Debug, Clone)]
