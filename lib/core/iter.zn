@@ -1,10 +1,114 @@
 // @zeen-core
 
+interface FromIterator {
+  alias Item;
+
+  pub fn empty() Self;
+
+  pub fn push(*self, item: Item);
+}
+
 /// Main Iterator interface
 interface Iterator {
   alias Item;
 
   pub fn next(*self) Option[Item];
+
+  pub fn map[U](self, f: Fn(Item) U) MapIter[Self, U] {
+    return MapIter#[Self, U] { .inner = self, .f = f };
+  }
+
+  pub fn filter(self, pred: Fn(Item) bool) FilterIter[Self] {
+    return FilterIter#[Self] { .inner = self, .pred = pred };
+  }
+
+  pub fn collect[C: FromIterator](self) C where C.Item = Item {
+    let out = C.empty();
+
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => { out.push(item); },
+        .None => { break; },
+      }
+    }
+
+    return out;
+  }
+
+  pub fn count(self) usize {
+    let total: usize = 0;
+
+    while (true) {
+      switch (self.next()) {
+        .Some(_) => { total += 1; },
+        .None => { break; },
+      }
+    }
+
+    return total;
+  }
+
+  pub fn for_each(self, f: Fn(Item) void) {
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => { f(item); },
+        .None => { break; },
+      }
+    }
+  }
+
+  pub fn fold[Acc](self, init: Acc, f: Fn(Acc, Item) Acc) Acc {
+    let acc = init;
+
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => { acc = f(acc, item); },
+        .None => { break; },
+      }
+    }
+
+    return acc;
+  }
+}
+
+pub struct MapIter[I: Iterator, U] {
+  inner: I,
+  f: Fn(I.Item) U,
+}
+
+pub struct FilterIter[I: Iterator] {
+  inner: I,
+  pred: Fn(I.Item) bool,
+}
+
+implement[I: Iterator, U] Iterator : MapIter[I, U] {
+  alias Item = U;
+
+  fn next(*self) Option[U] {
+    switch (self.inner.next()) {
+      .Some(item) => { return Option.Some((self.f)(item)); },
+      .None => { return Option.None; },
+    }
+  }
+}
+
+implement[I: Iterator] Iterator : FilterIter[I] {
+  alias Item = I.Item;
+
+  fn next(*self) Option[I.Item] {
+    while (true) {
+      switch (self.inner.next()) {
+        .Some(item) => {
+          if ((self.pred)(item)) {
+            return Option.Some(item);
+          }
+        },
+        .None => { return Option.None; },
+      }
+    }
+
+    return Option.None;
+  }
 }
 
 /// Returns struct that implements `Iterator` with pointer access
