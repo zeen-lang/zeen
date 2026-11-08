@@ -1,0 +1,31 @@
+use std.string;
+use std.collections.list;
+
+fn main() {
+  let nums = List#[i32].new();
+  nums.push(1);
+  nums.push(2);
+  nums.push(3);
+  nums.push(4);
+
+  const evens: List[i32] = nums
+    .iter()
+    .map(fn(x: *i32) i32 { return *x * 2; })
+    .filter(fn(x: i32) bool { return x > 4; })
+    .collect();
+
+  @println("len={} count={}", evens.len(), nums.iter().count());
+
+  const total = nums.iter().fold(0, fn(acc: i32, x: *i32) i32 { return acc + *x; });
+  @println("fold={}", total);
+
+  nums.iter().for_each(fn(x: *i32) void { @println("each={}", *x); });
+
+  const chars = List#[char].new();
+  chars.push('a');
+  chars.push('b');
+  chars.push('c');
+
+  const text: String = chars.into_iter().collect();
+  @println("text={}", text);
+}
