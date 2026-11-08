@@ -41,7 +41,7 @@ fn first[I: Iterator](iter: *I) Option[I.Item] {
 }
 
 fn sum[I: Iterator](iter: *I) i32
-where I.Item = i32 {
+  where I.Item = i32 {
     let total: i32 = 0;
 
     while (true) {

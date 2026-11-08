@@ -92,7 +92,8 @@ interface Iterator {
     return Option.None;
   }
 
-  pub fn collect[C: FromIterator](self) C where C.Item = Item {
+  pub fn collect[C: FromIterator](self) C
+    where C.Item = Item {
     let out = C.empty();
 
     while (true) {
