@@ -29,6 +29,19 @@ fn main() {
   nums.iter().take(2).for_each(fn(x: *i32) void { @println("take={}", *x); });
   nums.iter().skip(2).for_each(fn(x: *i32) void { @println("skip={}", *x); });
 
+  @println("any={} all={}", nums.iter().any(fn(x: *i32) bool { return *x > 3; }), nums.iter().all(fn(x: *i32) bool { return *x > 0; }));
+  @println("any_none={} all_none={}", nums.iter().any(fn(x: *i32) bool { return *x > 9; }), nums.iter().all(fn(x: *i32) bool { return *x > 9; }));
+
+  switch (nums.iter().last_item()) {
+    .Some(x) => { @println("last={}", *x); },
+    .None => { @println("last=none"); },
+  }
+
+  switch (nums.iter().nth(2)) {
+    .Some(x) => { @println("nth={}", *x); },
+    .None => { @println("nth=none"); },
+  }
+
   let words = List#[String].new();
   words.push(String.from("a"));
   words.push(String.from("b"));
@@ -41,4 +54,13 @@ fn main() {
 
   const text: String = chars.into_iter().collect();
   @println("text={}", text);
+
+  let letters = List#[String].new();
+  letters.push(String.from("a"));
+  letters.push(String.from("b"));
+
+  switch (letters.into_iter().last_item()) {
+    .Some(word) => { @println("word={}", word); },
+    .None => { @println("word=none"); },
+  }
 }
