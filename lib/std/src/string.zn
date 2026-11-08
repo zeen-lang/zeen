@@ -857,7 +857,7 @@ implement IndexPtr : String {
 }
 
 implement Sliceable : String {
-  fn slice(*self, range: Range) []char {
+  fn slice(*const self, range: Range) []char {
     const start = if (range.start.is_some()) {
       range.start.unwrap()
     } else {

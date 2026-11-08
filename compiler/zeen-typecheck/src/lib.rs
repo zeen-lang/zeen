@@ -5227,6 +5227,39 @@ impl<'res> TypeChecker<'res> {
         }
     }
 
+    fn check_receiver_mutability(
+        &mut self,
+        object: &HirExpr,
+        self_mode: Option<SelfMode>,
+        receiver_is_ptr: bool,
+        ptr_is_const: bool,
+        span: SourceSpan,
+        source: &Source,
+    ) {
+        if matches!(
+            self_mode,
+            Some(SelfMode::Value) | Some(SelfMode::ValueConst)
+        ) {
+            if receiver_is_ptr {
+                self.report(TypeError::CannotMoveThroughPointer {
+                    src: source.src(),
+                    span,
+                });
+            }
+
+            return;
+        }
+
+        if matches!(self_mode, Some(SelfMode::RefMut))
+            && ((receiver_is_ptr && ptr_is_const) || self.find_const_violation(object))
+        {
+            self.report(TypeError::AssignToConst {
+                src: source.src(),
+                span,
+            });
+        }
+    }
+
     fn find_struct_def(&self, struct_name: &str) -> Option<DefId> {
         let name = self.interner.borrow().get(struct_name)?;
         self.resolution.type_def_by_name(name, &[DefKind::Struct])
@@ -5679,23 +5712,14 @@ impl<'res> TypeChecker<'res> {
         let has_self = sig.self_mode.is_some();
         let self_mode = sig.self_mode;
 
-        if recv_is_ptr {
-            match self_mode {
-                Some(SelfMode::Value) | Some(SelfMode::ValueConst) => {
-                    self.report(TypeError::CannotMoveThroughPointer {
-                        src: source.src(),
-                        span: field.1,
-                    });
-                }
-                Some(SelfMode::RefMut) if recv_ptr_is_const => {
-                    self.report(TypeError::AssignToConst {
-                        src: source.src(),
-                        span: field.1,
-                    });
-                }
-                _ => {}
-            }
-        }
+        self.check_receiver_mutability(
+            object,
+            self_mode,
+            recv_is_ptr,
+            recv_ptr_is_const,
+            field.1,
+            &source,
+        );
 
         let expected_args = sig_params.len() - usize::from(has_self);
         if args.len() != expected_args {
@@ -5805,23 +5829,14 @@ impl<'res> TypeChecker<'res> {
         let self_mode = sig.self_mode;
         let has_self = self_mode.is_some();
 
-        if recv_is_ptr {
-            match self_mode {
-                Some(SelfMode::Value) | Some(SelfMode::ValueConst) => {
-                    self.report(TypeError::CannotMoveThroughPointer {
-                        src: source.src(),
-                        span: field_span,
-                    });
-                }
-                Some(SelfMode::RefMut) if recv_ptr_is_const => {
-                    self.report(TypeError::AssignToConst {
-                        src: source.src(),
-                        span: field_span,
-                    });
-                }
-                _ => {}
-            }
-        }
+        self.check_receiver_mutability(
+            object,
+            self_mode,
+            recv_is_ptr,
+            recv_ptr_is_const,
+            field_span,
+            &source,
+        );
 
         let expected_args = sig_params.len() - usize::from(has_self);
         if args.len() != expected_args {
@@ -6434,23 +6449,14 @@ impl<'res> TypeChecker<'res> {
             });
         }
 
-        match self_mode {
-            Some(SelfMode::Value) | Some(SelfMode::ValueConst) if obj_is_ptr => {
-                self.report(TypeError::CannotMoveThroughPointer {
-                    src: source.src(),
-                    span: field_span,
-                });
-            }
-
-            Some(SelfMode::RefMut) if obj_is_ptr && ptr_is_const => {
-                self.report(TypeError::AssignToConst {
-                    src: source.src(),
-                    span: field_span,
-                });
-            }
-
-            _ => {}
-        }
+        self.check_receiver_mutability(
+            object,
+            self_mode,
+            obj_is_ptr,
+            ptr_is_const,
+            field_span,
+            &source,
+        );
 
         let iface_def = self.method_iface_def(method_def_id);
 
@@ -13897,6 +13903,71 @@ mod tests {
             "mutable global should be assignable: {:?}",
             result.err()
         );
+    }
+
+    #[test]
+    fn const_binding_rejects_mutating_method() {
+        let errors = typecheck(
+            r#"
+            struct Boxed {
+                value: i32,
+            }
+
+            implement Boxed {
+                pub fn set(*self, value: i32) {
+                    self.value = value;
+                }
+            }
+
+            fn main() {
+                const boxed = Boxed { .value = 0 };
+                boxed.set(1);
+            }
+            "#,
+        )
+        .expect_err("mutating method on a const binding must be reported");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::AssignToConst { .. })),
+            "expected TypeError::AssignToConst, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn const_pointer_rejects_mutating_method() {
+        let errors = typecheck(
+            r#"
+            struct Boxed {
+                value: i32,
+            }
+
+            implement Boxed {
+                pub fn set(*self, value: i32) {
+                    self.value = value;
+                }
+            }
+
+            fn touch(boxed: *const Boxed) {
+                boxed.set(1);
+                (*boxed).set(2);
+            }
+
+            fn main() {
+                let boxed = Boxed { .value = 0 };
+                touch(&boxed);
+            }
+            "#,
+        )
+        .expect_err("mutating method through a const pointer must be reported");
+
+        let reported = errors
+            .iter()
+            .filter(|err| matches!(err, TypeError::AssignToConst { .. }))
+            .count();
+
+        assert_eq!(reported, 2, "expected two reports, got: {errors:?}");
     }
 
     #[test]

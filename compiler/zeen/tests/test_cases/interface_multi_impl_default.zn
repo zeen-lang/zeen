@@ -29,7 +29,7 @@ implement Source[f64] : Box {
 }
 
 fn main() {
-  const box: Box = .{ .value = 7 };
+  let box: Box = .{ .value = 7 };
   const ints: i32 = box.twice();
   const floats: f64 = box.twice();
 

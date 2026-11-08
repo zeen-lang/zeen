@@ -41,5 +41,5 @@ implement Iterator : Range {
 }
 
 pub interface[T] Sliceable {
-  pub fn slice(*self, range: Range) []T;
+  pub fn slice(*const self, range: Range) []T;
 }

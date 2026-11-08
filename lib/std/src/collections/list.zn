@@ -800,7 +800,7 @@ implement[T] IndexPtr : List[T] {
 }
 
 implement[T] Sliceable : List[T] {
-  fn slice(*self, range: Range) []T {
+  fn slice(*const self, range: Range) []T {
     let start = if (range.start.is_some()) {
       range.start.unwrap()
     } else {

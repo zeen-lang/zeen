@@ -3,7 +3,7 @@ struct Vector {
 }
 
 implement Sliceable : Vector {
-  pub fn slice(*self, range: Range) []i32 {
+  pub fn slice(*const self, range: Range) []i32 {
     let start = range.first().unwrap_or(0);
     let end = range.last().unwrap_or(5);
     self.items[start..end]
@@ -15,7 +15,7 @@ struct Boxed[T] {
 }
 
 implement[T] Sliceable : Boxed[T] {
-  pub fn slice(*self, range: Range) []T {
+  pub fn slice(*const self, range: Range) []T {
     let start = range.first().unwrap_or(0);
     let end = range.last().unwrap_or(5);
     self.data[start..end]
