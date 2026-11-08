@@ -3454,6 +3454,149 @@ impl<'ctx> MirLowering<'ctx> {
 }
 
 impl<'ctx> MirLowering<'ctx> {
+    fn build_fat_envelope_from_basic_fn(
+        &mut self,
+        fb: &mut FnBuilder,
+        block: BlockId,
+        fat_ty: TypeId,
+        basic_ty: TypeId,
+        value: Operand,
+        source_expr: &HirExpr,
+    ) -> (BlockId, Operand) {
+        let adapter = self.fat_pointer_adapter(basic_ty);
+        let fn_ptr_ty = self.void_ptr_ty();
+
+        let value = match value {
+            Operand::Constant(ConstValue::Fn(_), _)
+            | Operand::Constant(ConstValue::ExternFn(_), _) => {
+                let temp = fb.new_temp(basic_ty);
+                fb.push_stmt(
+                    block,
+                    MirStatement::Assign {
+                        place: Place::from_local(temp),
+                        rvalue: Rvalue::Use(value),
+                        source: Some(source_expr.source.clone()),
+                    },
+                );
+                Operand::Copy(Place::from_local(temp), None)
+            }
+            other => other,
+        };
+
+        let fn_ptr_temp = fb.new_temp(fn_ptr_ty);
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(fn_ptr_temp),
+                rvalue: Rvalue::Cast {
+                    operand: value,
+                    target: fn_ptr_ty,
+                },
+                source: Some(source_expr.source.clone()),
+            },
+        );
+
+        let (block, box_ptr) = self.heap_alloc_env(fb, block, fat_ty, source_expr);
+
+        let fat_ptr_ty = self.typecheck.interner.intern(Type::Pointer {
+            inner: fat_ty,
+            is_const: false,
+        });
+        let cast_ptr = fb.new_temp(fat_ptr_ty);
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(cast_ptr),
+                rvalue: Rvalue::Cast {
+                    operand: box_ptr.clone(),
+                    target: fat_ptr_ty,
+                },
+                source: Some(source_expr.source.clone()),
+            },
+        );
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(cast_ptr).deref(),
+                rvalue: Rvalue::Aggregate {
+                    kind: AggregateKind::Struct(CLOSURE_FAT_DEF),
+                    operands: vec![
+                        Operand::Copy(Place::from_local(fn_ptr_temp), None),
+                        Operand::Constant(ConstValue::NullPtr, None),
+                        Operand::Constant(ConstValue::Fn(self.env_drop_noop()), None),
+                    ],
+                },
+                source: Some(source_expr.source.clone()),
+            },
+        );
+
+        let adapter_temp = fb.new_temp(fn_ptr_ty);
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(adapter_temp),
+                rvalue: Rvalue::Cast {
+                    operand: Operand::Constant(ConstValue::Fn(adapter), None),
+                    target: fn_ptr_ty,
+                },
+                source: Some(source_expr.source.clone()),
+            },
+        );
+
+        let env_field = fb.new_temp(fn_ptr_ty);
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(env_field),
+                rvalue: Rvalue::Use(box_ptr),
+                source: Some(source_expr.source.clone()),
+            },
+        );
+
+        let temp = fb.new_temp(fat_ty);
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(temp),
+                rvalue: Rvalue::Aggregate {
+                    kind: AggregateKind::Struct(CLOSURE_FAT_DEF),
+                    operands: vec![
+                        Operand::Copy(Place::from_local(adapter_temp), None),
+                        Operand::Copy(Place::from_local(env_field), None),
+                        Operand::Constant(ConstValue::Fn(self.env_drop_noop()), None),
+                    ],
+                },
+                source: Some(source_expr.source.clone()),
+            },
+        );
+
+        (
+            block,
+            Operand::Move(Place::from_local(temp), Some(source_expr.source.clone())),
+        )
+    }
+
+    fn lower_struct_field_operand(
+        &mut self,
+        fb: &mut FnBuilder,
+        expr: &HirExpr,
+        field_ty: TypeId,
+        block: BlockId,
+    ) -> (BlockId, Operand) {
+        let (block, operand) = self.lower_expr_to_operand(fb, expr, block);
+
+        let value_ty = self.expr_type(fb, expr);
+        let wants_fat = matches!(self.typecheck.interner.get(field_ty), Type::FatFn { .. });
+        let is_basic_fn = matches!(self.typecheck.interner.get(value_ty), Type::Fn { .. });
+
+        if wants_fat && is_basic_fn {
+            return self
+                .build_fat_envelope_from_basic_fn(fb, block, field_ty, value_ty, operand, expr);
+        }
+
+        (block, operand)
+    }
+
     fn lower_expr_to_operand(
         &mut self,
         fb: &mut FnBuilder,
@@ -3526,100 +3669,9 @@ impl<'ctx> MirLowering<'ctx> {
                     && !matches!(self.typecheck.interner.get(ty), Type::FatFn { .. })
                 {
                     let inner = self.place_to_operand(place.clone(), ty, None);
-                    let adapter = self.fat_pointer_adapter(ty);
-                    let fn_ptr_ty = self.void_ptr_ty();
 
-                    let fn_ptr_temp = fb.new_temp(fn_ptr_ty);
-                    fb.push_stmt(
-                        block,
-                        MirStatement::Assign {
-                            place: Place::from_local(fn_ptr_temp),
-                            rvalue: Rvalue::Cast {
-                                operand: inner,
-                                target: fn_ptr_ty,
-                            },
-                            source: Some(expr.source.clone()),
-                        },
-                    );
-
-                    let (block, box_ptr) = self.heap_alloc_env(fb, block, expr_ty, expr);
-                    let cast_ptr = fb.new_temp(self.typecheck.interner.intern(Type::Pointer {
-                        inner: expr_ty,
-                        is_const: false,
-                    }));
-                    fb.push_stmt(
-                        block,
-                        MirStatement::Assign {
-                            place: Place::from_local(cast_ptr),
-                            rvalue: Rvalue::Cast {
-                                operand: box_ptr.clone(),
-                                target: self.typecheck.interner.intern(Type::Pointer {
-                                    inner: expr_ty,
-                                    is_const: false,
-                                }),
-                            },
-                            source: Some(expr.source.clone()),
-                        },
-                    );
-                    fb.push_stmt(
-                        block,
-                        MirStatement::Assign {
-                            place: Place::from_local(cast_ptr).deref(),
-                            rvalue: Rvalue::Aggregate {
-                                kind: AggregateKind::Struct(CLOSURE_FAT_DEF),
-                                operands: vec![
-                                    Operand::Copy(Place::from_local(fn_ptr_temp), None),
-                                    Operand::Constant(ConstValue::NullPtr, None),
-                                    Operand::Constant(ConstValue::Fn(self.env_drop_noop()), None),
-                                ],
-                            },
-                            source: Some(expr.source.clone()),
-                        },
-                    );
-
-                    let adapter_temp = fb.new_temp(fn_ptr_ty);
-                    fb.push_stmt(
-                        block,
-                        MirStatement::Assign {
-                            place: Place::from_local(adapter_temp),
-                            rvalue: Rvalue::Cast {
-                                operand: Operand::Constant(ConstValue::Fn(adapter), None),
-                                target: fn_ptr_ty,
-                            },
-                            source: Some(expr.source.clone()),
-                        },
-                    );
-
-                    let env_field = fb.new_temp(fn_ptr_ty);
-                    fb.push_stmt(
-                        block,
-                        MirStatement::Assign {
-                            place: Place::from_local(env_field),
-                            rvalue: Rvalue::Use(box_ptr),
-                            source: Some(expr.source.clone()),
-                        },
-                    );
-
-                    let temp = fb.new_temp(expr_ty);
-                    fb.push_stmt(
-                        block,
-                        MirStatement::Assign {
-                            place: Place::from_local(temp),
-                            rvalue: Rvalue::Aggregate {
-                                kind: AggregateKind::Struct(CLOSURE_FAT_DEF),
-                                operands: vec![
-                                    Operand::Copy(Place::from_local(adapter_temp), None),
-                                    Operand::Copy(Place::from_local(env_field), None),
-                                    Operand::Constant(ConstValue::Fn(self.env_drop_noop()), None),
-                                ],
-                            },
-                            source: Some(expr.source.clone()),
-                        },
-                    );
-                    return (
-                        block,
-                        Operand::Move(Place::from_local(temp), Some(expr.source.clone())),
-                    );
+                    return self
+                        .build_fat_envelope_from_basic_fn(fb, block, expr_ty, ty, inner, expr);
                 }
 
                 let operand = self.place_to_operand(place, ty, Some(expr.source.clone()));
@@ -4209,13 +4261,15 @@ impl<'ctx> MirLowering<'ctx> {
                 let mut block = block;
                 let mut ordered_operands = Vec::with_capacity(info.fields.len());
 
-                for field_info in &info.fields {
+                for (index, field_info) in info.fields.iter().enumerate() {
                     let matching = fields
                         .iter()
                         .find(|f| f.name == field_info.name)
                         .expect("typechecker should have caught missing field");
 
-                    let (bl, operand) = self.lower_expr_to_operand(fb, &matching.value, block);
+                    let field_ty = self.program.struct_layouts[&ty].fields[index].ty;
+                    let (bl, operand) =
+                        self.lower_struct_field_operand(fb, &matching.value, field_ty, block);
                     block = bl;
                     ordered_operands.push(operand);
                 }
@@ -4258,14 +4312,19 @@ impl<'ctx> MirLowering<'ctx> {
                         let mut block = block;
                         let mut ordered_operands = Vec::with_capacity(info.fields.len());
 
-                        for field_info in &info.fields {
+                        for (index, field_info) in info.fields.iter().enumerate() {
                             let matching = fields
                                 .iter()
                                 .find(|f| f.name == field_info.name)
                                 .expect("typechecker should have caught missing field");
 
-                            let (bl, operand) =
-                                self.lower_expr_to_operand(fb, &matching.value, block);
+                            let field_ty = self.program.struct_layouts[&ty].fields[index].ty;
+                            let (bl, operand) = self.lower_struct_field_operand(
+                                fb,
+                                &matching.value,
+                                field_ty,
+                                block,
+                            );
                             block = bl;
                             ordered_operands.push(operand);
                         }
