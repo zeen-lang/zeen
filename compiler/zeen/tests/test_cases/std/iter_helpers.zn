@@ -2,7 +2,7 @@ use std.string;
 use std.collections.list;
 
 fn main() {
-  let nums = List#[i32].new();
+  let nums: List[i32] = List.new();
   nums.push(1);
   nums.push(2);
   nums.push(3);
@@ -10,27 +10,27 @@ fn main() {
 
   const evens: List[i32] = nums
     .iter()
-    .map(fn(x: *i32) i32 { return *x * 2; })
+    .map(fn(x: *const i32) i32 { return *x * 2; })
     .filter(fn(x: i32) bool { return x > 4; })
     .collect();
 
   @println("len={} count={}", evens.len(), nums.iter().count());
 
-  const total = nums.iter().fold(0, fn(acc: i32, x: *i32) i32 { return acc + *x; });
+  const total = nums.iter().fold(0, fn(acc: i32, x: *const i32) i32 { return acc + *x; });
   @println("fold={}", total);
 
-  nums.iter().for_each(fn(x: *i32) void { @println("each={}", *x); });
+  nums.iter().for_each(fn(x: *const i32) void { @println("each={}", *x); });
 
   nums
     .iter()
-    .map(fn(x: *i32) f32 { return @as(f32, *x); })
+    .map(fn(x: *const i32) f32 { return @as(f32, *x); })
     .for_each(fn(x: f32) void { @println("scaled={}", x); });
 
-  nums.iter().take(2).for_each(fn(x: *i32) void { @println("take={}", *x); });
-  nums.iter().skip(2).for_each(fn(x: *i32) void { @println("skip={}", *x); });
+  nums.iter().take(2).for_each(fn(x: *const i32) void { @println("take={}", *x); });
+  nums.iter().skip(2).for_each(fn(x: *const i32) void { @println("skip={}", *x); });
 
-  @println("any={} all={}", nums.iter().any(fn(x: *i32) bool { return *x > 3; }), nums.iter().all(fn(x: *i32) bool { return *x > 0; }));
-  @println("any_none={} all_none={}", nums.iter().any(fn(x: *i32) bool { return *x > 9; }), nums.iter().all(fn(x: *i32) bool { return *x > 9; }));
+  @println("any={} all={}", nums.iter().any(fn(x: *const i32) bool { return *x > 3; }), nums.iter().all(fn(x: *const i32) bool { return *x > 0; }));
+  @println("any_none={} all_none={}", nums.iter().any(fn(x: *const i32) bool { return *x > 9; }), nums.iter().all(fn(x: *const i32) bool { return *x > 9; }));
 
   switch (nums.iter().last_item()) {
     .Some(x) => { @println("last={}", *x); },
@@ -42,12 +42,12 @@ fn main() {
     .None => { @println("nth=none"); },
   }
 
-  let words = List#[String].new();
+  let words: List[String] = List.new();
   words.push(String.from("a"));
   words.push(String.from("b"));
   @println("words={}", words.into_iter().count());
 
-  let chars = List#[char].new();
+  let chars: List[char] = List.new();
   chars.push('a');
   chars.push('b');
   chars.push('c');
@@ -55,7 +55,7 @@ fn main() {
   const text: String = chars.into_iter().collect();
   @println("text={}", text);
 
-  let letters = List#[String].new();
+  let letters: List[String] = List.new();
   letters.push(String.from("a"));
   letters.push(String.from("b"));
 
