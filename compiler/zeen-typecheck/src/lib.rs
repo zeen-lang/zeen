@@ -10495,6 +10495,23 @@ impl<'res> TypeChecker<'res> {
             }
         }
 
+        let inherent_entry = self
+            .result
+            .inherent_impls
+            .get(&object_def)
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.methods.contains(&impl_method_def))
+                    .cloned()
+            });
+
+        if let Some(entry) = inherent_entry {
+            for (pattern, actual) in entry.object_args.iter().zip(struct_args.iter()) {
+                self.unify_iface_generics(*pattern, *actual, &entry.generics, &mut impl_subst);
+            }
+        }
+
         let Some(iface_sig) = self.fn_sigs.get(&iface_method_def) else {
             return;
         };
@@ -16806,6 +16823,39 @@ mod tests {
             "#,
         )
         .expect("default method must dispatch to the impl matching its interface args");
+    }
+
+    #[test]
+    fn generic_inherent_method_satisfies_interface_method() {
+        typecheck(
+            r#"
+            interface Store {
+                alias Item;
+
+                pub fn push(*self, item: Item);
+            }
+
+            struct Boxed[T] {
+                value: T,
+            }
+
+            implement[T] Boxed[T] {
+                pub fn push(*self, item: T) {
+                    self.value = item;
+                }
+            }
+
+            implement[T] Store : Boxed[T] {
+                alias Item = T;
+            }
+
+            fn main() {
+                let boxed: Boxed[i32] = .{ .value = 0 };
+                boxed.push(1);
+            }
+            "#,
+        )
+        .expect("inherent generic method must satisfy the interface method");
     }
 
     #[test]
