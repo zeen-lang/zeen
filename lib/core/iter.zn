@@ -22,6 +22,14 @@ interface Iterator {
     return FilterIter#[Self] { .inner = self, .pred = pred };
   }
 
+  pub fn take(self, count: usize) TakeIter[Self] {
+    return TakeIter#[Self] { .inner = self, .remaining = count };
+  }
+
+  pub fn skip(self, count: usize) SkipIter[Self] {
+    return SkipIter#[Self] { .inner = self, .remaining = count };
+  }
+
   pub fn collect[C: FromIterator](self) C where C.Item = Item {
     let out = C.empty();
 
@@ -40,7 +48,7 @@ interface Iterator {
 
     while (true) {
       switch (self.next()) {
-        .Some(_) => { total += 1; },
+        .Some(&_) => { total += 1; },
         .None => { break; },
       }
     }
@@ -108,6 +116,47 @@ implement[I: Iterator] Iterator : FilterIter[I] {
     }
 
     return Option.None;
+  }
+}
+
+pub struct TakeIter[I: Iterator] {
+  inner: I,
+  remaining: usize,
+}
+
+implement[I: Iterator] Iterator : TakeIter[I] {
+  alias Item = I.Item;
+
+  fn next(*self) Option[I.Item] {
+    if (self.remaining == 0) {
+      return Option.None;
+    }
+
+    self.remaining -= 1;
+
+    return self.inner.next();
+  }
+}
+
+pub struct SkipIter[I: Iterator] {
+  inner: I,
+  remaining: usize,
+}
+
+implement[I: Iterator] Iterator : SkipIter[I] {
+  alias Item = I.Item;
+
+  fn next(*self) Option[I.Item] {
+    while (self.remaining > 0) {
+      self.remaining -= 1;
+
+      switch (self.inner.next()) {
+        .Some(&_) => {},
+        .None => { return Option.None; },
+      }
+    }
+
+    return self.inner.next();
   }
 }
 
