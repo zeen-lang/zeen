@@ -26,6 +26,14 @@ fn main() {
     .map(fn(x: *i32) f32 { return @as(f32, *x); })
     .for_each(fn(x: f32) void { @println("scaled={}", x); });
 
+  nums.iter().take(2).for_each(fn(x: *i32) void { @println("take={}", *x); });
+  nums.iter().skip(2).for_each(fn(x: *i32) void { @println("skip={}", *x); });
+
+  let words = List#[String].new();
+  words.push(String.from("a"));
+  words.push(String.from("b"));
+  @println("words={}", words.into_iter().count());
+
   let chars = List#[char].new();
   chars.push('a');
   chars.push('b');
