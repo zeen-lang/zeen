@@ -926,6 +926,14 @@ implement StrWriter : String {
   }
 }
 
+implement FromIterator : String {
+  alias Item = char;
+
+  fn empty() Self {
+    return String.new();
+  }
+}
+
 // ===| Helper Functions |===
 
 fn next_capacity(size: usize) usize {

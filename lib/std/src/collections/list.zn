@@ -864,6 +864,14 @@ implement[T] OwnedIterator : List[T] {
   }
 }
 
+implement[T] FromIterator : List[T] {
+  alias Item = T;
+
+  fn empty() Self {
+    return List.new();
+  }
+}
+
 /// Owning iter yielding moves
 pub struct OwnedListIter[T] {
   ptr: [*]T,
