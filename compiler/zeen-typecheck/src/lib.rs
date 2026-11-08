@@ -8100,6 +8100,18 @@ impl<'res> TypeChecker<'res> {
                 }
             }
 
+            Type::ManyPointer { inner, is_const } => {
+                let new_inner = self.substitute_self(inner, self_ty);
+                if new_inner == inner {
+                    ty
+                } else {
+                    self.result.interner.intern(Type::ManyPointer {
+                        inner: new_inner,
+                        is_const,
+                    })
+                }
+            }
+
             Type::Array { element, len } => {
                 let new_elem = self.substitute_self(element, self_ty);
                 if new_elem == element {
@@ -8166,6 +8178,29 @@ impl<'res> TypeChecker<'res> {
                     self.result.interner.intern(Type::Fn {
                         params: new_params,
                         ret: new_ret,
+                    })
+                }
+            }
+
+            Type::FatFn {
+                params,
+                ret,
+                once,
+                erased,
+            } => {
+                let new_params: Vec<TypeId> = params
+                    .iter()
+                    .map(|p| self.substitute_self(*p, self_ty))
+                    .collect();
+                let new_ret = self.substitute_self(ret, self_ty);
+                if new_params == params && new_ret == ret {
+                    ty
+                } else {
+                    self.result.interner.intern(Type::FatFn {
+                        params: new_params,
+                        ret: new_ret,
+                        once,
+                        erased,
                     })
                 }
             }
