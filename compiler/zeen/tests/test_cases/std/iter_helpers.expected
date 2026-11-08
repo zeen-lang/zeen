@@ -1,0 +1,21 @@
+len=2 count=4
+fold=10
+each=1
+each=2
+each=3
+each=4
+scaled=1.000000
+scaled=2.000000
+scaled=3.000000
+scaled=4.000000
+take=1
+take=2
+skip=3
+skip=4
+any=true all=true
+any_none=false all_none=false
+last=4
+nth=3
+words=2
+text=abc
+word=b

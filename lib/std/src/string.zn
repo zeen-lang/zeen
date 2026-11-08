@@ -857,7 +857,7 @@ implement IndexPtr : String {
 }
 
 implement Sliceable : String {
-  fn slice(*self, range: Range) []char {
+  fn slice(*const self, range: Range) []char {
     const start = if (range.start.is_some()) {
       range.start.unwrap()
     } else {
@@ -923,6 +923,14 @@ implement StrWriter : String {
 
   fn write_str_single(*self, value: char) void {
     self.push(value);
+  }
+}
+
+implement FromIterator : String {
+  alias Item = char;
+
+  fn empty() Self {
+    return String.new();
   }
 }
 

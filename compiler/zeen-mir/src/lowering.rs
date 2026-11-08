@@ -161,6 +161,11 @@ pub struct MirLowering<'ctx> {
     program: MirProgram,
     mono_cache: MonoCache,
 
+    current_assoc_bindings: Option<HashMap<DefId, TypeId>>,
+    current_self_ty: Option<TypeId>,
+    current_impl_methods: Option<Vec<DefId>>,
+    current_impl_interface: Option<DefId>,
+
     errors: Vec<MirError>,
     warnings: Vec<MirWarning>,
 
@@ -212,7 +217,14 @@ pub struct MonoCache {
     next_id: u32,
 }
 
-type MonoKey = (DefId, Option<DefId>, Vec<TypeId>, Vec<TypeId>);
+type MonoKey = (
+    DefId,
+    Option<DefId>,
+    Vec<TypeId>,
+    Vec<TypeId>,
+    Vec<(DefId, TypeId)>,
+    Vec<DefId>,
+);
 
 impl MonoCache {
     pub fn new() -> Self {
@@ -375,6 +387,10 @@ impl<'ctx> MirLowering<'ctx> {
             module,
             program: MirProgram::default(),
             mono_cache: MonoCache::new(),
+            current_assoc_bindings: None,
+            current_self_ty: None,
+            current_impl_methods: None,
+            current_impl_interface: None,
             hir_fns_by_def,
             fn_stack: Vec::new(),
             fat_adapter_cache: HashMap::default(),
@@ -1917,6 +1933,13 @@ impl<'ctx> MirLowering<'ctx> {
     }
 
     fn associated_binding_for(&mut self, base: TypeId, def: DefId) -> Option<TypeId> {
+        if self.current_self_ty == Some(base)
+            && let Some(bindings) = &self.current_assoc_bindings
+            && let Some(bound) = bindings.get(&def)
+        {
+            return Some(*bound);
+        }
+
         match self.typecheck.interner.get(base).clone() {
             Type::GenericParam(g) => self
                 .typecheck
@@ -3434,6 +3457,149 @@ impl<'ctx> MirLowering<'ctx> {
 }
 
 impl<'ctx> MirLowering<'ctx> {
+    fn build_fat_envelope_from_basic_fn(
+        &mut self,
+        fb: &mut FnBuilder,
+        block: BlockId,
+        fat_ty: TypeId,
+        basic_ty: TypeId,
+        value: Operand,
+        source_expr: &HirExpr,
+    ) -> (BlockId, Operand) {
+        let adapter = self.fat_pointer_adapter(basic_ty);
+        let fn_ptr_ty = self.void_ptr_ty();
+
+        let value = match value {
+            Operand::Constant(ConstValue::Fn(_), _)
+            | Operand::Constant(ConstValue::ExternFn(_), _) => {
+                let temp = fb.new_temp(basic_ty);
+                fb.push_stmt(
+                    block,
+                    MirStatement::Assign {
+                        place: Place::from_local(temp),
+                        rvalue: Rvalue::Use(value),
+                        source: Some(source_expr.source.clone()),
+                    },
+                );
+                Operand::Copy(Place::from_local(temp), None)
+            }
+            other => other,
+        };
+
+        let fn_ptr_temp = fb.new_temp(fn_ptr_ty);
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(fn_ptr_temp),
+                rvalue: Rvalue::Cast {
+                    operand: value,
+                    target: fn_ptr_ty,
+                },
+                source: Some(source_expr.source.clone()),
+            },
+        );
+
+        let (block, box_ptr) = self.heap_alloc_env(fb, block, fat_ty, source_expr);
+
+        let fat_ptr_ty = self.typecheck.interner.intern(Type::Pointer {
+            inner: fat_ty,
+            is_const: false,
+        });
+        let cast_ptr = fb.new_temp(fat_ptr_ty);
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(cast_ptr),
+                rvalue: Rvalue::Cast {
+                    operand: box_ptr.clone(),
+                    target: fat_ptr_ty,
+                },
+                source: Some(source_expr.source.clone()),
+            },
+        );
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(cast_ptr).deref(),
+                rvalue: Rvalue::Aggregate {
+                    kind: AggregateKind::Struct(CLOSURE_FAT_DEF),
+                    operands: vec![
+                        Operand::Copy(Place::from_local(fn_ptr_temp), None),
+                        Operand::Constant(ConstValue::NullPtr, None),
+                        Operand::Constant(ConstValue::Fn(self.env_drop_noop()), None),
+                    ],
+                },
+                source: Some(source_expr.source.clone()),
+            },
+        );
+
+        let adapter_temp = fb.new_temp(fn_ptr_ty);
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(adapter_temp),
+                rvalue: Rvalue::Cast {
+                    operand: Operand::Constant(ConstValue::Fn(adapter), None),
+                    target: fn_ptr_ty,
+                },
+                source: Some(source_expr.source.clone()),
+            },
+        );
+
+        let env_field = fb.new_temp(fn_ptr_ty);
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(env_field),
+                rvalue: Rvalue::Use(box_ptr),
+                source: Some(source_expr.source.clone()),
+            },
+        );
+
+        let temp = fb.new_temp(fat_ty);
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(temp),
+                rvalue: Rvalue::Aggregate {
+                    kind: AggregateKind::Struct(CLOSURE_FAT_DEF),
+                    operands: vec![
+                        Operand::Copy(Place::from_local(adapter_temp), None),
+                        Operand::Copy(Place::from_local(env_field), None),
+                        Operand::Constant(ConstValue::Fn(self.env_drop_noop()), None),
+                    ],
+                },
+                source: Some(source_expr.source.clone()),
+            },
+        );
+
+        (
+            block,
+            Operand::Move(Place::from_local(temp), Some(source_expr.source.clone())),
+        )
+    }
+
+    fn lower_struct_field_operand(
+        &mut self,
+        fb: &mut FnBuilder,
+        expr: &HirExpr,
+        field_ty: TypeId,
+        block: BlockId,
+    ) -> (BlockId, Operand) {
+        let (block, operand) = self.lower_expr_to_operand(fb, expr, block);
+
+        let value_ty = self.expr_type(fb, expr);
+        let wants_fat = matches!(self.typecheck.interner.get(field_ty), Type::FatFn { .. });
+        let is_basic_fn = matches!(self.typecheck.interner.get(value_ty), Type::Fn { .. });
+
+        if wants_fat && is_basic_fn {
+            return self
+                .build_fat_envelope_from_basic_fn(fb, block, field_ty, value_ty, operand, expr);
+        }
+
+        (block, operand)
+    }
+
     fn lower_expr_to_operand(
         &mut self,
         fb: &mut FnBuilder,
@@ -3506,100 +3672,9 @@ impl<'ctx> MirLowering<'ctx> {
                     && !matches!(self.typecheck.interner.get(ty), Type::FatFn { .. })
                 {
                     let inner = self.place_to_operand(place.clone(), ty, None);
-                    let adapter = self.fat_pointer_adapter(ty);
-                    let fn_ptr_ty = self.void_ptr_ty();
 
-                    let fn_ptr_temp = fb.new_temp(fn_ptr_ty);
-                    fb.push_stmt(
-                        block,
-                        MirStatement::Assign {
-                            place: Place::from_local(fn_ptr_temp),
-                            rvalue: Rvalue::Cast {
-                                operand: inner,
-                                target: fn_ptr_ty,
-                            },
-                            source: Some(expr.source.clone()),
-                        },
-                    );
-
-                    let (block, box_ptr) = self.heap_alloc_env(fb, block, expr_ty, expr);
-                    let cast_ptr = fb.new_temp(self.typecheck.interner.intern(Type::Pointer {
-                        inner: expr_ty,
-                        is_const: false,
-                    }));
-                    fb.push_stmt(
-                        block,
-                        MirStatement::Assign {
-                            place: Place::from_local(cast_ptr),
-                            rvalue: Rvalue::Cast {
-                                operand: box_ptr.clone(),
-                                target: self.typecheck.interner.intern(Type::Pointer {
-                                    inner: expr_ty,
-                                    is_const: false,
-                                }),
-                            },
-                            source: Some(expr.source.clone()),
-                        },
-                    );
-                    fb.push_stmt(
-                        block,
-                        MirStatement::Assign {
-                            place: Place::from_local(cast_ptr).deref(),
-                            rvalue: Rvalue::Aggregate {
-                                kind: AggregateKind::Struct(CLOSURE_FAT_DEF),
-                                operands: vec![
-                                    Operand::Copy(Place::from_local(fn_ptr_temp), None),
-                                    Operand::Constant(ConstValue::NullPtr, None),
-                                    Operand::Constant(ConstValue::Fn(self.env_drop_noop()), None),
-                                ],
-                            },
-                            source: Some(expr.source.clone()),
-                        },
-                    );
-
-                    let adapter_temp = fb.new_temp(fn_ptr_ty);
-                    fb.push_stmt(
-                        block,
-                        MirStatement::Assign {
-                            place: Place::from_local(adapter_temp),
-                            rvalue: Rvalue::Cast {
-                                operand: Operand::Constant(ConstValue::Fn(adapter), None),
-                                target: fn_ptr_ty,
-                            },
-                            source: Some(expr.source.clone()),
-                        },
-                    );
-
-                    let env_field = fb.new_temp(fn_ptr_ty);
-                    fb.push_stmt(
-                        block,
-                        MirStatement::Assign {
-                            place: Place::from_local(env_field),
-                            rvalue: Rvalue::Use(box_ptr),
-                            source: Some(expr.source.clone()),
-                        },
-                    );
-
-                    let temp = fb.new_temp(expr_ty);
-                    fb.push_stmt(
-                        block,
-                        MirStatement::Assign {
-                            place: Place::from_local(temp),
-                            rvalue: Rvalue::Aggregate {
-                                kind: AggregateKind::Struct(CLOSURE_FAT_DEF),
-                                operands: vec![
-                                    Operand::Copy(Place::from_local(adapter_temp), None),
-                                    Operand::Copy(Place::from_local(env_field), None),
-                                    Operand::Constant(ConstValue::Fn(self.env_drop_noop()), None),
-                                ],
-                            },
-                            source: Some(expr.source.clone()),
-                        },
-                    );
-                    return (
-                        block,
-                        Operand::Move(Place::from_local(temp), Some(expr.source.clone())),
-                    );
+                    return self
+                        .build_fat_envelope_from_basic_fn(fb, block, expr_ty, ty, inner, expr);
                 }
 
                 let operand = self.place_to_operand(place, ty, Some(expr.source.clone()));
@@ -4189,13 +4264,15 @@ impl<'ctx> MirLowering<'ctx> {
                 let mut block = block;
                 let mut ordered_operands = Vec::with_capacity(info.fields.len());
 
-                for field_info in &info.fields {
+                for (index, field_info) in info.fields.iter().enumerate() {
                     let matching = fields
                         .iter()
                         .find(|f| f.name == field_info.name)
                         .expect("typechecker should have caught missing field");
 
-                    let (bl, operand) = self.lower_expr_to_operand(fb, &matching.value, block);
+                    let field_ty = self.program.struct_layouts[&ty].fields[index].ty;
+                    let (bl, operand) =
+                        self.lower_struct_field_operand(fb, &matching.value, field_ty, block);
                     block = bl;
                     ordered_operands.push(operand);
                 }
@@ -4238,14 +4315,19 @@ impl<'ctx> MirLowering<'ctx> {
                         let mut block = block;
                         let mut ordered_operands = Vec::with_capacity(info.fields.len());
 
-                        for field_info in &info.fields {
+                        for (index, field_info) in info.fields.iter().enumerate() {
                             let matching = fields
                                 .iter()
                                 .find(|f| f.name == field_info.name)
                                 .expect("typechecker should have caught missing field");
 
-                            let (bl, operand) =
-                                self.lower_expr_to_operand(fb, &matching.value, block);
+                            let field_ty = self.program.struct_layouts[&ty].fields[index].ty;
+                            let (bl, operand) = self.lower_struct_field_operand(
+                                fb,
+                                &matching.value,
+                                field_ty,
+                                block,
+                            );
                             block = bl;
                             ordered_operands.push(operand);
                         }
@@ -4438,8 +4520,32 @@ impl<'ctx> MirLowering<'ctx> {
                 let raw_bindings = resolution.bindings.clone();
                 let resolution_interface_args = resolution.interface_args.clone();
                 let raw_args = resolution.generic_args.clone();
-                let resolution_bindings =
-                    raw_bindings.map(|bindings| self.substitute_call_bindings(fb, bindings));
+                let interface_self_receiver = match &callee.kind {
+                    HirExprKind::FieldAccess { object, .. } => self
+                        .typecheck
+                        .expr_types
+                        .get(&object.id)
+                        .is_some_and(|&ty| {
+                            let inner = match self.typecheck.interner.get(ty) {
+                                Type::Pointer { inner, .. } => *inner,
+                                _ => ty,
+                            };
+                            matches!(
+                                self.typecheck.interner.get(inner),
+                                Type::InterfaceSelfPlaceholder(_)
+                            )
+                        }),
+                    _ => false,
+                };
+                let resolution_bindings = raw_bindings
+                    .map(|bindings| self.substitute_call_bindings(fb, bindings))
+                    .or_else(|| {
+                        let interface_method =
+                            self.typecheck.interface_method_owners.contains_key(&fn_def);
+
+                        (interface_method && interface_self_receiver && !fb.bindings.is_empty())
+                            .then(|| self.substitute_call_bindings(fb, fb.bindings.clone()))
+                    });
                 let generic_args = self.substitute_generic_args(fb, &raw_args);
 
                 let mut dispatch_owner: Option<DefId> = None;
@@ -4505,6 +4611,25 @@ impl<'ctx> MirLowering<'ctx> {
 
                             let concrete = if let Some((struct_def, recv_args)) = recv_target {
                                 iface_def.and_then(|iface_def| {
+                                    if self.current_impl_interface == Some(iface_def)
+                                        && let Some(methods) = &self.current_impl_methods
+                                    {
+                                        let resolved = methods.iter().copied().find(|&def| {
+                                            self.resolution
+                                                .defs
+                                                .get(&def)
+                                                .map(|info| {
+                                                    self.rodeo.borrow().resolve(&info.name)
+                                                        == method_name.as_str()
+                                                })
+                                                .unwrap_or(false)
+                                        });
+
+                                        if let Some(method) = resolved {
+                                            return Some((method, recv_args.clone()));
+                                        }
+                                    }
+
                                     let iface_name = self
                                         .rodeo
                                         .borrow()
@@ -4595,6 +4720,12 @@ impl<'ctx> MirLowering<'ctx> {
                     }
                 }
 
+                let impl_methods = self
+                    .typecheck
+                    .default_call_impl_methods
+                    .get(&call_id)
+                    .cloned();
+
                 let call_target = self.resolve_call_target(
                     fn_def,
                     generic_args,
@@ -4602,6 +4733,7 @@ impl<'ctx> MirLowering<'ctx> {
                     &fat_args,
                     owner,
                     resolution_bindings,
+                    impl_methods,
                 );
 
                 let mut arg_operands = Vec::with_capacity(args.len() + 1);
@@ -5053,6 +5185,7 @@ impl<'ctx> MirLowering<'ctx> {
                         None,
                         &[],
                         Some(override_bindings),
+                        None,
                     ),
                     None => self.monomorphize_fn(*def_id, Vec::new(), None, &[]),
                 };
@@ -10131,6 +10264,86 @@ impl<'ctx> MirLowering<'ctx> {
         }
     }
 
+    fn method_self_type(&mut self, owner: DefId, generic_args: &[TypeId]) -> TypeId {
+        if let Some(DefKind::Builtin(builtin)) = self
+            .resolution
+            .defs
+            .get(&owner)
+            .map(|info| info.kind.clone())
+        {
+            return self.typecheck.interner.builtin(builtin);
+        }
+
+        let generics = self.owner_generics(owner);
+        let args: Vec<TypeId> = generics
+            .iter()
+            .enumerate()
+            .map(|(index, generic)| {
+                generic_args
+                    .get(index)
+                    .copied()
+                    .unwrap_or_else(|| self.typecheck.interner.intern(Type::GenericParam(*generic)))
+            })
+            .collect();
+
+        if let Some(shape) = self.typecheck.builtin_shapes.get(&owner).cloned() {
+            return self.concrete_shape_type(&shape, &args);
+        }
+
+        if matches!(
+            self.resolution.defs.get(&owner).map(|info| &info.kind),
+            Some(DefKind::Enum)
+        ) {
+            self.typecheck.interner.intern(Type::Enum {
+                def_id: owner,
+                generic_args: args,
+            })
+        } else {
+            self.typecheck.interner.intern(Type::Struct {
+                def_id: owner,
+                generic_args: args,
+            })
+        }
+    }
+
+    fn concrete_shape_type(&mut self, shape: &BuiltinShape, args: &[TypeId]) -> TypeId {
+        match shape {
+            BuiltinShape::Scalar(builtin) => self.typecheck.interner.builtin(*builtin),
+
+            BuiltinShape::Slice { element, is_const } => {
+                let element = self.concrete_shape_type(element, args);
+
+                self.typecheck.interner.intern(Type::Slice {
+                    element,
+                    is_const: *is_const,
+                })
+            }
+
+            BuiltinShape::ManyPointer { element, is_const } => {
+                let element = self.concrete_shape_type(element, args);
+
+                self.typecheck.interner.intern(Type::ManyPointer {
+                    inner: element,
+                    is_const: *is_const,
+                })
+            }
+
+            BuiltinShape::Array { element, len } => {
+                let element = self.concrete_shape_type(element, args);
+
+                self.typecheck.interner.intern(Type::Array {
+                    element,
+                    len: Some(*len),
+                })
+            }
+
+            BuiltinShape::Param(index) => args
+                .get(*index as usize)
+                .copied()
+                .unwrap_or_else(|| self.typecheck.interner.error()),
+        }
+    }
+
     fn monomorphize_fn(
         &mut self,
         def_id: DefId,
@@ -10144,6 +10357,7 @@ impl<'ctx> MirLowering<'ctx> {
             owner_struct,
             fat_args,
             Option::<HashMap<DefId, TypeId>>::None,
+            None,
         )
     }
 
@@ -10154,6 +10368,7 @@ impl<'ctx> MirLowering<'ctx> {
         owner_struct: Option<DefId>,
         fat_args: &[TypeId],
         bindings_override: Option<HashMap<DefId, TypeId>>,
+        impl_methods: Option<Vec<DefId>>,
     ) -> MirFunctionId {
         let hir_fn = if let Some(hir_fn) = self.hir_fns_by_def.get(&def_id) {
             hir_fn.clone()
@@ -10163,11 +10378,22 @@ impl<'ctx> MirLowering<'ctx> {
                 .cloned()
                 .expect("monomorphize_fn: function not found")
         };
+        let mut assoc_key: Vec<(DefId, TypeId)> = bindings_override
+            .as_ref()
+            .map(|bindings| bindings.iter().map(|(&def, &ty)| (def, ty)).collect())
+            .unwrap_or_default();
+        assoc_key.sort_unstable_by_key(|(def, ty)| (def.0, ty.0));
+
+        let mut method_key = impl_methods.clone().unwrap_or_default();
+        method_key.sort_unstable_by_key(|def| def.0);
+
         let key = (
             def_id,
             owner_struct,
             generic_args.clone(),
             fat_args.to_vec(),
+            assoc_key,
+            method_key,
         );
 
         if let Some(&existing) = self.mono_cache.cache.get(&key) {
@@ -10207,6 +10433,7 @@ impl<'ctx> MirLowering<'ctx> {
             owner_struct,
             fat_args,
             bindings_override,
+            impl_methods,
         );
         for local in &mir_func.locals {
             match self.typecheck.interner.get(local.ty).clone() {
@@ -10333,6 +10560,7 @@ impl<'ctx> MirLowering<'ctx> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn lower_fn_body(
         &mut self,
         def_id: DefId,
@@ -10341,6 +10569,7 @@ impl<'ctx> MirLowering<'ctx> {
         owner_struct: Option<DefId>,
         fat_args: &[TypeId],
         bindings_override: Option<HashMap<DefId, TypeId>>,
+        impl_methods: Option<Vec<DefId>>,
     ) -> MirFunction {
         let generic_defs: Vec<DefId> = hir_fn.generics.iter().map(|g| g.def_id).collect();
         let has_override = bindings_override.is_some();
@@ -10408,6 +10637,25 @@ impl<'ctx> MirLowering<'ctx> {
             .get(&def_id)
             .copied()
             .expect("function must have recorded fn type");
+
+        let previous_assoc_bindings = self.current_assoc_bindings.replace(bindings.clone());
+
+        let self_ty = owner_struct.map(|owner| self.method_self_type(owner, generic_args));
+        let previous_self_ty = self.current_self_ty;
+        self.current_self_ty = self_ty;
+
+        let own_interface = self.typecheck.interface_method_owners.get(&def_id).copied();
+        let previous_impl_methods = self.current_impl_methods.clone();
+        let previous_impl_interface = self.current_impl_interface;
+
+        self.current_impl_interface = own_interface;
+        self.current_impl_methods = match impl_methods {
+            Some(methods) => Some(methods),
+            None if own_interface.is_some() && own_interface == previous_impl_interface => {
+                previous_impl_methods.clone()
+            }
+            None => None,
+        };
 
         let raw_ret_ty = match self.typecheck.interner.get(fn_ty) {
             Type::Fn { ret, .. } => *ret,
@@ -10507,6 +10755,10 @@ impl<'ctx> MirLowering<'ctx> {
 
         let Some(body) = &hir_fn.body else {
             fb.set_terminator(entry, Terminator::Unreachable);
+            self.current_assoc_bindings = previous_assoc_bindings;
+            self.current_self_ty = previous_self_ty;
+            self.current_impl_methods = previous_impl_methods;
+            self.current_impl_interface = previous_impl_interface;
             return fb.func;
         };
 
@@ -10582,6 +10834,11 @@ impl<'ctx> MirLowering<'ctx> {
         };
 
         let _ = final_block;
+
+        self.current_assoc_bindings = previous_assoc_bindings;
+        self.current_self_ty = previous_self_ty;
+        self.current_impl_methods = previous_impl_methods;
+        self.current_impl_interface = previous_impl_interface;
 
         fb.func
     }
@@ -10777,6 +11034,7 @@ impl<'ctx> MirLowering<'ctx> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn resolve_call_target(
         &mut self,
         fn_def: DefId,
@@ -10785,6 +11043,7 @@ impl<'ctx> MirLowering<'ctx> {
         fat_args: &[TypeId],
         owner: Option<DefId>,
         bindings_override: Option<HashMap<DefId, TypeId>>,
+        impl_methods: Option<Vec<DefId>>,
     ) -> CallTarget {
         if hir_fn.is_extern && hir_fn.body.is_none() {
             let idx = self.register_extern_fn(fn_def, hir_fn);
@@ -10796,6 +11055,7 @@ impl<'ctx> MirLowering<'ctx> {
                 owner,
                 fat_args,
                 bindings_override,
+                impl_methods,
             );
             CallTarget::Direct(mir_id)
         }

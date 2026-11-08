@@ -79,6 +79,9 @@ pub struct TypeChecker<'res> {
     generic_assoc_bindings: HashMap<(DefId, DefId), TypeId>,
     generic_assoc_bounds: HashMap<(DefId, DefId), Vec<DefId>>,
     current_self_ty: Option<TypeId>,
+    current_impl_assoc_bindings: Option<HashMap<DefId, TypeId>>,
+    current_impl_interface: Option<DefId>,
+    fn_impl_assoc_bindings: HashMap<DefId, HashMap<DefId, TypeId>>,
 
     struct_generics: HashMap<DefId, Vec<DefId>>,
     struct_methods: HashMap<DefId, HashMap<Spur, Vec<DefId>>>,
@@ -241,6 +244,9 @@ impl<'res> TypeChecker<'res> {
             generic_assoc_bindings: HashMap::default(),
             generic_assoc_bounds: HashMap::default(),
             current_self_ty: None,
+            current_impl_assoc_bindings: None,
+            current_impl_interface: None,
+            fn_impl_assoc_bindings: HashMap::default(),
             struct_generics: HashMap::default(),
             struct_methods: HashMap::default(),
             enum_variants: HashMap::default(),
@@ -973,6 +979,26 @@ impl<'res> TypeChecker<'res> {
                 );
             }
 
+            let impl_assoc_bindings = imp.interface.and_then(|iface_def| {
+                self.result
+                    .impl_registry
+                    .get(&(object_def, iface_def))
+                    .and_then(|entries| {
+                        entries.iter().find(|entry| {
+                            entry.object_args.as_slice() == object_args
+                                && entry.interface_args.as_slice() == interface_args
+                                && entry.is_specialized == is_specialized
+                        })
+                    })
+                    .map(|entry| entry.assoc_bindings.clone())
+            });
+
+            let previous_impl_assoc_bindings = self.current_impl_assoc_bindings.take();
+            let previous_impl_interface = self.current_impl_interface;
+
+            self.current_impl_assoc_bindings = impl_assoc_bindings.clone();
+            self.current_impl_interface = imp.interface;
+
             for method in &imp.methods {
                 self.declare_signature(method);
 
@@ -990,12 +1016,19 @@ impl<'res> TypeChecker<'res> {
                             .insert(method.def_id, iface_def);
                     }
                 }
+
+                if let Some(bindings) = &impl_assoc_bindings {
+                    self.fn_impl_assoc_bindings
+                        .insert(method.def_id, bindings.clone());
+                }
             }
 
-            self.current_self_ty = previous_self_ty;
-        }
+            self.substitute_impl_self_types(imp, object_def, &object_args);
 
-        self.substitute_impl_self_types(imp, object_def, &object_args);
+            self.current_self_ty = previous_self_ty;
+            self.current_impl_assoc_bindings = previous_impl_assoc_bindings;
+            self.current_impl_interface = previous_impl_interface;
+        }
 
         let Some(iface_def) = imp.interface else {
             return;
@@ -1899,7 +1932,12 @@ impl<'res> TypeChecker<'res> {
         }
 
         let previous_self_ty = self.current_self_ty;
+        let previous_impl_assoc_bindings = self.current_impl_assoc_bindings.take();
+        let previous_impl_interface = self.current_impl_interface;
+
         self.current_self_ty = self_base_ty;
+        self.current_impl_assoc_bindings = self.fn_impl_assoc_bindings.get(&def_id).cloned();
+        self.current_impl_interface = self.method_owning_interface.get(&def_id).copied();
 
         self.ctx.push_fn(FnCtx {
             fn_def: def_id,
@@ -1940,6 +1978,8 @@ impl<'res> TypeChecker<'res> {
         self.ctx.pop_fn();
 
         self.current_self_ty = previous_self_ty;
+        self.current_impl_assoc_bindings = previous_impl_assoc_bindings;
+        self.current_impl_interface = previous_impl_interface;
 
         self.bodies_in_progress.remove(&def_id);
         self.bodies_checked.insert(def_id);
@@ -4115,9 +4155,15 @@ impl<'res> TypeChecker<'res> {
         expected: Option<TypeId>,
     ) -> TypeId {
         let Some(def_id) = ty_def else {
+            self.report(TypeError::StructInitNotAType {
+                src: init_source.src(),
+                span: ty_span,
+            });
+
             for f in fields {
                 self.synth_expr(&f.value);
             }
+
             return self.result.interner.error();
         };
 
@@ -5181,6 +5227,39 @@ impl<'res> TypeChecker<'res> {
         }
     }
 
+    fn check_receiver_mutability(
+        &mut self,
+        object: &HirExpr,
+        self_mode: Option<SelfMode>,
+        receiver_is_ptr: bool,
+        ptr_is_const: bool,
+        span: SourceSpan,
+        source: &Source,
+    ) {
+        if matches!(
+            self_mode,
+            Some(SelfMode::Value) | Some(SelfMode::ValueConst)
+        ) {
+            if receiver_is_ptr {
+                self.report(TypeError::CannotMoveThroughPointer {
+                    src: source.src(),
+                    span,
+                });
+            }
+
+            return;
+        }
+
+        if matches!(self_mode, Some(SelfMode::RefMut))
+            && ((receiver_is_ptr && ptr_is_const) || self.find_const_violation(object))
+        {
+            self.report(TypeError::AssignToConst {
+                src: source.src(),
+                span,
+            });
+        }
+    }
+
     fn find_struct_def(&self, struct_name: &str) -> Option<DefId> {
         let name = self.interner.borrow().get(struct_name)?;
         self.resolution.type_def_by_name(name, &[DefKind::Struct])
@@ -5633,23 +5712,14 @@ impl<'res> TypeChecker<'res> {
         let has_self = sig.self_mode.is_some();
         let self_mode = sig.self_mode;
 
-        if recv_is_ptr {
-            match self_mode {
-                Some(SelfMode::Value) | Some(SelfMode::ValueConst) => {
-                    self.report(TypeError::CannotMoveThroughPointer {
-                        src: source.src(),
-                        span: field.1,
-                    });
-                }
-                Some(SelfMode::RefMut) if recv_ptr_is_const => {
-                    self.report(TypeError::AssignToConst {
-                        src: source.src(),
-                        span: field.1,
-                    });
-                }
-                _ => {}
-            }
-        }
+        self.check_receiver_mutability(
+            object,
+            self_mode,
+            recv_is_ptr,
+            recv_ptr_is_const,
+            field.1,
+            &source,
+        );
 
         let expected_args = sig_params.len() - usize::from(has_self);
         if args.len() != expected_args {
@@ -5759,23 +5829,14 @@ impl<'res> TypeChecker<'res> {
         let self_mode = sig.self_mode;
         let has_self = self_mode.is_some();
 
-        if recv_is_ptr {
-            match self_mode {
-                Some(SelfMode::Value) | Some(SelfMode::ValueConst) => {
-                    self.report(TypeError::CannotMoveThroughPointer {
-                        src: source.src(),
-                        span: field_span,
-                    });
-                }
-                Some(SelfMode::RefMut) if recv_ptr_is_const => {
-                    self.report(TypeError::AssignToConst {
-                        src: source.src(),
-                        span: field_span,
-                    });
-                }
-                _ => {}
-            }
-        }
+        self.check_receiver_mutability(
+            object,
+            self_mode,
+            recv_is_ptr,
+            recv_ptr_is_const,
+            field_span,
+            &source,
+        );
 
         let expected_args = sig_params.len() - usize::from(has_self);
         if args.len() != expected_args {
@@ -6388,23 +6449,14 @@ impl<'res> TypeChecker<'res> {
             });
         }
 
-        match self_mode {
-            Some(SelfMode::Value) | Some(SelfMode::ValueConst) if obj_is_ptr => {
-                self.report(TypeError::CannotMoveThroughPointer {
-                    src: source.src(),
-                    span: field_span,
-                });
-            }
-
-            Some(SelfMode::RefMut) if obj_is_ptr && ptr_is_const => {
-                self.report(TypeError::AssignToConst {
-                    src: source.src(),
-                    span: field_span,
-                });
-            }
-
-            _ => {}
-        }
+        self.check_receiver_mutability(
+            object,
+            self_mode,
+            obj_is_ptr,
+            ptr_is_const,
+            field_span,
+            &source,
+        );
 
         let iface_def = self.method_iface_def(method_def_id);
 
@@ -6551,6 +6603,13 @@ impl<'res> TypeChecker<'res> {
             }
 
             if let Some(entry) = &selected_entry {
+                for (assoc, bound) in &entry.assoc_bindings {
+                    let bound = self.substitute_generics(*bound, &call_bindings);
+                    call_bindings.insert(*assoc, bound);
+                }
+            }
+
+            if let Some(entry) = &selected_entry {
                 for g in &entry.generics {
                     let value = call_bindings
                         .get(g)
@@ -6571,6 +6630,14 @@ impl<'res> TypeChecker<'res> {
 
         let owner = iface_def.map(|_| struct_def);
 
+        if iface_def.is_some()
+            && let Some(entry) = &selected_entry
+        {
+            self.result
+                .default_call_impl_methods
+                .insert(call_id, entry.methods.clone());
+        }
+
         self.result.call_resolutions.insert(
             call_id,
             CallResolution {
@@ -6582,7 +6649,21 @@ impl<'res> TypeChecker<'res> {
             },
         );
 
-        let ret = self.substitute_generics(sig_ret, &bindings);
+        let ret = match iface_def {
+            Some(iface_def) => {
+                let self_ty = self.method_self_type(struct_def, &struct_generic_args);
+                let assoc_bindings = selected_entry
+                    .as_ref()
+                    .map(|entry| entry.assoc_bindings.clone());
+
+                self.with_impl_assoc_scope(self_ty, Some(iface_def), assoc_bindings, |this| {
+                    let ret = this.substitute_generics(sig_ret, &bindings);
+                    this.substitute_generics(ret, &bindings)
+                })
+            }
+
+            None => self.substitute_generics(sig_ret, &bindings),
+        };
 
         Some(self.normalize_associated(ret))
     }
@@ -8094,6 +8175,18 @@ impl<'res> TypeChecker<'res> {
                 }
             }
 
+            Type::ManyPointer { inner, is_const } => {
+                let new_inner = self.substitute_self(inner, self_ty);
+                if new_inner == inner {
+                    ty
+                } else {
+                    self.result.interner.intern(Type::ManyPointer {
+                        inner: new_inner,
+                        is_const,
+                    })
+                }
+            }
+
             Type::Array { element, len } => {
                 let new_elem = self.substitute_self(element, self_ty);
                 if new_elem == element {
@@ -8160,6 +8253,29 @@ impl<'res> TypeChecker<'res> {
                     self.result.interner.intern(Type::Fn {
                         params: new_params,
                         ret: new_ret,
+                    })
+                }
+            }
+
+            Type::FatFn {
+                params,
+                ret,
+                once,
+                erased,
+            } => {
+                let new_params: Vec<TypeId> = params
+                    .iter()
+                    .map(|p| self.substitute_self(*p, self_ty))
+                    .collect();
+                let new_ret = self.substitute_self(ret, self_ty);
+                if new_params == params && new_ret == ret {
+                    ty
+                } else {
+                    self.result.interner.intern(Type::FatFn {
+                        params: new_params,
+                        ret: new_ret,
+                        once,
+                        erased,
                     })
                 }
             }
@@ -8553,6 +8669,23 @@ impl<'res> TypeChecker<'res> {
     }
 
     fn associated_binding(&mut self, base: TypeId, def: DefId) -> Option<TypeId> {
+        if self.current_self_ty == Some(base) {
+            if let Some(bindings) = &self.current_impl_assoc_bindings
+                && let Some(bound) = bindings.get(&def)
+            {
+                return Some(*bound);
+            }
+
+            if let Some(iface) = self.current_impl_interface
+                && matches!(
+                    self.resolution.defs.get(&def).map(|info| &info.kind),
+                    Some(DefKind::AssociatedType { interface }) if *interface == iface
+                )
+            {
+                return None;
+            }
+        }
+
         match self.result.interner.get(base).clone() {
             Type::GenericParam(g) => self.generic_assoc_bindings.get(&(g, def)).copied(),
 
@@ -8732,6 +8865,14 @@ impl<'res> TypeChecker<'res> {
             .cloned()
             .unwrap_or_default();
 
+        let previous_self_ty = self.current_self_ty;
+        let previous_impl_assoc_bindings = self.current_impl_assoc_bindings.take();
+        let previous_impl_interface = self.current_impl_interface;
+
+        self.current_self_ty = Some(self_ty);
+        self.current_impl_assoc_bindings = Some(HashMap::default());
+        self.current_impl_interface = Some(iface_def);
+
         let mut raw: HashMap<DefId, TypeId> = HashMap::default();
         let mut spans: HashMap<DefId, SourceSpan> = HashMap::default();
 
@@ -8833,6 +8974,10 @@ impl<'res> TypeChecker<'res> {
         {
             entry.assoc_bindings = bindings;
         }
+
+        self.current_self_ty = previous_self_ty;
+        self.current_impl_assoc_bindings = previous_impl_assoc_bindings;
+        self.current_impl_interface = previous_impl_interface;
     }
 
     fn assoc_reference_edges(
@@ -9392,6 +9537,30 @@ impl<'res> TypeChecker<'res> {
         bindings
     }
 
+    fn with_impl_assoc_scope<R>(
+        &mut self,
+        self_ty: TypeId,
+        iface_def: Option<DefId>,
+        assoc_bindings: Option<HashMap<DefId, TypeId>>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let previous_self_ty = self.current_self_ty;
+        let previous_bindings = self.current_impl_assoc_bindings.take();
+        let previous_iface = self.current_impl_interface;
+
+        self.current_self_ty = Some(self_ty);
+        self.current_impl_assoc_bindings = assoc_bindings;
+        self.current_impl_interface = iface_def;
+
+        let value = f(self);
+
+        self.current_self_ty = previous_self_ty;
+        self.current_impl_assoc_bindings = previous_bindings;
+        self.current_impl_interface = previous_iface;
+
+        value
+    }
+
     fn resolve_binding(&self, ty: TypeId, bindings: &HashMap<DefId, TypeId>) -> TypeId {
         let mut current = ty;
         let mut seen: HashSet<DefId> = HashSet::default();
@@ -9714,17 +9883,29 @@ impl<'res> TypeChecker<'res> {
                 self.seed_inference_bindings(sig_ret, expected, &mut bindings);
             }
 
+            let assoc_bindings = entry.as_ref().map(|entry| entry.assoc_bindings.clone());
+
             let args_fit = user_params.iter().zip(args.iter()).all(|(&param_ty, arg)| {
                 let Some(&arg_ty) = self.result.expr_types.get(&arg.id) else {
                     return true;
                 };
-                let param_ty = self.substitute_generics(param_ty, &bindings);
+                let param_ty = self.with_impl_assoc_scope(
+                    self_ty,
+                    iface_def,
+                    assoc_bindings.clone(),
+                    |this| this.substitute_generics(param_ty, &bindings),
+                );
 
                 try_coerce(&mut self.result.interner, arg_ty, param_ty).is_ok()
             });
 
             let ret_fit = expected.is_none_or(|expected| {
-                let ret = self.substitute_generics(sig_ret, &bindings);
+                let ret = self.with_impl_assoc_scope(
+                    self_ty,
+                    iface_def,
+                    assoc_bindings.clone(),
+                    |this| this.substitute_generics(sig_ret, &bindings),
+                );
 
                 try_coerce(&mut self.result.interner, ret, expected).is_ok()
             });
@@ -10320,6 +10501,23 @@ impl<'res> TypeChecker<'res> {
             }
         }
 
+        let inherent_entry = self
+            .result
+            .inherent_impls
+            .get(&object_def)
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.methods.contains(&impl_method_def))
+                    .cloned()
+            });
+
+        if let Some(entry) = inherent_entry {
+            for (pattern, actual) in entry.object_args.iter().zip(struct_args.iter()) {
+                self.unify_iface_generics(*pattern, *actual, &entry.generics, &mut impl_subst);
+            }
+        }
+
         let Some(iface_sig) = self.fn_sigs.get(&iface_method_def) else {
             return;
         };
@@ -10561,6 +10759,27 @@ impl<'res> TypeChecker<'res> {
             })
         };
 
+        let impl_assoc_bindings = self
+            .result
+            .impl_registry
+            .get(&(object_def, iface_def))
+            .and_then(|entries| {
+                entries.iter().find(|entry| {
+                    entry.object_args.as_slice() == sig_ctx.object_args
+                        && entry.interface_args.as_slice() == sig_ctx.interface_args
+                        && entry.is_specialized == sig_ctx.is_specialized
+                })
+            })
+            .map(|entry| entry.assoc_bindings.clone());
+
+        let previous_self_ty = self.current_self_ty;
+        let previous_impl_assoc_bindings = self.current_impl_assoc_bindings.take();
+        let previous_impl_interface = self.current_impl_interface;
+
+        self.current_self_ty = Some(self_ty);
+        self.current_impl_assoc_bindings = impl_assoc_bindings;
+        self.current_impl_interface = Some(iface_def);
+
         let mut impl_method_names: HashMap<String, DefId> = HashMap::default();
         for method in impl_methods {
             if let Some(name) = self.def_name(*method) {
@@ -10664,6 +10883,10 @@ impl<'res> TypeChecker<'res> {
                 }
             }
         }
+
+        self.current_self_ty = previous_self_ty;
+        self.current_impl_assoc_bindings = previous_impl_assoc_bindings;
+        self.current_impl_interface = previous_impl_interface;
     }
 
     fn register_default_method(
@@ -13249,6 +13472,27 @@ mod tests {
     }
 
     #[test]
+    fn struct_init_with_non_type_expression_is_reported() {
+        let errors = typecheck(
+            r#"
+            struct Foo {
+                value: i32,
+            }
+
+            fn main() {
+                let foo = Foo[1] { .value = 3 };
+            }
+            "#,
+        )
+        .expect_err("non type struct init target must fail");
+
+        assert!(
+            matches!(errors.first(), Some(TypeError::StructInitNotAType { .. })),
+            "expected struct init type error, got {errors:?}"
+        );
+    }
+
+    #[test]
     fn annotated_let_pins_associated_call_generics() {
         let result = typecheck(
             r#"
@@ -13659,6 +13903,71 @@ mod tests {
             "mutable global should be assignable: {:?}",
             result.err()
         );
+    }
+
+    #[test]
+    fn const_binding_rejects_mutating_method() {
+        let errors = typecheck(
+            r#"
+            struct Boxed {
+                value: i32,
+            }
+
+            implement Boxed {
+                pub fn set(*self, value: i32) {
+                    self.value = value;
+                }
+            }
+
+            fn main() {
+                const boxed = Boxed { .value = 0 };
+                boxed.set(1);
+            }
+            "#,
+        )
+        .expect_err("mutating method on a const binding must be reported");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::AssignToConst { .. })),
+            "expected TypeError::AssignToConst, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn const_pointer_rejects_mutating_method() {
+        let errors = typecheck(
+            r#"
+            struct Boxed {
+                value: i32,
+            }
+
+            implement Boxed {
+                pub fn set(*self, value: i32) {
+                    self.value = value;
+                }
+            }
+
+            fn touch(boxed: *const Boxed) {
+                boxed.set(1);
+                (*boxed).set(2);
+            }
+
+            fn main() {
+                let boxed = Boxed { .value = 0 };
+                touch(&boxed);
+            }
+            "#,
+        )
+        .expect_err("mutating method through a const pointer must be reported");
+
+        let reported = errors
+            .iter()
+            .filter(|err| matches!(err, TypeError::AssignToConst { .. }))
+            .count();
+
+        assert_eq!(reported, 2, "expected two reports, got: {errors:?}");
     }
 
     #[test]
@@ -16450,6 +16759,177 @@ mod tests {
     }
 
     #[test]
+    fn multi_impl_binds_associated_type_per_interface_args() {
+        typecheck(
+            r#"
+            interface[T] Sink {
+                alias Item;
+
+                pub fn item(*self) Item;
+            }
+
+            struct Box {
+                value: i32,
+            }
+
+            implement Sink[i32] : Box {
+                alias Item = i32;
+
+                fn item(*self) Item {
+                    return 1;
+                }
+            }
+
+            implement Sink[f64] : Box {
+                alias Item = f64;
+
+                fn item(*self) Item {
+                    return 1.5;
+                }
+            }
+
+            fn main() {
+                let box = Box { .value = 0 };
+                let ints: i32 = box.item();
+                let floats: f64 = box.item();
+            }
+            "#,
+        )
+        .expect("each impl must bind its own associated type");
+    }
+
+    #[test]
+    fn multi_impl_resolves_sibling_associated_defaults() {
+        typecheck(
+            r#"
+            interface[T] Pair {
+                alias Item;
+                alias Wrapped;
+
+                pub fn item(*self) Item;
+                pub fn wrapped(*self) Wrapped;
+            }
+
+            struct Box {
+                value: i32,
+            }
+
+            implement Pair[i32] : Box {
+                alias Item = i32;
+                alias Wrapped = Item;
+
+                fn item(*self) Item {
+                    return 1;
+                }
+
+                fn wrapped(*self) Wrapped {
+                    return 11;
+                }
+            }
+
+            implement Pair[f64] : Box {
+                alias Item = f64;
+                alias Wrapped = Item;
+
+                fn item(*self) Item {
+                    return 1.5;
+                }
+
+                fn wrapped(*self) Wrapped {
+                    return 11.5;
+                }
+            }
+
+            fn main() {
+                let box = Box { .value = 0 };
+                let ints: i32 = box.item();
+                let floats: f64 = box.item();
+                let wrapped_ints: i32 = box.wrapped();
+                let wrapped_floats: f64 = box.wrapped();
+            }
+            "#,
+        )
+        .expect("sibling associated aliases must resolve inside their own impl");
+    }
+
+    #[test]
+    fn multi_impl_default_method_calls_own_associated_impl() {
+        typecheck(
+            r#"
+            interface[T] Source {
+                alias Item;
+
+                pub fn read(*self) Item;
+
+                pub fn twice(*self) Item {
+                    return self.read();
+                }
+            }
+
+            struct Box {
+                value: i32,
+            }
+
+            implement Source[i32] : Box {
+                alias Item = i32;
+
+                fn read(*self) Item {
+                    return self.value;
+                }
+            }
+
+            implement Source[f64] : Box {
+                alias Item = f64;
+
+                fn read(*self) Item {
+                    return @as(f64, self.value);
+                }
+            }
+
+            fn main() {
+                let box = Box { .value = 7 };
+                let ints: i32 = box.twice();
+                let floats: f64 = box.twice();
+            }
+            "#,
+        )
+        .expect("default method must dispatch to the impl matching its interface args");
+    }
+
+    #[test]
+    fn generic_inherent_method_satisfies_interface_method() {
+        typecheck(
+            r#"
+            interface Store {
+                alias Item;
+
+                pub fn push(*self, item: Item);
+            }
+
+            struct Boxed[T] {
+                value: T,
+            }
+
+            implement[T] Boxed[T] {
+                pub fn push(*self, item: T) {
+                    self.value = item;
+                }
+            }
+
+            implement[T] Store : Boxed[T] {
+                alias Item = T;
+            }
+
+            fn main() {
+                let boxed: Boxed[i32] = .{ .value = 0 };
+                boxed.push(1);
+            }
+            "#,
+        )
+        .expect("inherent generic method must satisfy the interface method");
+    }
+
+    #[test]
     fn associated_type_projection_through_bound() {
         typecheck(
             r#"
@@ -16482,6 +16962,75 @@ mod tests {
             "#,
         )
         .expect("projection through a bound must typecheck");
+    }
+
+    #[test]
+    fn default_method_substitutes_self_inside_fat_fn_param() {
+        typecheck_full(
+            r#"
+            interface Source {
+                alias Item;
+
+                pub fn read(*self) Item;
+
+                pub fn emit(*self, f: Fn(Item) void) {
+                    f(self.read());
+                }
+            }
+
+            struct Number {
+                value: i32,
+            }
+
+            implement Source : Number {
+                alias Item = i32;
+
+                fn read(*self) Item {
+                    return self.value;
+                }
+            }
+
+            fn main() {
+                let number = Number { .value = 3 };
+
+                number.emit(fn(value: i32) void { });
+            }
+            "#,
+        )
+        .expect("default method must substitute Self inside a fat fn parameter");
+    }
+
+    #[test]
+    fn default_method_substitutes_self_inside_many_pointer_param() {
+        typecheck(
+            r#"
+            interface Filler {
+                alias Item;
+
+                pub fn write(*self, out: [*]Item) void;
+            }
+
+            struct Number {
+                value: i32,
+            }
+
+            implement Filler : Number {
+                alias Item = i32;
+
+                fn write(*self, out: [*]i32) void {
+                    out[0] = self.value;
+                }
+            }
+
+            fn main() {
+                let number = Number { .value = 3 };
+                let values: [4]i32 = {0; 4};
+
+                number.write(@as([*]i32, &values[0]));
+            }
+            "#,
+        )
+        .expect("interface method must substitute Self inside a many pointer parameter");
     }
 
     #[test]

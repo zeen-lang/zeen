@@ -255,6 +255,18 @@ implement[T: Hash + Eq] HashSet[T] {
   }
 }
 
+implement[T: Hash + Eq] FromIterator : HashSet[T] {
+  alias Item = T;
+
+  fn empty() Self {
+    return HashSet#[T].new();
+  }
+
+  fn push(*self, item: T) {
+    self.insert(item);
+  }
+}
+
 implement[T: Hash + Eq] Drop : HashSet[T] {
   fn drop(self) {
     self.clear();

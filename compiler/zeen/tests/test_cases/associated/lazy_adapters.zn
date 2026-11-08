@@ -1,0 +1,103 @@
+interface Seq {
+  alias Item;
+
+  pub fn next(*self) Option[Item];
+
+  pub fn map[U](self, f: Fn(Item) U) Map[Self, U] {
+    return Map#[Self, U] { .inner = self, .f = f };
+  }
+
+  pub fn filter(self, pred: Fn(Item) bool) Filter[Self] {
+    return Filter#[Self] { .inner = self, .pred = pred };
+  }
+}
+
+struct Map[I: Seq, U] {
+  inner: I,
+  f: Fn(I.Item) U,
+}
+
+struct Filter[I: Seq] {
+  inner: I,
+  pred: Fn(I.Item) bool,
+}
+
+implement[I: Seq, U] Seq : Map[I, U] {
+  alias Item = U;
+
+  fn next(*self) Option[U] {
+    switch (self.inner.next()) {
+      .Some(item) => { return Option.Some((self.f)(item)); },
+      .None => { return Option.None; },
+    }
+  }
+}
+
+implement[I: Seq] Seq : Filter[I] {
+  alias Item = I.Item;
+
+  fn next(*self) Option[I.Item] {
+    while (true) {
+      switch (self.inner.next()) {
+        .Some(item) => {
+          if ((self.pred)(item)) {
+            return Option.Some(item);
+          }
+        },
+        .None => { return Option.None; },
+      }
+    }
+
+    return Option.None;
+  }
+}
+
+struct Counter {
+  value: i32,
+  limit: i32,
+}
+
+implement Seq : Counter {
+  alias Item = i32;
+
+  fn next(*self) Option[i32] {
+    if (self.value >= self.limit) {
+      return Option.None;
+    }
+
+    self.value += 1;
+
+    return Option.Some(self.value);
+  }
+}
+
+fn counter(limit: i32) Counter {
+  return Counter { .value = 0, .limit = limit };
+}
+
+fn drain[I: Seq](iter: *I) i32 {
+  let count = 0;
+
+  while (true) {
+    switch (iter.next()) {
+      .Some(_) => { count += 1; },
+      .None => { break; },
+    }
+  }
+
+  return count;
+}
+
+fn main() {
+  const scale = 2;
+
+  let evens = counter(10)
+    .map(fn(x: i32) i32 { return x * scale; })
+    .filter(fn(x: i32) bool { return x > 4; });
+
+  @println("{}", drain(&evens));
+
+  let plain = counter(4).map(fn(x: i32) i32 { return x + 1; });
+
+  @println("{}", drain(&plain));
+}

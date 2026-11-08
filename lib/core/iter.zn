@@ -1,17 +1,239 @@
 // @zeen-core
 
+interface FromIterator {
+  alias Item;
+
+  pub fn empty() Self;
+
+  pub fn push(*self, item: Item);
+}
+
 /// Main Iterator interface
 interface Iterator {
   alias Item;
 
   pub fn next(*self) Option[Item];
+
+  pub fn map[U](self, f: Fn(Item) U) MapIter[Self, U] {
+    return MapIter#[Self, U] { .inner = self, .f = f };
+  }
+
+  pub fn filter(self, pred: Fn(Item) bool) FilterIter[Self] {
+    return FilterIter#[Self] { .inner = self, .pred = pred };
+  }
+
+  pub fn take(self, count: usize) TakeIter[Self] {
+    return TakeIter#[Self] { .inner = self, .remaining = count };
+  }
+
+  pub fn skip(self, count: usize) SkipIter[Self] {
+    return SkipIter#[Self] { .inner = self, .remaining = count };
+  }
+
+  pub fn any(self, pred: Fn(Item) bool) bool {
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => {
+          if (pred(item)) {
+            return true;
+          }
+        },
+        .None => { return false; },
+      }
+    }
+
+    return false;
+  }
+
+  pub fn all(self, pred: Fn(Item) bool) bool {
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => {
+          if (!pred(item)) {
+            return false;
+          }
+        },
+        .None => { return true; },
+      }
+    }
+
+    return true;
+  }
+
+  pub fn last_item(self) Option[Item] {
+    let last: Option[Item] = Option.None;
+
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => { last = Option.Some(item); },
+        .None => { break; },
+      }
+    }
+
+    return last;
+  }
+
+  pub fn nth(self, index: usize) Option[Item] {
+    let current: usize = 0;
+
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => {
+          if (current == index) {
+            return Option.Some(item);
+          }
+
+          current += 1;
+        },
+        .None => { return Option.None; },
+      }
+    }
+
+    return Option.None;
+  }
+
+  pub fn collect[C: FromIterator](self) C
+    where C.Item = Item {
+    let out = C.empty();
+
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => { out.push(item); },
+        .None => { break; },
+      }
+    }
+
+    return out;
+  }
+
+  pub fn count(self) usize {
+    let total: usize = 0;
+
+    while (true) {
+      switch (self.next()) {
+        .Some(&_) => { total += 1; },
+        .None => { break; },
+      }
+    }
+
+    return total;
+  }
+
+  pub fn for_each(self, f: Fn(Item) void) {
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => { f(item); },
+        .None => { break; },
+      }
+    }
+  }
+
+  pub fn fold[Acc](self, init: Acc, f: Fn(Acc, Item) Acc) Acc {
+    let acc = init;
+
+    while (true) {
+      switch (self.next()) {
+        .Some(item) => { acc = f(acc, item); },
+        .None => { break; },
+      }
+    }
+
+    return acc;
+  }
+}
+
+pub struct MapIter[I: Iterator, U] {
+  inner: I,
+  f: Fn(I.Item) U,
+}
+
+pub struct FilterIter[I: Iterator] {
+  inner: I,
+  pred: Fn(I.Item) bool,
+}
+
+implement[I: Iterator, U] Iterator : MapIter[I, U] {
+  alias Item = U;
+
+  fn next(*self) Option[U] {
+    switch (self.inner.next()) {
+      .Some(item) => { return Option.Some((self.f)(item)); },
+      .None => { return Option.None; },
+    }
+  }
+}
+
+implement[I: Iterator] Iterator : FilterIter[I] {
+  alias Item = I.Item;
+
+  fn next(*self) Option[I.Item] {
+    while (true) {
+      switch (self.inner.next()) {
+        .Some(item) => {
+          if ((self.pred)(item)) {
+            return Option.Some(item);
+          }
+        },
+        .None => { return Option.None; },
+      }
+    }
+
+    return Option.None;
+  }
+}
+
+pub struct TakeIter[I: Iterator] {
+  inner: I,
+  remaining: usize,
+}
+
+implement[I: Iterator] Iterator : TakeIter[I] {
+  alias Item = I.Item;
+
+  fn next(*self) Option[I.Item] {
+    if (self.remaining == 0) {
+      return Option.None;
+    }
+
+    self.remaining -= 1;
+
+    return self.inner.next();
+  }
+}
+
+pub struct SkipIter[I: Iterator] {
+  inner: I,
+  remaining: usize,
+}
+
+implement[I: Iterator] Iterator : SkipIter[I] {
+  alias Item = I.Item;
+
+  fn next(*self) Option[I.Item] {
+    while (self.remaining > 0) {
+      self.remaining -= 1;
+
+      switch (self.inner.next()) {
+        .Some(&_) => {},
+        .None => { return Option.None; },
+      }
+    }
+
+    return self.inner.next();
+  }
 }
 
 /// Returns struct that implements `Iterator` with pointer access
 interface PtrIterator {
   alias Iter: Iterator;
 
-  pub fn iter(*self) Iter;
+  pub fn iter(*const self) Iter;
+}
+
+interface MutPtrIterator {
+  alias Iter: Iterator;
+
+  pub fn iter_mut(*self) Iter;
 }
 
 /// Converter from ownership `self` to struct with `Iterator` implementation

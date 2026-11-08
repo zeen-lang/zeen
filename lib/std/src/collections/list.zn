@@ -800,7 +800,7 @@ implement[T] IndexPtr : List[T] {
 }
 
 implement[T] Sliceable : List[T] {
-  fn slice(*self, range: Range) []T {
+  fn slice(*const self, range: Range) []T {
     let start = if (range.start.is_some()) {
       range.start.unwrap()
     } else {
@@ -819,15 +819,15 @@ implement[T] Sliceable : List[T] {
 
 /// Borrow iter yielding pointers
 pub struct ListIter[T] {
-  ptr: [*]T,
+  ptr: [*]const T,
   len: usize,
   idx: usize,
 }
 
 implement[T] Iterator : ListIter[T] {
-  alias Item = *T;
+  alias Item = *const T;
 
-  fn next(*self) Option[*T] {
+  fn next(*self) Option[*const T] {
     if (self.idx >= self.len) {
       return Option.None;
     };
@@ -842,8 +842,37 @@ implement[T] Iterator : ListIter[T] {
 implement[T] PtrIterator : List[T] {
   alias Iter = ListIter[T];
 
-  fn iter(*self) ListIter[T] {
-    ListIter { .ptr = self.ptr, .len = self._len, .idx = 0 }
+  fn iter(*const self) ListIter[T] {
+    ListIter { .ptr = @as([*]const T, self.ptr), .len = self._len, .idx = 0 }
+  }
+}
+
+pub struct ListMutIter[T] {
+  ptr: [*]T,
+  len: usize,
+  idx: usize,
+}
+
+implement[T] Iterator : ListMutIter[T] {
+  alias Item = *T;
+
+  fn next(*self) Option[*T] {
+    if (self.idx >= self.len) {
+      return Option.None;
+    };
+
+    let i = self.idx;
+    self.idx += 1;
+
+    Option.Some(&self.ptr[i])
+  }
+}
+
+implement[T] MutPtrIterator : List[T] {
+  alias Iter = ListMutIter[T];
+
+  fn iter_mut(*self) ListMutIter[T] {
+    ListMutIter { .ptr = self.ptr, .len = self._len, .idx = 0 }
   }
 }
 
@@ -861,6 +890,14 @@ implement[T] OwnedIterator : List[T] {
     self._capacity = 0;
 
     OwnedListIter { .ptr = ptr, .len = len, .idx = 0, ._capacity = capacity }
+  }
+}
+
+implement[T] FromIterator : List[T] {
+  alias Item = T;
+
+  fn empty() Self {
+    return List.new();
   }
 }
 

@@ -39,12 +39,12 @@ implement Source : Number {
 }
 
 fn marked[S: Source](source: *S) i32
-where S.Item: Marker {
+  where S.Item: Marker {
     return source.read().mark();
 }
 
 fn doubled[S: Source](source: *S) i32
-where S.Item = i32 {
+  where S.Item = i32 {
     return source.read() + source.read();
 }
 

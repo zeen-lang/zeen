@@ -13,7 +13,7 @@ implement[T] Echo[T] : Buffer {
 }
 
 fn main() {
-  const buffer = Buffer { .count = 3 };
+  let buffer = Buffer { .count = 3 };
 
   @println("{}", buffer.echo(9));
 }

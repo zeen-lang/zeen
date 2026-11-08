@@ -2,7 +2,7 @@ use std.string;
 use std.collections.list;
 
 fn main() i32 {
-  let items = List#[String].new();
+  let items: List[String] = List.new();
   items.push(String.from("a"));
   items.push(String.from("bb"));
   items.push(String.from("ccc"));
@@ -16,7 +16,7 @@ fn main() i32 {
     @println("for-see={}", s.len());
   };
 
-  let moved = List#[String].new();
+  let moved: List[String] = List.new();
   let it = items.into_iter();
   while (true) {
     let next = it.next();
@@ -27,10 +27,10 @@ fn main() i32 {
   };
   @println("moved-len={} moved-first={}", moved.len(), moved.get_ptr(0).unwrap().len());
 
-  let empty = List#[i32].new();
+  let empty: List[i32] = List.new();
   @println("empty-none={}", empty.into_iter().next().is_none());
 
-  let nums = List#[i32].new();
+  let nums: List[i32] = List.new();
   nums.push(1);
   nums.push(2);
   nums.push(3);
@@ -44,5 +44,20 @@ fn main() i32 {
     sum += n.unwrap();
   };
   @println("sum={}", sum);
+
+  let scores: List[i32] = List.new();
+  scores.push(4);
+  scores.push(5);
+
+  for (score : scores.iter_mut()) {
+    *score = *score * 10;
+  };
+
+  scores.iter_mut().for_each(fn(score: *i32) void { *score += 1; });
+
+  for (score : scores.iter()) {
+    @println("mutated={}", *score);
+  };
+
   return 0;
 }

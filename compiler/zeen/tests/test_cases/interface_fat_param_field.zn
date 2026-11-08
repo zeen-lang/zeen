@@ -1,0 +1,26 @@
+interface Wrap {
+  pub fn wrap(*const self, f: Fn(i32) i32) Holder {
+    return Holder { .f = f };
+  }
+}
+
+struct Holder {
+  pub f: Fn(i32) i32,
+}
+
+struct Marker {
+  pub value: i32,
+}
+
+implement Wrap : Marker {}
+
+fn main() {
+  const marker: Marker = .{ .value = 0 };
+
+  const basic = marker.wrap(fn(x: i32) i32 { return x + 1; });
+
+  const bonus = 10;
+  const captured = marker.wrap(fn(x: i32) i32 { return x + bonus; });
+
+  @println("{} {}", (basic.f)(41), (captured.f)(41));
+}
