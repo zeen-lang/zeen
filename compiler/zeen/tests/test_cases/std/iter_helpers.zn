@@ -21,7 +21,12 @@ fn main() {
 
   nums.iter().for_each(fn(x: *i32) void { @println("each={}", *x); });
 
-  const chars = List#[char].new();
+  nums
+    .iter()
+    .map(fn(x: *i32) f32 { return @as(f32, *x); })
+    .for_each(fn(x: f32) void { @println("scaled={}", x); });
+
+  let chars = List#[char].new();
   chars.push('a');
   chars.push('b');
   chars.push('c');

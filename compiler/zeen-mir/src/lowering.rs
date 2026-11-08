@@ -162,6 +162,7 @@ pub struct MirLowering<'ctx> {
     mono_cache: MonoCache,
 
     current_assoc_bindings: Option<HashMap<DefId, TypeId>>,
+    current_self_ty: Option<TypeId>,
     current_impl_methods: Option<Vec<DefId>>,
     current_impl_interface: Option<DefId>,
 
@@ -387,6 +388,7 @@ impl<'ctx> MirLowering<'ctx> {
             program: MirProgram::default(),
             mono_cache: MonoCache::new(),
             current_assoc_bindings: None,
+            current_self_ty: None,
             current_impl_methods: None,
             current_impl_interface: None,
             hir_fns_by_def,
@@ -1931,7 +1933,8 @@ impl<'ctx> MirLowering<'ctx> {
     }
 
     fn associated_binding_for(&mut self, base: TypeId, def: DefId) -> Option<TypeId> {
-        if let Some(bindings) = &self.current_assoc_bindings
+        if self.current_self_ty == Some(base)
+            && let Some(bindings) = &self.current_assoc_bindings
             && let Some(bound) = bindings.get(&def)
         {
             return Some(*bound);
@@ -10261,6 +10264,86 @@ impl<'ctx> MirLowering<'ctx> {
         }
     }
 
+    fn method_self_type(&mut self, owner: DefId, generic_args: &[TypeId]) -> TypeId {
+        if let Some(DefKind::Builtin(builtin)) = self
+            .resolution
+            .defs
+            .get(&owner)
+            .map(|info| info.kind.clone())
+        {
+            return self.typecheck.interner.builtin(builtin);
+        }
+
+        let generics = self.owner_generics(owner);
+        let args: Vec<TypeId> = generics
+            .iter()
+            .enumerate()
+            .map(|(index, generic)| {
+                generic_args
+                    .get(index)
+                    .copied()
+                    .unwrap_or_else(|| self.typecheck.interner.intern(Type::GenericParam(*generic)))
+            })
+            .collect();
+
+        if let Some(shape) = self.typecheck.builtin_shapes.get(&owner).cloned() {
+            return self.concrete_shape_type(&shape, &args);
+        }
+
+        if matches!(
+            self.resolution.defs.get(&owner).map(|info| &info.kind),
+            Some(DefKind::Enum)
+        ) {
+            self.typecheck.interner.intern(Type::Enum {
+                def_id: owner,
+                generic_args: args,
+            })
+        } else {
+            self.typecheck.interner.intern(Type::Struct {
+                def_id: owner,
+                generic_args: args,
+            })
+        }
+    }
+
+    fn concrete_shape_type(&mut self, shape: &BuiltinShape, args: &[TypeId]) -> TypeId {
+        match shape {
+            BuiltinShape::Scalar(builtin) => self.typecheck.interner.builtin(*builtin),
+
+            BuiltinShape::Slice { element, is_const } => {
+                let element = self.concrete_shape_type(element, args);
+
+                self.typecheck.interner.intern(Type::Slice {
+                    element,
+                    is_const: *is_const,
+                })
+            }
+
+            BuiltinShape::ManyPointer { element, is_const } => {
+                let element = self.concrete_shape_type(element, args);
+
+                self.typecheck.interner.intern(Type::ManyPointer {
+                    inner: element,
+                    is_const: *is_const,
+                })
+            }
+
+            BuiltinShape::Array { element, len } => {
+                let element = self.concrete_shape_type(element, args);
+
+                self.typecheck.interner.intern(Type::Array {
+                    element,
+                    len: Some(*len),
+                })
+            }
+
+            BuiltinShape::Param(index) => args
+                .get(*index as usize)
+                .copied()
+                .unwrap_or_else(|| self.typecheck.interner.error()),
+        }
+    }
+
     fn monomorphize_fn(
         &mut self,
         def_id: DefId,
@@ -10557,6 +10640,10 @@ impl<'ctx> MirLowering<'ctx> {
 
         let previous_assoc_bindings = self.current_assoc_bindings.replace(bindings.clone());
 
+        let self_ty = owner_struct.map(|owner| self.method_self_type(owner, generic_args));
+        let previous_self_ty = self.current_self_ty;
+        self.current_self_ty = self_ty;
+
         let own_interface = self.typecheck.interface_method_owners.get(&def_id).copied();
         let previous_impl_methods = self.current_impl_methods.clone();
         let previous_impl_interface = self.current_impl_interface;
@@ -10669,6 +10756,7 @@ impl<'ctx> MirLowering<'ctx> {
         let Some(body) = &hir_fn.body else {
             fb.set_terminator(entry, Terminator::Unreachable);
             self.current_assoc_bindings = previous_assoc_bindings;
+            self.current_self_ty = previous_self_ty;
             self.current_impl_methods = previous_impl_methods;
             self.current_impl_interface = previous_impl_interface;
             return fb.func;
@@ -10748,6 +10836,7 @@ impl<'ctx> MirLowering<'ctx> {
         let _ = final_block;
 
         self.current_assoc_bindings = previous_assoc_bindings;
+        self.current_self_ty = previous_self_ty;
         self.current_impl_methods = previous_impl_methods;
         self.current_impl_interface = previous_impl_interface;
 
