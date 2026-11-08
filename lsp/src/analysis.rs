@@ -100,6 +100,7 @@ pub struct Analysis {
     pub members: HashMap<DefId, Vec<Member>>,
     pub member_owner: HashMap<DefId, DefId>,
     pub type_kinds: HashMap<DefId, TypeKind>,
+    pub type_defs: HashMap<String, DefId>,
     pub variant_fields: HashMap<DefId, Vec<String>>,
     pub scopes: Vec<Scope>,
     pub full_spans: HashMap<DefId, (usize, usize)>,
@@ -1336,6 +1337,7 @@ impl<'ctx> Walker<'ctx> {
         match &decl.kind {
             HirDeclKind::Interface(interface) => {
                 let name = self.interner.resolve(&interface.name.0).to_string();
+                self.analysis.type_defs.insert(name.clone(), decl.def_id);
                 let source = decl.source.src.inner().as_str();
                 self.analysis
                     .interface_arity
@@ -1355,8 +1357,16 @@ impl<'ctx> Walker<'ctx> {
             }
 
             HirDeclKind::Enum(enumeration) => {
+                let name = self.interner.resolve(&enumeration.name.0).to_string();
+                self.analysis.type_defs.insert(name, decl.def_id);
                 self.analysis.type_kinds.insert(decl.def_id, TypeKind::Enum);
                 self.collect_enum_variants(decl.def_id, enumeration);
+            }
+
+            HirDeclKind::Struct(strukt) => {
+                let name = self.interner.resolve(&strukt.name.0).to_string();
+                self.analysis.type_defs.insert(name, decl.def_id);
+                self.analysis.type_kinds.insert(decl.def_id, TypeKind::Struct);
             }
 
             HirDeclKind::Implement(implement) => {
@@ -1399,6 +1409,11 @@ impl<'ctx> Walker<'ctx> {
                 self.analysis
                     .type_kinds
                     .insert(decl.def_id, TypeKind::Struct);
+
+                self.analysis.type_defs.insert(
+                    self.interner.resolve(&strukt.name.0).to_string(),
+                    decl.def_id,
+                );
 
                 self.emit_def(
                     strukt.name.1.offset(),
@@ -1471,6 +1486,7 @@ impl<'ctx> Walker<'ctx> {
 
                 let name = self.interner.resolve(&interface.name.0).to_string();
                 let text = self.text;
+                self.analysis.type_defs.insert(name.clone(), decl.def_id);
                 self.analysis
                     .interface_arity
                     .insert(name.clone(), interface.generics.len());
@@ -1524,6 +1540,11 @@ impl<'ctx> Walker<'ctx> {
                 let role = self.role_of_def(decl.def_id).unwrap_or(Role::Type);
 
                 self.analysis.type_kinds.insert(decl.def_id, TypeKind::Enum);
+
+                self.analysis.type_defs.insert(
+                    self.interner.resolve(&enumeration.name.0).to_string(),
+                    decl.def_id,
+                );
 
                 self.emit_def(
                     enumeration.name.1.offset(),

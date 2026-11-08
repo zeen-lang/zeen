@@ -1304,7 +1304,10 @@ fn push_type_members(
     items: &mut Vec<CompletionItem>,
     seen: &mut std::collections::HashSet<String>,
 ) {
-    if let Some(def) = find_type_def(analysis, text, lookup) {
+    let local_def = find_type_def(analysis, text, lookup)
+        .or_else(|| analysis.type_defs.get(lookup).copied());
+
+    if let Some(def) = local_def {
         push_owner_members(analysis, def, static_context, cursor, filter, items, seen);
     }
 
@@ -4043,6 +4046,37 @@ mod tests {
 
         assert!(names.contains(&"y"));
         assert!(!names.contains(&"x"));
+    }
+
+    #[test]
+    fn iterator_default_methods_complete() {
+        let Some(std_root) = crate::diagnostics::resolve_std_root() else {
+            return;
+        };
+
+        let uri: tower_lsp_server::ls_types::Uri =
+            "file:///tmp/zeen-lsp-iter-default-probe.zn".parse().unwrap();
+        let paths = ResolvePaths {
+            dir: Some(std::path::Path::new("/tmp")),
+            root: Some(std::path::Path::new("/tmp")),
+            std: Some(std_root.as_path()),
+            packages: None,
+        };
+
+        let text =
+            "use std.collections.list;\n\nfn main() {\n  let l = List#[i32].new();\n  l.iter().\n}\n";
+        let offset = text.find("l.iter().").unwrap() + "l.iter().".len();
+        let repaired = repair_for_completion(text, offset).unwrap();
+        let output = crate::diagnostics::check_completion(&uri, &repaired, &[]);
+        let items = dot_complete(text, &output.analysis, offset - 1, paths);
+        let names = labels(&items);
+
+        for expected in ["map", "filter", "collect", "fold", "count"] {
+            assert!(
+                names.iter().any(|name| name.starts_with(expected)),
+                "missing default `{expected}`: {names:?}"
+            );
+        }
     }
 
     #[test]

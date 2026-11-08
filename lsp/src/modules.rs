@@ -470,7 +470,7 @@ fn members_of_type(content: &str, module: &str, type_name: &str) -> Vec<ModuleMe
                 }
             }
             DeclarationKind::ImplementDecl {
-                builtin,
+                interface,
                 object,
                 methods,
                 ..
@@ -487,7 +487,7 @@ fn members_of_type(content: &str, module: &str, type_name: &str) -> Vec<ModuleMe
                         ..
                     } = &method.kind
                     {
-                        if builtin.is_some() && !is_pub {
+                        if interface.is_none() && !is_pub {
                             continue;
                         }
 
@@ -943,6 +943,26 @@ mod tests {
         .unwrap();
 
         let members = type_members(&dir, &dir, None, &[], &["lib".to_string()], "i32");
+        let names: Vec<&str> = members.iter().map(|member| member.name.as_str()).collect();
+
+        assert!(names.contains(&"shown"));
+        assert!(!names.contains(&"hidden"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn imported_impl_methods_respect_privacy() {
+        let dir = std::env::temp_dir().join(format!("zeen-lsp-impl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("lib.zn"),
+            "pub struct Thing {\n    pub value: i32,\n}\n\nimplement Thing {\n    pub fn shown(*const self) i32 {\n        return self.value;\n    }\n\n    fn hidden(*const self) i32 {\n        return self.value;\n    }\n}\n",
+        )
+        .unwrap();
+
+        let members = type_members(&dir, &dir, None, &[], &["lib".to_string()], "Thing");
         let names: Vec<&str> = members.iter().map(|member| member.name.as_str()).collect();
 
         assert!(names.contains(&"shown"));
