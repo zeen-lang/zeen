@@ -423,4 +423,34 @@ mod tests {
             assert_eq!(token.3, type_token, "offset {offset}");
         }
     }
+
+    const PIPE_CLOSURE_SAMPLE: &str = "fn main() {\n    let double: fn(i32) i32 = |value| value * 2;\n    @println(\"{}\", double(2));\n}\n";
+
+    #[test]
+    fn pipe_closure_params_use_parameter_tokens() {
+        let uri: Uri = "file:///tmp/zeen-lsp-semantic-pipe-closure.zn"
+            .parse()
+            .unwrap();
+        let output = crate::diagnostics::check(&uri, PIPE_CLOSURE_SAMPLE, &[]);
+        assert!(crate::diagnostics::only_errors(&output.diagnostics).is_empty());
+
+        let tokens = decoded(
+            PIPE_CLOSURE_SAMPLE,
+            &tokens_for(PIPE_CLOSURE_SAMPLE, &output.analysis),
+        );
+        let parameter_token = TokenType::Parameter as u32;
+
+        let declaration = PIPE_CLOSURE_SAMPLE.find("value").unwrap();
+        let usage = PIPE_CLOSURE_SAMPLE.find("value * 2").unwrap();
+
+        for offset in [declaration, usage] {
+            let (line, start) = offset_position(PIPE_CLOSURE_SAMPLE, offset);
+            let token = tokens
+                .iter()
+                .find(|token| token.0 == line && token.1 == start)
+                .unwrap();
+
+            assert_eq!(token.3, parameter_token, "offset {offset}");
+        }
+    }
 }

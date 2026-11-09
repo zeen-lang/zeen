@@ -3271,6 +3271,96 @@ mod tests {
     }
 
     #[test]
+    fn closure_pipe_expression_body() {
+        const SRC: &str = "|x, y| x + y";
+
+        make_expr_parser!(SRC, tokens, bump, rodeo, parser, expr_parser);
+
+        let parsed = expr_parser.parse().unwrap();
+
+        let ExpressionKind::Closure {
+            params,
+            return_type,
+            body,
+        } = parsed.kind
+        else {
+            panic!("expected Closure, got {:?}", parsed.kind);
+        };
+
+        assert_eq!(params.len(), 2);
+        assert!(params.iter().all(|param| param.ty.is_none()));
+        assert!(return_type.is_none());
+
+        let zeen_ast::statements::StatementKind::Expr(inner) = body.kind else {
+            panic!("closure body should be an expression statement");
+        };
+
+        let ExpressionKind::Block { trailing, .. } = inner.kind else {
+            panic!("closure body should wrap a block expression");
+        };
+
+        assert!(matches!(
+            trailing.map(|expr| &expr.kind),
+            Some(ExpressionKind::Binary { .. })
+        ));
+    }
+
+    #[test]
+    fn closure_pipe_zero_params() {
+        const SRC: &str = "|| 42";
+
+        make_expr_parser!(SRC, tokens, bump, rodeo, parser, expr_parser);
+
+        let parsed = expr_parser.parse().unwrap();
+
+        let ExpressionKind::Closure {
+            params,
+            return_type,
+            ..
+        } = parsed.kind
+        else {
+            panic!("expected Closure, got {:?}", parsed.kind);
+        };
+
+        assert!(params.is_empty());
+        assert!(return_type.is_none());
+    }
+
+    #[test]
+    fn closure_pipe_wildcard_param() {
+        const SRC: &str = "|_, y: i32| y";
+
+        make_expr_parser!(SRC, tokens, bump, rodeo, parser, expr_parser);
+
+        let parsed = expr_parser.parse().unwrap();
+
+        let ExpressionKind::Closure { params, .. } = parsed.kind else {
+            panic!("expected Closure, got {:?}", parsed.kind);
+        };
+
+        assert_eq!(params.len(), 2);
+        assert!(params[0].name.is_none());
+        assert!(params[0].ty.is_none());
+        assert!(params[1].name.is_some());
+        assert!(params[1].ty.is_some());
+    }
+
+    #[test]
+    fn closure_fn_literal_is_rejected() {
+        const SRC: &str = "fn(x: i32) i32 { x }";
+
+        make_expr_parser!(SRC, tokens, bump, rodeo, parser, expr_parser);
+
+        assert!(expr_parser.parse().is_none());
+        assert!(
+            parser
+                .errors
+                .iter()
+                .any(|error| matches!(error, ParserError::FnClosureRemoved { .. }))
+        );
+    }
+
+    #[test]
     fn target_var_expr() {
         const SRC: &str = "@var[target]";
 

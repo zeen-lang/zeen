@@ -14342,6 +14342,125 @@ mod tests {
     }
 
     #[test]
+    fn closure_params_inferred_from_basic_fn() {
+        typecheck_full(
+            r#"
+            fn apply(f: fn(i32) i32, x: i32) i32 {
+                return f(x);
+            }
+
+            fn main() {
+                let r = apply(|x| x * 2, 21);
+            }
+            "#,
+        )
+        .expect("closure parameters must come from the expected basic fn type");
+    }
+
+    #[test]
+    fn closure_params_inferred_from_fat_fn_binding() {
+        let result = typecheck_full(
+            r#"
+            fn main() {
+                let n = 10;
+                let f: Fn(i32) i32 = |x| x + n;
+            }
+            "#,
+        )
+        .expect("closure parameters must come from the expected fat fn type");
+
+        assert!(find_fat_fn(&result).is_some());
+    }
+
+    #[test]
+    fn closure_wildcard_param_accepts_any_argument() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let f: fn(i32) i32 = |_| 7;
+                let r = f(1);
+            }
+            "#,
+        )
+        .expect("a wildcard parameter must accept the expected parameter type");
+    }
+
+    #[test]
+    fn closure_return_inferred_from_body() {
+        let result = typecheck_full(
+            r#"
+            fn main() {
+                let f = |x: i32| x * 2;
+                let r = f(2);
+            }
+            "#,
+        )
+        .expect("an annotated parameter and an expression body must infer the return type");
+
+        assert!(
+            result.def_types.values().any(|&ty| matches!(
+                result.interner.get(ty),
+                Type::Fn { params, ret }
+                    if params.len() == 1
+                        && matches!(result.interner.get(*ret), Type::Builtin(zeen_ast::types::BuiltinType::i32))
+            )),
+            "closure must infer `fn(i32) i32` from its body"
+        );
+    }
+
+    #[test]
+    fn closure_param_type_needed_is_reported() {
+        let errors = typecheck_full("fn main() { let f = |x| x; }")
+            .expect_err("an unannotated parameter without an expected type must be rejected");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::ClosureParamTypeNeeded { .. })),
+            "expected TypeError::ClosureParamTypeNeeded, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn closure_return_type_needed_is_reported() {
+        let errors = typecheck_full("fn main() { let f = |x: i32| { return x; }; }")
+            .expect_err("a return without an expected or declared return type must be rejected");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::ClosureReturnTypeNeeded { .. })),
+            "expected TypeError::ClosureReturnTypeNeeded, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn closure_param_count_mismatch_is_reported() {
+        let errors = typecheck_full("fn main() { let f: fn(i32) i32 = |a, b| a + b; }")
+            .expect_err("a closure with the wrong parameter count must be rejected");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::ClosureParamCountMismatch { .. })),
+            "expected TypeError::ClosureParamCountMismatch, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn closure_body_type_mismatch_is_reported() {
+        let errors = typecheck_full("fn main() { let f: fn() i32 = || true; }")
+            .expect_err("a closure body with the wrong type must be rejected");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::ClosureBodyTypeMismatch { .. })),
+            "expected TypeError::ClosureBodyTypeMismatch, got: {errors:?}"
+        );
+    }
+
+    #[test]
     fn closure_body_return_type_is_checked() {
         let errors = typecheck_full("fn main() { let c = || -> i32 { return true; }; }")
             .expect_err("closure body return mismatch must be reported");
