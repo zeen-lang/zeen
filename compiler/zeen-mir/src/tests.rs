@@ -822,7 +822,7 @@ fn capturing_closure_body_has_env_first_param() {
     let mir = compile_mir_ok(
         "fn main() { \
              let n = 5; \
-             let add = fn(x: i32) i32 { return x + n; }; \
+             let add = |x: i32| -> i32 { return x + n; }; \
              let r = add(10); \
              @println(\"{}\", r); \
          }",
@@ -860,7 +860,7 @@ fn fat_call_passes_env_before_user_args() {
         "fn apply(f: Fn(i32) i32, x: i32) i32 { f(x) } \
          fn main() { \
              let n = 5; \
-             let add = fn(x: i32) i32 { return x + n; }; \
+             let add = |x: i32| -> i32 { return x + n; }; \
              let r = apply(add, 10); \
              @println(\"{}\", r); \
          }",
@@ -902,7 +902,7 @@ fn capturing_closure_env_is_heap_allocated() {
         "fn apply(f: Fn(i32) i32, x: i32) i32 { f(x) } \
          fn main() { \
              let n = 5; \
-             let add = fn(x: i32) i32 { return x + n; }; \
+             let add = |x: i32| -> i32 { return x + n; }; \
              @println(\"{}\", apply(add, 10)); \
          }",
     );
@@ -943,7 +943,7 @@ fn closure_env_block_is_stored_through_a_boxed_pointer() {
     let mir = compile_mir_ok(
         "fn main() { \
              let n = 5; \
-             let add = fn(x: i32) i32 { return x + n; }; \
+             let add = |x: i32| -> i32 { return x + n; }; \
              let r = add(10); \
              @println(\"{}\", r); \
          }",
@@ -988,7 +988,7 @@ fn zero_capture_closure_coerced_to_fat_uses_env_first_adapter() {
     let mir = compile_mir_ok(
         "fn apply_once(f: FnOnce(i32) i32, x: i32) i32 { f(x) } \
          fn main() { \
-             @println(\"{}\", apply_once(fn(a: i32) i32 { return a + 1; }, 41)); \
+             @println(\"{}\", apply_once(|a: i32| -> i32 { return a + 1; }, 41)); \
          }",
     );
 
@@ -1078,7 +1078,7 @@ fn fat_layout_is_static_two_field_envelope() {
         "fn apply(f: Fn(i32) i32, x: i32) i32 { f(x) } \
          fn main() { \
              let n = 5; \
-             let add = fn(x: i32) i32 { return x + n; }; \
+             let add = |x: i32| -> i32 { return x + n; }; \
              @println(\"{}\", apply(add, 10)); \
          }",
     );
@@ -1121,7 +1121,7 @@ fn runtime_bare_fn_coercion_boxes_pointer_and_uses_adapter() {
     let mir = compile_mir_ok(
         "fn apply(f: Fn(i32) i32, x: i32) i32 { f(x) } \
          fn main() { \
-             let k = fn(x: i32) i32 { return x + 1; }; \
+             let k = |x: i32| -> i32 { return x + 1; }; \
              @println(\"{}\", apply(k, 5)); \
          }",
     );
@@ -1159,7 +1159,7 @@ fn runtime_bare_fn_coercion_boxes_pointer_and_uses_adapter() {
 #[test]
 fn zero_capture_closure_lowered_to_fn_const_call() {
     let mir =
-        compile_mir_ok("fn main() { let c = fn(a: i32) i32 { return a + 1; }; let r = c(41); }");
+        compile_mir_ok("fn main() { let c = |a: i32| -> i32 { return a + 1; }; let r = c(41); }");
 
     let main_id = fn_id_by_name(&mir, "main").expect("main missing");
     let func = &mir.program.functions[&main_id];
@@ -1195,7 +1195,7 @@ fn zero_capture_closure_lowered_to_fn_const_call() {
 #[test]
 fn generic_typed_capture_lowers_env_instance() {
     let mir = compile_mir_ok(
-        "fn generic[T: Copy](v: T) T { let c = fn() T { return v; }; return c(); } \
+        "fn generic[T: Copy](v: T) T { let c = || -> T { return v; }; return c(); } \
          fn main() i32 { return @as(i32, generic(3)); }",
     );
 
@@ -1232,7 +1232,7 @@ fn escaping_fnonce_closure_gets_fat_drop_function() {
          fn apply_once(f: FnOnce(i32) i32, x: i32) i32 { return f(x); } \
          fn main() i32 { \
              let w = Wrap { .v = 3 }; \
-             let c = fn(a: i32) i32 { return a + w.v; }; \
+             let c = |a: i32| -> i32 { return a + w.v; }; \
              return apply_once(c, 10); \
          }",
     );
@@ -1258,7 +1258,7 @@ fn heap_fn_closure_gets_drop_function() {
     let mir = compile_mir_ok(
         "fn main() { \
              let n = 5; \
-             let add = fn(x: i32) i32 { return x + n; }; \
+             let add = |x: i32| -> i32 { return x + n; }; \
              let r = add(10); \
              @println(\"{}\", r); \
          }",
@@ -1285,7 +1285,7 @@ fn fnonce_call_consumes_the_closure_value() {
     let mir = compile_mir_ok(
         "fn apply_once(f: FnOnce(i32) i32, x: i32) i32 { return f(x); } \
          fn main() i32 { \
-             return apply_once(fn(a: i32) i32 { return a + 1; }, 41); \
+             return apply_once(|a: i32| -> i32 { return a + 1; }, 41); \
          }",
     );
 
@@ -1316,7 +1316,7 @@ fn live_heap_env_closure_registers_drop_function() {
         "struct Wrap { pub v: i32 } \
          fn main() i32 { \
              let w = Wrap { .v = 3 }; \
-             let c = fn(a: i32) i32 { return a + w.v; }; \
+             let c = |a: i32| -> i32 { return a + w.v; }; \
              let p = &c; \
              return 0; \
          }",
@@ -1336,7 +1336,7 @@ fn fnonce_param_mono_copy_registers_drop_function() {
     let mir = compile_mir_ok(
         "fn apply_once(f: FnOnce(i32) i32, x: i32) i32 { return f(x); } \
          fn main() i32 { \
-             return apply_once(fn(a: i32) i32 { return a + 1; }, 41); \
+             return apply_once(|a: i32| -> i32 { return a + 1; }, 41); \
          }",
     );
 
@@ -1362,7 +1362,7 @@ fn consuming_call_of_concrete_env_calls_drop_function() {
         "struct Wrap { pub v: i32 } \
          fn main() i32 { \
              let w = Wrap { .v = 3 }; \
-             let c = fn(a: i32) i32 { return a + w.v; }; \
+             let c = |a: i32| -> i32 { return a + w.v; }; \
              return c(10); \
          }",
     );

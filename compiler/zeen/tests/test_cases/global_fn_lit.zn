@@ -1,4 +1,4 @@
-let c: fn() i32 = fn() i32 { return 7; };
+let c: fn() i32 = || -> i32 { return 7; };
 
 fn main() i32 {
     @println("c: {}", c());

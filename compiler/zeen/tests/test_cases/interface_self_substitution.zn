@@ -60,7 +60,7 @@ implement Container : Counter {}
 fn main() {
     let counter = Counter { .value = 0 };
 
-    counter.for_each(fn(value: i32) void {
+    counter.for_each(|value: i32| -> void {
         @println("{}", value);
     });
 

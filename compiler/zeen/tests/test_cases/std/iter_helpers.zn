@@ -10,27 +10,27 @@ fn main() {
 
   const evens: List[i32] = nums
     .iter()
-    .map(fn(x: *const i32) i32 { return *x * 2; })
-    .filter(fn(x: i32) bool { return x > 4; })
+    .map(|x: *const i32| -> i32 { return *x * 2; })
+    .filter(|x: i32| -> bool { return x > 4; })
     .collect();
 
   @println("len={} count={}", evens.len(), nums.iter().count());
 
-  const total = nums.iter().fold(0, fn(acc: i32, x: *const i32) i32 { return acc + *x; });
+  const total = nums.iter().fold(0, |acc: i32, x: *const i32| -> i32 { return acc + *x; });
   @println("fold={}", total);
 
-  nums.iter().for_each(fn(x: *const i32) void { @println("each={}", *x); });
+  nums.iter().for_each(|x: *const i32| -> void { @println("each={}", *x); });
 
   nums
     .iter()
-    .map(fn(x: *const i32) f32 { return @as(f32, *x); })
-    .for_each(fn(x: f32) void { @println("scaled={}", x); });
+    .map(|x: *const i32| -> f32 { return @as(f32, *x); })
+    .for_each(|x: f32| -> void { @println("scaled={}", x); });
 
-  nums.iter().take(2).for_each(fn(x: *const i32) void { @println("take={}", *x); });
-  nums.iter().skip(2).for_each(fn(x: *const i32) void { @println("skip={}", *x); });
+  nums.iter().take(2).for_each(|x: *const i32| -> void { @println("take={}", *x); });
+  nums.iter().skip(2).for_each(|x: *const i32| -> void { @println("skip={}", *x); });
 
-  @println("any={} all={}", nums.iter().any(fn(x: *const i32) bool { return *x > 3; }), nums.iter().all(fn(x: *const i32) bool { return *x > 0; }));
-  @println("any_none={} all_none={}", nums.iter().any(fn(x: *const i32) bool { return *x > 9; }), nums.iter().all(fn(x: *const i32) bool { return *x > 9; }));
+  @println("any={} all={}", nums.iter().any(|x: *const i32| -> bool { return *x > 3; }), nums.iter().all(|x: *const i32| -> bool { return *x > 0; }));
+  @println("any_none={} all_none={}", nums.iter().any(|x: *const i32| -> bool { return *x > 9; }), nums.iter().all(|x: *const i32| -> bool { return *x > 9; }));
 
   switch (nums.iter().last_item()) {
     .Some(x) => { @println("last={}", *x); },

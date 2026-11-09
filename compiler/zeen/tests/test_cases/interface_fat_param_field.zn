@@ -17,10 +17,10 @@ implement Wrap : Marker {}
 fn main() {
   const marker: Marker = .{ .value = 0 };
 
-  const basic = marker.wrap(fn(x: i32) i32 { return x + 1; });
+  const basic = marker.wrap(|x: i32| -> i32 { return x + 1; });
 
   const bonus = 10;
-  const captured = marker.wrap(fn(x: i32) i32 { return x + bonus; });
+  const captured = marker.wrap(|x: i32| -> i32 { return x + bonus; });
 
   @println("{} {}", (basic.f)(41), (captured.f)(41));
 }

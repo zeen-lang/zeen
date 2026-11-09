@@ -13,6 +13,6 @@ fn main() {
 
   let err = divide(7, 0);
   @println("err: {} {}", err.is_err(), err.unwrap_err());
-  @println("or_else: {}", err.unwrap_or_else(fn() i32 { return 42; }));
+  @println("or_else: {}", err.unwrap_or_else(|| -> i32 { return 42; }));
   @println("expect: {}", divide(9, 3).expect("math broke"));
 }

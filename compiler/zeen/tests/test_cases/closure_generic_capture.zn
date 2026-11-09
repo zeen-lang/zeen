@@ -1,5 +1,5 @@
 fn capture_in_generic[T: Copy](v: T) T {
-    let c = fn() T { return v; };
+    let c = || -> T { return v; };
     return c();
 }
 

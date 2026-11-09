@@ -92,12 +92,12 @@ fn main() {
   const scale = 2;
 
   let evens = counter(10)
-    .map(fn(x: i32) i32 { return x * scale; })
-    .filter(fn(x: i32) bool { return x > 4; });
+    .map(|x: i32| -> i32 { return x * scale; })
+    .filter(|x: i32| -> bool { return x > 4; });
 
   @println("{}", drain(&evens));
 
-  let plain = counter(4).map(fn(x: i32) i32 { return x + 1; });
+  let plain = counter(4).map(|x: i32| -> i32 { return x + 1; });
 
   @println("{}", drain(&plain));
 }
