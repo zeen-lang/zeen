@@ -534,6 +534,30 @@ impl<'res> HirLowering<'res> {
         }
     }
 
+    fn lower_closure_param(&mut self, param: &zeen_ast::declarations::ClosureParam) -> HirParam {
+        let def_id = self.resolution.def_of_closure_param(param);
+        let name = param
+            .name
+            .or_else(|| Some(self.interner.borrow_mut().get_or_intern("_")));
+
+        let ty = match param.ty {
+            Some(ty) => Rc::new(self.lower_type(ty)),
+            None => Rc::new(HirTypeExpr {
+                id: self.fresh_id(),
+                kind: HirTypeKind::Error,
+                source: (param.span, self.current_src.clone()).into(),
+            }),
+        };
+
+        HirParam {
+            id: self.fresh_id(),
+            def_id,
+            name,
+            ty,
+            span: param.span,
+        }
+    }
+
     fn lower_generics(&mut self, generics: Option<&[GenericType]>) -> Vec<HirGenericParam> {
         let Some(generics) = generics else {
             return Vec::new();
@@ -1078,7 +1102,7 @@ impl<'res> HirLowering<'res> {
 
                 let hir_params: Vec<Rc<HirParam>> = params
                     .iter()
-                    .map(|param| Rc::new(self.lower_param(param)))
+                    .map(|param| Rc::new(self.lower_closure_param(param)))
                     .collect();
 
                 let def = Rc::new(HirFn {
@@ -1904,7 +1928,7 @@ mod tests {
 
     #[test]
     fn closure_lowers_to_closure_expr_with_fn() {
-        let fx = lower_ok("fn main() { let c = fn(x: i32) i32 { return x + 1; }; }");
+        let fx = lower_ok("fn main() { let c = |x: i32| -> i32 { return x + 1; }; }");
 
         let value = closure_expr_of(&fx, "main");
 
@@ -1939,7 +1963,7 @@ mod tests {
     #[test]
     fn closure_fn_has_parent_and_capture_free_param_names() {
         let fx =
-            lower_ok("fn outer() void { let a = 1; let c = fn(b: i32) i32 { return a + b; }; }");
+            lower_ok("fn outer() void { let a = 1; let c = |b: i32| -> i32 { return a + b; }; }");
 
         let value = closure_expr_of(&fx, "outer");
 
@@ -1958,7 +1982,7 @@ mod tests {
     #[test]
     fn nested_closure_lowers_inside_outer_closure() {
         let fx = lower_ok(
-            "fn main() { let x = 1; let outer = fn() i32 { let y = 2; let inner = fn() i32 { return x + y; }; return inner(); }; }",
+            "fn main() { let x = 1; let outer = || -> i32 { let y = 2; let inner = || -> i32 { return x + y; }; return inner(); }; }",
         );
 
         let outer = closure_expr_of(&fx, "main");

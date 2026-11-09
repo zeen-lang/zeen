@@ -93,7 +93,7 @@ pub enum ExpressionKind<'arena> {
     },
 
     Closure {
-        params: &'arena [crate::declarations::FnParam<'arena>],
+        params: &'arena [crate::declarations::ClosureParam<'arena>],
         return_type: Option<&'arena crate::types::TypeExpr<'arena>>,
         body: &'arena crate::statements::Statement<'arena>,
     },

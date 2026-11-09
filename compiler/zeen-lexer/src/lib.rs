@@ -352,7 +352,14 @@ impl<'inp> Tokenizer<'inp> {
             '/' => TokenKind::Slash,
 
             '+' => TokenKind::Plus,
-            '-' => TokenKind::Minus,
+            '-' => {
+                if self.first() == '>' {
+                    let _ = self.bump();
+                    TokenKind::Arrow
+                } else {
+                    TokenKind::Minus
+                }
+            }
             '*' => TokenKind::Star,
             '%' => TokenKind::Percent,
             '^' => TokenKind::Caret,

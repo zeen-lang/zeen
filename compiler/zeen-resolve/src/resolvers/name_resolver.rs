@@ -2275,7 +2275,7 @@ impl<'ctx> NameResolver {
     fn resolve_closure(
         &mut self,
         expr: &'ctx Expression<'ctx>,
-        params: &'ctx [zeen_ast::declarations::FnParam<'ctx>],
+        params: &'ctx [zeen_ast::declarations::ClosureParam<'ctx>],
         return_type: Option<&'ctx TypeExpr<'ctx>>,
         body: &'ctx Statement<'ctx>,
     ) {
@@ -2324,9 +2324,26 @@ impl<'ctx> NameResolver {
         });
 
         for param in params {
-            self.resolve_type(param.ty);
+            if let Some(ty) = param.ty {
+                self.resolve_type(ty);
+            }
 
-            let Some(pname) = param.name else { continue };
+            let Some(pname) = param.name else {
+                let wildcard = self.interner_intern("_");
+
+                self.define_at(
+                    NodeKey::from_closure_param(param),
+                    DefInfo {
+                        name: wildcard,
+                        kind: DefKind::Param,
+                        span: (param.span, self.named_src()).into(),
+                        decl: None,
+                        is_pub: false,
+                    },
+                );
+
+                continue;
+            };
 
             if pname == self.interner_intern("self") {
                 self.report(ResolveError::DisabledFeature {
@@ -2338,7 +2355,7 @@ impl<'ctx> NameResolver {
             }
 
             let def_id = self.define_at(
-                NodeKey::from_param(param),
+                NodeKey::from_closure_param(param),
                 DefInfo {
                     name: pname,
                     kind: DefKind::Param,

@@ -62,6 +62,7 @@ pub enum TokenKind {
     RShift, // >>
 
     FatArrow, // =>
+    Arrow,
 
     Pipe,      // |
     Ampersand, // &

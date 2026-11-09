@@ -5,9 +5,11 @@ use strum::FromRepr;
 
 use zeen_ast::{
     PreprocessorDirective,
+    declarations::ClosureParam,
     expressions::{self, ExprConditionalBlock, Expression, ExpressionKind},
+    statements::{Statement, StatementKind},
 };
-use zeen_lexer::{Token, TokenKind};
+use zeen_lexer::{Token, TokenKind, token::CompilerKeyword};
 
 pub struct ExprParser<'tok, 'ctx, 'pr> {
     p: &'pr mut Parser<'tok, 'ctx>,
@@ -270,11 +272,12 @@ impl<'tok, 'ctx, 'pr> ExprParser<'tok, 'ctx, 'pr> {
     }
 
     fn could_start_expr(&self) -> bool {
-        use zeen_lexer::token::CompilerKeyword;
         matches!(
             self.p.current().kind,
             TokenKind::Literal { .. }
                 | TokenKind::Ident
+                | TokenKind::Pipe
+                | TokenKind::BooleanOr
                 | TokenKind::MacroIdent
                 | TokenKind::Ref
                 | TokenKind::PreprocessorIdent
@@ -435,7 +438,8 @@ impl<'tok, 'ctx, 'pr> ExprParser<'tok, 'ctx, 'pr> {
 
             TokenKind::Keyword(CompilerKeyword::If) => self.parse_if_expr(),
             TokenKind::Keyword(CompilerKeyword::Switch) => self.parse_switch(),
-            TokenKind::Keyword(CompilerKeyword::Fn) => self.parse_closure(),
+            TokenKind::Pipe | TokenKind::BooleanOr => self.parse_closure(),
+            TokenKind::Keyword(CompilerKeyword::Fn) => self.parse_removed_fn_closure(),
             TokenKind::Keyword(CompilerKeyword::Comptime) => self.parse_comptime_block_expr(),
 
             TokenKind::Keyword(CompilerKeyword::SelfUpper | CompilerKeyword::SelfLower) => {
@@ -1478,63 +1482,105 @@ impl<'tok, 'ctx, 'pr> ExprParser<'tok, 'ctx, 'pr> {
     }
 
     fn parse_closure(&mut self) -> Option<&'ctx Expression<'ctx>> {
-        use zeen_lexer::token::CompilerKeyword;
+        let start = self.p.current().span;
 
-        let fn_kw = self
-            .p
-            .expect(TokenKind::Keyword(CompilerKeyword::Fn), "fn")?;
+        if self.p.at(TokenKind::BooleanOr) {
+            let _ = self.p.advance_not_eof()?;
+            let params = self.p.arena.alloc_slice_copy(&[]);
 
-        let _ = self.p.expect(TokenKind::OpenParen, "(")?;
+            return self.finish_closure(start, params);
+        }
 
-        let mut params_buffer: SmallVec<[zeen_ast::declarations::FnParam; 4]> = SmallVec::new();
+        let _ = self.p.expect(TokenKind::Pipe, "|")?;
 
-        while !(self.p.at(TokenKind::CloseParen) || self.p.at(TokenKind::Eof)) {
-            let mut name: Option<lasso::Spur> = None;
-            let mut span = self.p.current().span;
+        let mut params_buffer: SmallVec<[ClosureParam; 4]> = SmallVec::new();
 
-            if self.p.at(TokenKind::Ident) {
+        while !(self.p.at(TokenKind::Pipe) || self.p.at(TokenKind::Eof)) {
+            let (name, mut span) = if self.p.at(TokenKind::Underscore) {
+                let token = self.p.advance_not_eof()?;
+
+                (None, token.span)
+            } else if self.p.at(TokenKind::Ident)
+                || self.p.at(TokenKind::Keyword(CompilerKeyword::SelfLower))
+            {
                 let name_token = self.p.advance_not_eof()?;
                 let name_span = name_token.span;
                 let name_slice =
                     self.p.src[name_span.offset()..name_span.offset() + name_span.len()].to_owned();
 
-                name = Some(self.p.get_or_intern(name_slice));
-                span = name_span;
+                (Some(self.p.get_or_intern(name_slice)), name_span)
+            } else {
+                self.p.expect(TokenKind::Ident, "parameter name")?;
+                return None;
+            };
 
-                let _ = self.p.expect(TokenKind::Colon, ":")?;
+            let ty = if self.p.eat(TokenKind::Colon) {
+                let mut type_parser = crate::type_parser::TypeParser::new(self.p);
+                Some(type_parser.parse()?)
+            } else {
+                None
+            };
+
+            if let Some(ty) = ty {
+                span = ty.merge_span(span);
             }
-
-            let mut type_parser = crate::type_parser::TypeParser::new(self.p);
-            let ty = type_parser.parse()?;
-
-            span = ty.merge_span(span);
 
             let _ = self.p.eat(TokenKind::Comma);
 
-            params_buffer.push(zeen_ast::declarations::FnParam { name, ty, span });
+            params_buffer.push(ClosureParam { name, ty, span });
         }
 
-        let _ = self.p.expect(TokenKind::CloseParen, ")")?;
+        let _ = self.p.expect(TokenKind::Pipe, "|")?;
         let params = self.p.arena.alloc_slice_copy(&params_buffer);
 
+        self.finish_closure(start, params)
+    }
+
+    fn parse_removed_fn_closure(&mut self) -> Option<&'ctx Expression<'ctx>> {
+        let token = self.p.current_clone();
+
+        self.p.report(ParserError::FnClosureRemoved {
+            src: self.p.named_src(),
+            span: token.span,
+        });
+
+        None
+    }
+
+    fn finish_closure(
+        &mut self,
+        start: miette::SourceSpan,
+        params: &'ctx [ClosureParam<'ctx>],
+    ) -> Option<&'ctx Expression<'ctx>> {
         let mut return_type = None;
 
-        if !(self.p.at(TokenKind::OpenBrace)
-            || self.p.at(TokenKind::CloseBrace)
-            || self.p.at(TokenKind::Semicolon)
-            || self.p.at(TokenKind::Eof))
-        {
+        if self.p.eat(TokenKind::Arrow) {
             let mut type_parser = crate::type_parser::TypeParser::new(self.p);
             return_type = Some(type_parser.parse()?);
+
+            if !self.p.at(TokenKind::OpenBrace) {
+                self.p.expect(TokenKind::OpenBrace, "{")?;
+                return None;
+            }
         }
 
-        if !self.p.at(TokenKind::OpenBrace) {
-            self.p.expect(TokenKind::OpenBrace, "{")?;
-        }
-
-        let body = {
+        let body = if self.p.at(TokenKind::OpenBrace) {
             let mut stmt_parser = crate::statements::StmtParser::new(self.p).no_semicolon();
             stmt_parser.parse()?
+        } else {
+            let expr = self.parse()?;
+            let block = self.p.arena.alloc(Expression {
+                kind: ExpressionKind::Block {
+                    stmts: self.p.arena.alloc_slice_copy(&[]),
+                    trailing: Some(expr),
+                },
+                span: expr.span,
+            });
+
+            self.p.arena.alloc(Statement {
+                kind: StatementKind::Expr(block),
+                span: expr.span,
+            })
         };
 
         let expr = self.p.arena.alloc(Expression {
@@ -1543,7 +1589,10 @@ impl<'tok, 'ctx, 'pr> ExprParser<'tok, 'ctx, 'pr> {
                 return_type,
                 body,
             },
-            span: fn_kw.merge_span(body.span),
+            span: miette::SourceSpan::new(
+                start.offset().into(),
+                body.span.offset() + body.span.len() - start.offset(),
+            ),
         });
 
         Some(expr)
@@ -3157,7 +3206,7 @@ mod tests {
 
     #[test]
     fn closure_expr() {
-        const SRC: &str = "fn(x: i32) i32 { x * 2 }";
+        const SRC: &str = "|x: i32| -> i32 { x * 2 }";
 
         make_expr_parser!(SRC, tokens, bump, rodeo, parser, expr_parser);
 
@@ -3177,7 +3226,7 @@ mod tests {
         assert_eq!(params.len(), 1);
         assert_eq!(params[0].name, Some(x));
         assert!(matches!(
-            params[0].ty.kind,
+            params[0].ty.unwrap().kind,
             TypeKind::Builtin(zeen_ast::types::BuiltinType::i32)
         ));
 
@@ -3197,7 +3246,7 @@ mod tests {
 
     #[test]
     fn closure_trailing_expr_makes_trailing_value() {
-        const SRC: &str = "fn(x: i32) i32 { let y = 1; x + y }";
+        const SRC: &str = "|x: i32| -> i32 { let y = 1; x + y }";
 
         make_expr_parser!(SRC, tokens, bump, rodeo, parser, expr_parser);
 

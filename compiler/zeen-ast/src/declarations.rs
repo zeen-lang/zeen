@@ -228,6 +228,13 @@ pub struct FnParam<'arena> {
     pub span: SourceSpan,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClosureParam<'arena> {
+    pub name: Option<Spur>,
+    pub ty: Option<&'arena TypeExpr<'arena>>,
+    pub span: SourceSpan,
+}
+
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub struct GenericType<'arena> {
     pub name: (Spur, SourceSpan),

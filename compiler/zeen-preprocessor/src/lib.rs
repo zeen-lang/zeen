@@ -6,8 +6,8 @@ use miette::SourceSpan;
 use smallvec::SmallVec;
 
 use zeen_ast::declarations::{
-    AliasDecl, AssociatedTypeDecl, EnumVariant, EnumVariantPayload, FnParam, GenericType,
-    StructField, WhereClause, WhereClauseKind,
+    AliasDecl, AssociatedTypeDecl, ClosureParam, EnumVariant, EnumVariantPayload, FnParam,
+    GenericType, StructField, WhereClause, WhereClauseKind,
 };
 use zeen_ast::expressions::Literal;
 use zeen_ast::{
@@ -310,6 +310,18 @@ impl<'a, 'b> Preprocessor<'a, 'b> {
             .map(|p| FnParam {
                 name: p.name,
                 ty: self.resolve_type(p.ty),
+                span: p.span,
+            })
+            .collect();
+        self.alloc_slice(&fixed)
+    }
+
+    fn resolve_closure_params(&mut self, params: &'a [ClosureParam<'a>]) -> &'a [ClosureParam<'a>] {
+        let fixed: SmallVec<[ClosureParam<'a>; 4]> = params
+            .iter()
+            .map(|p| ClosureParam {
+                name: p.name,
+                ty: p.ty.map(|ty| self.resolve_type(ty)),
                 span: p.span,
             })
             .collect();
@@ -768,7 +780,7 @@ impl<'a, 'b> Preprocessor<'a, 'b> {
                 return_type,
                 body,
             } => ExpressionKind::Closure {
-                params: self.resolve_params(params),
+                params: self.resolve_closure_params(params),
                 return_type: return_type.map(|ty| self.resolve_type(ty)),
                 body: self.resolve_stmt(body),
             },
