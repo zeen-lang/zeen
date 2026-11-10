@@ -1410,7 +1410,11 @@ impl<'res> TypeChecker<'res> {
     }
 
     fn display_callable_bound(&self, bound: &CallableBoundSig) -> String {
-        let name = if bound.once { "FnOnce" } else { "Fn" };
+        let name = if bound.once {
+            "CallableOnce"
+        } else {
+            "Callable"
+        };
         let params: Vec<String> = bound
             .params
             .iter()
@@ -14565,7 +14569,7 @@ mod tests {
     fn callable_bound_copy_accepts_basic_fn() {
         typecheck_full(
             r#"
-            fn apply[F: Fn(i32) i32 + Copy](f: F, x: i32) i32 {
+            fn apply[F: Callable(i32) i32 + Copy](f: F, x: i32) i32 {
                 return f(x);
             }
 
@@ -14586,7 +14590,7 @@ mod tests {
     fn callable_bound_copy_rejects_capturing_closure() {
         let errors = typecheck_full(
             r#"
-            fn apply[F: Fn() i32 + Copy](f: F) i32 {
+            fn apply[F: Callable() i32 + Copy](f: F) i32 {
                 return f();
             }
 

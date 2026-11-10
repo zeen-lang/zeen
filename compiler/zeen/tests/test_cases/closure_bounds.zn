@@ -1,21 +1,21 @@
-fn apply[F: Fn(i32) i32](f: F, x: i32) i32 {
+fn apply[F: Callable(i32) i32](f: F, x: i32) i32 {
     return f(x);
 }
 
 fn apply_where[F](f: F, x: i32) i32
-  where F: Fn(i32) i32 {
+  where F: Callable(i32) i32 {
     return f(x);
 }
 
-fn consume[F: FnOnce() i32](f: F) i32 {
+fn consume[F: CallableOnce() i32](f: F) i32 {
     return f();
 }
 
-fn apply_copy[F: Fn(i32) i32 + Copy](f: F, x: i32) i32 {
+fn apply_copy[F: Callable(i32) i32 + Copy](f: F, x: i32) i32 {
     return f(x);
 }
 
-fn run[F: Fn(i32) void](f: F, x: i32) void {
+fn run[F: Callable(i32) void](f: F, x: i32) void {
     f(x);
 }
 

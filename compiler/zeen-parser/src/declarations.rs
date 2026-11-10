@@ -493,7 +493,7 @@ impl<'tok, 'ctx, 'pr> DeclParser<'tok, 'ctx, 'pr> {
                     let current_slice = &self.p.src
                         [current_span.offset()..current_span.offset() + current_span.len()];
 
-                    let is_callable = matches!(current_slice, "Fn" | "FnOnce")
+                    let is_callable = matches!(current_slice, "Callable" | "CallableOnce")
                         && self.p.peek_ahead_kind(0) == Some(TokenKind::OpenParen);
 
                     if is_callable {
@@ -3363,7 +3363,7 @@ mod tests {
 
     #[test]
     fn fn_with_where_callable_bound() {
-        const SRC: &str = "fn f[F](value: F) where F: Fn(i32) i32 { }";
+        const SRC: &str = "fn f[F](value: F) where F: Callable(i32) i32 { }";
 
         make_parser!(SRC, tokens, bump, rodeo, parser);
 

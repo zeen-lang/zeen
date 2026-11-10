@@ -175,7 +175,7 @@ impl<'tok, 'ctx, 'pr> TypeParser<'tok, 'ctx, 'pr> {
         terminators: &[TokenKind],
     ) -> Option<CallableBound<'ctx>> {
         let kw = self.p.current_clone();
-        let once = self.current_ident_is("FnOnce");
+        let once = self.current_ident_is("CallableOnce");
         let _ = self.p.advance_not_eof()?;
 
         let _ = self.p.expect(TokenKind::OpenParen, "(")?;
@@ -245,7 +245,8 @@ impl<'tok, 'ctx, 'pr> TypeParser<'tok, 'ctx, 'pr> {
                         self.p.current().kind,
                         TokenKind::CloseBracket | TokenKind::Eof | TokenKind::Comma
                     ) {
-                        if (self.current_ident_is("Fn") || self.current_ident_is("FnOnce"))
+                        if (self.current_ident_is("Callable")
+                            || self.current_ident_is("CallableOnce"))
                             && self.p.peek_ahead_kind(0) == Some(TokenKind::OpenParen)
                         {
                             let bound = self.parse_callable_bound_in_generics()?;
@@ -945,7 +946,7 @@ mod tests {
 
     #[test]
     fn generics_with_callable_bounds() {
-        const SRC: &str = "[F: Fn(i32) i32, G: FnOnce() void + Eq]";
+        const SRC: &str = "[F: Callable(i32) i32, G: CallableOnce() void + Eq]";
 
         make_type_parser!(SRC, tokens, bump, rodeo, parser, type_parser);
 
