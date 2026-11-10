@@ -25,16 +25,18 @@ struct SpawnPacket[T, F] {
 @os[windows] {
   fn spawn_trampoline[T, F: CallableOnce() T](arg: *void) u32 {
     let packet = @as(*SpawnPacket[T, F], arg);
-    let out = (*packet).f();
-    *(*packet).slot = out;
+    let owned = *packet;
+    let out = owned.f();
+    *(owned.slot) = out;
     Allocator.dealloc(arg);
     return 0;
   }
 } else {
   fn spawn_trampoline[T, F: CallableOnce() T](arg: *void) *void {
     let packet = @as(*SpawnPacket[T, F], arg);
-    const out = (*packet).f();
-    *(*packet).slot = out;
+    let owned = *packet;
+    const out = owned.f();
+    *(owned.slot) = out;
     Allocator.dealloc(arg);
     return nullptr;
   }
