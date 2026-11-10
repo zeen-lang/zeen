@@ -2627,7 +2627,7 @@ impl<'res> TypeChecker<'res> {
         };
 
         if self.fn_sigs.contains_key(&def_id) {
-            return self.closure_value_type(def_id, source);
+            return self.closure_value_type(def_id, def, source);
         }
 
         if let Some((types, _)) = &expected_sig
@@ -2705,7 +2705,7 @@ impl<'res> TypeChecker<'res> {
             }
         }
 
-        self.closure_value_type(def_id, source)
+        self.closure_value_type(def_id, def, source)
     }
 
     fn infer_closure_return(&mut self, def_id: DefId, def: &Rc<HirFn>) -> TypeId {
@@ -2742,7 +2742,7 @@ impl<'res> TypeChecker<'res> {
         ret
     }
 
-    fn closure_value_type(&mut self, def_id: DefId, source: &Source) -> TypeId {
+    fn closure_value_type(&mut self, def_id: DefId, def: &Rc<HirFn>, source: &Source) -> TypeId {
         let fn_ty = *self
             .result
             .def_types
@@ -2773,10 +2773,7 @@ impl<'res> TypeChecker<'res> {
             return fn_ty;
         }
 
-        let once = captures.iter().any(|captured| {
-            let cap_ty = self.lookup_def_type(*captured, source.clone());
-            !self.capture_is_copy(cap_ty)
-        });
+        let once = self.closure_moves_capture(def, &captures, source);
 
         self.result.interner.intern(Type::FatFn {
             params,
@@ -2784,6 +2781,309 @@ impl<'res> TypeChecker<'res> {
             once,
             erased: false,
         })
+    }
+
+    fn closure_moves_capture(
+        &mut self,
+        def: &Rc<HirFn>,
+        captures: &[DefId],
+        source: &Source,
+    ) -> bool {
+        let movable: HashSet<DefId> = captures
+            .iter()
+            .copied()
+            .filter(|captured| {
+                let cap_ty = self.lookup_def_type(*captured, source.clone());
+                !self.capture_is_copy(cap_ty)
+            })
+            .collect();
+
+        if movable.is_empty() {
+            return false;
+        }
+
+        let Some(body) = &def.body else {
+            return false;
+        };
+
+        let mut moved = false;
+        self.walk_closure_stmt(body, false, &movable, &mut moved);
+
+        moved
+    }
+
+    fn walk_closure_stmt(
+        &self,
+        stmt: &HirStmt,
+        nested: bool,
+        movable: &HashSet<DefId>,
+        moved: &mut bool,
+    ) {
+        if *moved {
+            return;
+        }
+
+        match &stmt.kind {
+            HirStmtKind::Let { value, .. } => {
+                if let Some(value) = value {
+                    self.walk_closure_expr(value, true, nested, movable, moved);
+                }
+            }
+
+            HirStmtKind::Assign { object, value } => {
+                self.walk_closure_expr(object, false, nested, movable, moved);
+                self.walk_closure_expr(value, true, nested, movable, moved);
+            }
+
+            HirStmtKind::CompoundAssign { object, value, .. } => {
+                self.walk_closure_expr(object, true, nested, movable, moved);
+                self.walk_closure_expr(value, true, nested, movable, moved);
+            }
+
+            HirStmtKind::Return { value } => {
+                if let Some(value) = value {
+                    self.walk_closure_expr(value, true, nested, movable, moved);
+                }
+            }
+
+            HirStmtKind::While {
+                condition,
+                update,
+                block,
+                else_block,
+                ..
+            } => {
+                self.walk_closure_expr(condition, true, nested, movable, moved);
+
+                if let Some(update) = update {
+                    self.walk_closure_stmt(update, nested, movable, moved);
+                }
+
+                self.walk_closure_stmt(block, nested, movable, moved);
+
+                if let Some(else_block) = else_block {
+                    self.walk_closure_stmt(else_block, nested, movable, moved);
+                }
+            }
+
+            HirStmtKind::For {
+                iterator,
+                block,
+                else_block,
+                ..
+            } => {
+                self.walk_closure_expr(iterator, true, nested, movable, moved);
+                self.walk_closure_stmt(block, nested, movable, moved);
+
+                if let Some(else_block) = else_block {
+                    self.walk_closure_stmt(else_block, nested, movable, moved);
+                }
+            }
+
+            HirStmtKind::Expr(expr) => {
+                self.walk_closure_expr(expr, true, nested, movable, moved);
+            }
+
+            HirStmtKind::Break { .. }
+            | HirStmtKind::Continue { .. }
+            | HirStmtKind::FnDecl(_)
+            | HirStmtKind::Error => {}
+        }
+    }
+
+    fn walk_closure_expr(
+        &self,
+        expr: &HirExpr,
+        consumed: bool,
+        nested: bool,
+        movable: &HashSet<DefId>,
+        moved: &mut bool,
+    ) {
+        if *moved {
+            return;
+        }
+
+        match &expr.kind {
+            HirExprKind::VarRef { def, .. } => {
+                if movable.contains(def) && (nested || consumed) {
+                    *moved = true;
+                }
+            }
+
+            HirExprKind::Binary { lhs, rhs, op } => {
+                let borrowed = matches!(
+                    op,
+                    BinaryOp::Eq
+                        | BinaryOp::Ne
+                        | BinaryOp::Lt
+                        | BinaryOp::Gt
+                        | BinaryOp::Le
+                        | BinaryOp::Ge
+                );
+
+                self.walk_closure_expr(lhs, consumed && !borrowed, nested, movable, moved);
+                self.walk_closure_expr(rhs, consumed && !borrowed, nested, movable, moved);
+            }
+
+            HirExprKind::Unary { expr, op } => {
+                let borrowed = matches!(op, UnaryOp::AddrOf | UnaryOp::Deref);
+                self.walk_closure_expr(expr, consumed && !borrowed, nested, movable, moved);
+            }
+
+            HirExprKind::Call { callee, args, .. } => {
+                self.walk_closure_callee(expr.id, callee, nested, movable, moved);
+
+                for arg in args {
+                    self.walk_closure_expr(arg, true, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::MacroCall { kind, args } => {
+                let borrowed = matches!(
+                    kind.0,
+                    HirMacroKind::Print
+                        | HirMacroKind::Println
+                        | HirMacroKind::Format
+                        | HirMacroKind::EnumTag
+                );
+
+                for arg in args {
+                    self.walk_closure_expr(arg, !borrowed, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                self.walk_closure_expr(condition, true, nested, movable, moved);
+                self.walk_closure_stmt(then_block, nested, movable, moved);
+
+                if let Some(else_block) = else_block {
+                    self.walk_closure_stmt(else_block, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::Switch { object, arms } => {
+                self.walk_closure_expr(object, true, nested, movable, moved);
+
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.walk_closure_expr(guard, true, nested, movable, moved);
+                    }
+
+                    self.walk_closure_expr(&arm.body, consumed, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::FieldAccess { object, .. } => {
+                self.walk_closure_expr(object, consumed, nested, movable, moved);
+            }
+
+            HirExprKind::SliceAccess { object, index } => {
+                let borrowed = matches!(index.kind, HirExprKind::Range { .. });
+
+                self.walk_closure_expr(object, consumed && !borrowed, nested, movable, moved);
+                self.walk_closure_expr(index, true, nested, movable, moved);
+            }
+
+            HirExprKind::StructInit { fields, .. }
+            | HirExprKind::AnonymousStructInit { fields } => {
+                for field in fields {
+                    self.walk_closure_expr(&field.value, true, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::ArrayInit { elements } => {
+                for element in elements {
+                    self.walk_closure_expr(element, true, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::ArrayRepeatInit { element, len } => {
+                self.walk_closure_expr(element, true, nested, movable, moved);
+                self.walk_closure_expr(len, true, nested, movable, moved);
+            }
+
+            HirExprKind::Block { stmts, trailing } => {
+                for stmt in stmts {
+                    self.walk_closure_stmt(stmt, nested, movable, moved);
+                }
+
+                if let Some(trailing) = trailing {
+                    self.walk_closure_expr(trailing, consumed, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::Closure { def, .. } => {
+                if let Some(body) = &def.body {
+                    self.walk_closure_stmt(body, true, movable, moved);
+                }
+            }
+
+            HirExprKind::Range { start, end, .. } => {
+                if let Some(start) = start {
+                    self.walk_closure_expr(start, true, nested, movable, moved);
+                }
+
+                if let Some(end) = end {
+                    self.walk_closure_expr(end, true, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::Try { expr } => {
+                self.walk_closure_expr(expr, true, nested, movable, moved);
+            }
+
+            HirExprKind::Literal(_)
+            | HirExprKind::GenericParamRef(_)
+            | HirExprKind::SelfValue(_)
+            | HirExprKind::Type(_)
+            | HirExprKind::Error => {}
+        }
+    }
+
+    fn walk_closure_callee(
+        &self,
+        call_id: HirId,
+        callee: &HirExpr,
+        nested: bool,
+        movable: &HashSet<DefId>,
+        moved: &mut bool,
+    ) {
+        match &callee.kind {
+            HirExprKind::FieldAccess { object, .. } => {
+                let consumes_receiver = self.call_consumes_receiver(call_id);
+                self.walk_closure_expr(object, consumes_receiver, nested, movable, moved);
+            }
+
+            _ => {
+                let consumes_callee = self.result.expr_types.get(&callee.id).is_some_and(|ty| {
+                    matches!(
+                        self.result.interner.get(*ty),
+                        Type::FatFn { once: true, .. }
+                    )
+                });
+
+                self.walk_closure_expr(callee, consumes_callee, nested, movable, moved);
+            }
+        }
+    }
+
+    fn call_consumes_receiver(&self, call_id: HirId) -> bool {
+        let Some(resolution) = self.result.call_resolutions.get(&call_id) else {
+            return true;
+        };
+
+        match self
+            .fn_sigs
+            .get(&resolution.fn_def)
+            .and_then(|sig| sig.self_mode)
+        {
+            Some(SelfMode::Value | SelfMode::ValueConst) => true,
+            Some(SelfMode::RefMut | SelfMode::RefConst) | None => false,
+        }
     }
 
     fn check_loop_label(&mut self, label: Option<Spur>, stmt: &HirStmt) {
@@ -15012,8 +15312,88 @@ mod tests {
         let fat = find_fat_fn(&result).expect("capturing closure must be a fat pointer");
         assert!(
             matches!(result.interner.get(fat), Type::FatFn { once: true, .. }),
-            "non-Copy capture must produce `FnOnce`, got: {:?}",
+            "moving a non-Copy capture out must produce `FnOnce`, got: {:?}",
             result.interner.get(fat)
+        );
+    }
+
+    #[test]
+    fn borrowed_non_copy_capture_stays_fn() {
+        let result = typecheck_full(
+            r#"
+            struct Foo {}
+
+            implement Foo {
+                pub fn ping(*const self) i32 {
+                    return 7;
+                }
+            }
+
+            fn main() {
+                let foo = Foo {};
+                let c = || -> i32 { return foo.ping(); };
+
+                let a = c();
+                let b = c();
+            }
+            "#,
+        )
+        .expect("borrowing a move-only capture must typecheck");
+
+        let fat = find_fat_fn(&result).expect("capturing closure must be a fat pointer");
+        assert!(
+            matches!(result.interner.get(fat), Type::FatFn { once: false, .. }),
+            "a borrowed non-Copy capture must produce `Fn`, got: {:?}",
+            result.interner.get(fat)
+        );
+    }
+
+    #[test]
+    fn capture_moved_into_nested_closure_makes_outer_fnonce() {
+        let result = typecheck_full(
+            r#"
+            struct Foo {}
+
+            implement Foo {
+                pub fn ping(*const self) i32 {
+                    return 7;
+                }
+            }
+
+            fn main() {
+                let foo = Foo {};
+                let outer = || -> i32 {
+                    let inner = || -> i32 { return foo.ping(); };
+                    return inner();
+                };
+
+                let a = outer();
+            }
+            "#,
+        )
+        .expect("a capture reached from a nested closure must typecheck");
+
+        let fns: Vec<zeen_types::TypeId> = result
+            .def_types
+            .values()
+            .copied()
+            .chain(result.expr_types.values().copied())
+            .filter(|&ty| matches!(result.interner.get(ty), Type::FatFn { erased: false, .. }))
+            .collect();
+
+        let has_fn = fns
+            .iter()
+            .any(|&ty| matches!(result.interner.get(ty), Type::FatFn { once: false, .. }));
+        let has_fnonce = fns
+            .iter()
+            .any(|&ty| matches!(result.interner.get(ty), Type::FatFn { once: true, .. }));
+
+        assert!(
+            has_fn && has_fnonce,
+            "the inner closure must stay `Fn` while the outer one becomes `FnOnce`, got: {:?}",
+            fns.iter()
+                .map(|&ty| result.interner.get(ty))
+                .collect::<Vec<_>>()
         );
     }
 
