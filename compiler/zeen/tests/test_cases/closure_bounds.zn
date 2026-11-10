@@ -11,6 +11,10 @@ fn consume[F: FnOnce() i32](f: F) i32 {
     return f();
 }
 
+fn apply_copy[F: Fn(i32) i32 + Copy](f: F, x: i32) i32 {
+    return f(x);
+}
+
 fn run[F: Fn(i32) void](f: F, x: i32) void {
     f(x);
 }
@@ -25,6 +29,7 @@ fn main() i32 {
 
     @println("{} {}", apply(double, 21), apply_where(|x| x + 1, 41));
     @println("{} {}", apply(with_capture, 10), apply(|_| 1, 0));
+    @println("{} {}", apply_copy(double, 4), apply_copy(|x| x - 1, 6));
 
     run(|x| @println("run {}", x), 3);
 
