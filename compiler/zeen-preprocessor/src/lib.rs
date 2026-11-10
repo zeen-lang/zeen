@@ -6,8 +6,8 @@ use miette::SourceSpan;
 use smallvec::SmallVec;
 
 use zeen_ast::declarations::{
-    AliasDecl, AssociatedTypeDecl, ClosureParam, EnumVariant, EnumVariantPayload, FnParam,
-    GenericType, StructField, WhereClause, WhereClauseKind,
+    AliasDecl, AssociatedTypeDecl, CallableBound, ClosureParam, EnumVariant, EnumVariantPayload,
+    FnParam, GenericType, StructField, WhereClause, WhereClauseKind,
 };
 use zeen_ast::expressions::Literal;
 use zeen_ast::{
@@ -301,7 +301,47 @@ impl<'a, 'b> Preprocessor<'a, 'b> {
         &mut self,
         generics: Option<&'a [GenericType<'a>]>,
     ) -> Option<&'a [GenericType<'a>]> {
-        generics.map(|generics| self.alloc_slice(generics))
+        let generics = generics?;
+
+        let mut fixed: SmallVec<[GenericType<'a>; 8]> = SmallVec::new();
+
+        for generic in generics {
+            let callable_bounds = generic
+                .callable_bounds
+                .map(|bounds| self.resolve_callable_bounds(bounds));
+
+            fixed.push(GenericType {
+                name: generic.name,
+                interfaces: generic.interfaces,
+                callable_bounds,
+            });
+        }
+
+        Some(self.alloc_slice(&fixed))
+    }
+
+    fn resolve_callable_bounds(
+        &mut self,
+        bounds: &'a [CallableBound<'a>],
+    ) -> &'a [CallableBound<'a>] {
+        let mut fixed: SmallVec<[CallableBound<'a>; 4]> = SmallVec::new();
+
+        for bound in bounds {
+            let mut params: SmallVec<[&'a TypeExpr<'a>; 4]> = SmallVec::new();
+
+            for param in bound.params {
+                params.push(self.resolve_type(param));
+            }
+
+            fixed.push(CallableBound {
+                once: bound.once,
+                params: self.alloc_slice(&params),
+                ret: self.resolve_type(bound.ret),
+                span: bound.span,
+            });
+        }
+
+        self.alloc_slice(&fixed)
     }
 
     fn resolve_params(&mut self, params: &'a [FnParam<'a>]) -> &'a [FnParam<'a>] {
@@ -378,7 +418,14 @@ impl<'a, 'b> Preprocessor<'a, 'b> {
                 .iter()
                 .map(|clause| {
                     let kind = match clause.kind {
-                        WhereClauseKind::Bound { bounds } => WhereClauseKind::Bound { bounds },
+                        WhereClauseKind::Bound {
+                            bounds,
+                            callable_bounds,
+                        } => WhereClauseKind::Bound {
+                            bounds,
+                            callable_bounds: callable_bounds
+                                .map(|bounds| self.resolve_callable_bounds(bounds)),
+                        },
                         WhereClauseKind::Equality { ty } => WhereClauseKind::Equality {
                             ty: self.resolve_type(ty),
                         },

@@ -605,7 +605,13 @@ impl<'arena> Interp<'arena> {
             };
 
             let kind = match clause.kind {
-                WhereClauseKind::Bound { bounds } => WhereClauseKind::Bound { bounds },
+                WhereClauseKind::Bound {
+                    bounds,
+                    callable_bounds,
+                } => WhereClauseKind::Bound {
+                    bounds,
+                    callable_bounds,
+                },
                 WhereClauseKind::Equality { ty: eq } => {
                     let eq = match self.substitute_type(module, eq)? {
                         None => eq,

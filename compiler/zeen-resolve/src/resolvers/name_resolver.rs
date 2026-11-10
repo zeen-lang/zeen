@@ -1824,6 +1824,16 @@ impl<'ctx> NameResolver {
                     }
                 }
             }
+
+            if let Some(bounds) = generic.callable_bounds {
+                for bound in bounds {
+                    for param in bound.params {
+                        self.resolve_type(param);
+                    }
+
+                    self.resolve_type(bound.ret);
+                }
+            }
         }
     }
 
@@ -2491,8 +2501,23 @@ impl<'ctx> NameResolver {
         for clause in clauses {
             self.resolve_type(clause.ty);
 
-            if let zeen_ast::declarations::WhereClauseKind::Equality { ty } = clause.kind {
-                self.resolve_type(ty);
+            match clause.kind {
+                zeen_ast::declarations::WhereClauseKind::Equality { ty } => {
+                    self.resolve_type(ty);
+                }
+                zeen_ast::declarations::WhereClauseKind::Bound {
+                    callable_bounds, ..
+                } => {
+                    if let Some(bounds) = callable_bounds {
+                        for bound in bounds {
+                            for param in bound.params {
+                                self.resolve_type(param);
+                            }
+
+                            self.resolve_type(bound.ret);
+                        }
+                    }
+                }
             }
         }
     }

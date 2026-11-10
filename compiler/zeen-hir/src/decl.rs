@@ -74,8 +74,20 @@ pub struct HirWhereClause {
 
 #[derive(Debug, Clone)]
 pub enum HirWhereClauseKind {
-    Bound { bounds: Vec<DefId> },
-    Equality { ty: Rc<HirTypeExpr> },
+    Bound {
+        bounds: Vec<DefId>,
+        callable_bounds: Vec<HirCallableBound>,
+    },
+    Equality {
+        ty: Rc<HirTypeExpr>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct HirCallableBound {
+    pub once: bool,
+    pub params: Vec<Rc<HirTypeExpr>>,
+    pub ret: Rc<HirTypeExpr>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +104,7 @@ pub struct HirGenericParam {
     pub def_id: DefId,
     pub name: (Spur, SourceSpan),
     pub bounds: Vec<DefId>,
+    pub callable_bounds: Vec<HirCallableBound>,
 }
 
 // -> Struct

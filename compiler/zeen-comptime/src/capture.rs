@@ -1445,7 +1445,13 @@ impl<'arena> Interp<'arena> {
             let ty = self.capture_type(module, clause.ty)?;
 
             let kind = match clause.kind {
-                WhereClauseKind::Bound { bounds } => WhereClauseKind::Bound { bounds },
+                WhereClauseKind::Bound {
+                    bounds,
+                    callable_bounds,
+                } => WhereClauseKind::Bound {
+                    bounds,
+                    callable_bounds,
+                },
                 WhereClauseKind::Equality { ty: eq } => WhereClauseKind::Equality {
                     ty: self.capture_type(module, eq)?,
                 },

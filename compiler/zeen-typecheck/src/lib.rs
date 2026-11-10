@@ -26,8 +26,8 @@ use zeen_driver::{CompilationContext, CompilationOutput};
 use zeen_hir::{
     HirId, HirModule,
     decl::{
-        HirAssociatedType, HirDecl, HirDeclKind, HirEnumVariantPayload, HirFn, HirWhereClause,
-        HirWhereClauseKind,
+        HirAssociatedType, HirDecl, HirDeclKind, HirEnumVariantPayload, HirFn, HirGenericParam,
+        HirWhereClause, HirWhereClauseKind,
     },
     expr::{
         HirExpr, HirExprKind, HirFieldInit, HirMacroKind, HirPattern, HirPatternBinding,
@@ -96,6 +96,7 @@ pub struct TypeChecker<'res> {
     in_progress_aliases: HashSet<DefId>,
 
     all_generic_bounds: HashMap<DefId, Vec<DefId>>,
+    all_callable_bounds: HashMap<DefId, Vec<CallableBoundSig>>,
     method_owning_interface: HashMap<DefId, DefId>,
     extracting_typename: bool,
     speculating: bool,
@@ -117,6 +118,13 @@ struct FnSignature {
     self_mode: Option<SelfMode>,
     is_pub: bool,
     is_variadic: bool,
+}
+
+#[derive(Clone, Debug)]
+struct CallableBoundSig {
+    once: bool,
+    params: Vec<TypeId>,
+    ret: TypeId,
 }
 
 #[derive(Clone)]
@@ -261,6 +269,7 @@ impl<'res> TypeChecker<'res> {
             type_aliases: HashMap::default(),
             in_progress_aliases: HashSet::default(),
             all_generic_bounds: HashMap::default(),
+            all_callable_bounds: HashMap::default(),
             method_owning_interface: HashMap::default(),
             extracting_typename: false,
             speculating: false,
@@ -348,6 +357,8 @@ impl<'res> TypeChecker<'res> {
                     self.all_generic_bounds
                         .insert(generic.def_id, generic.bounds.clone());
                 }
+
+                self.register_callable_bounds(&s.generics);
             }
 
             if let HirDeclKind::Enum(e) = &decl.kind {
@@ -358,6 +369,8 @@ impl<'res> TypeChecker<'res> {
                     self.all_generic_bounds
                         .insert(generic.def_id, generic.bounds.clone());
                 }
+
+                self.register_callable_bounds(&e.generics);
             }
 
             if let HirDeclKind::Interface(i) = &decl.kind {
@@ -381,6 +394,8 @@ impl<'res> TypeChecker<'res> {
                     self.assoc_type_bounds
                         .insert(alias.def_id, alias.bounds.clone());
                 }
+
+                self.register_callable_bounds(&i.generics);
             }
         }
 
@@ -665,6 +680,8 @@ impl<'res> TypeChecker<'res> {
                         ty: alias.ty.clone(),
                     },
                 );
+
+                self.register_callable_bounds(&alias.generics);
             }
 
             HirDeclKind::ExternLink | HirDeclKind::ExternInclude => {}
@@ -695,6 +712,8 @@ impl<'res> TypeChecker<'res> {
                 .entry(*g)
                 .or_insert_with(|| bounds.clone());
         }
+
+        self.register_callable_bounds(&hir_fn.generics);
 
         self.register_where_clauses(&hir_fn.where_clauses);
 
@@ -791,6 +810,8 @@ impl<'res> TypeChecker<'res> {
             self.all_generic_bounds
                 .insert(generic.def_id, generic.bounds.clone());
         }
+
+        self.register_callable_bounds(&imp.generics);
 
         if let Some(object_def) = imp.object
             && let Some(DefKind::BuiltinShape(shape)) = self.def_kind(object_def).cloned()
@@ -1319,6 +1340,117 @@ impl<'res> TypeChecker<'res> {
             .get(&gen_def)
             .map(|bounds| bounds.contains(&iface_def))
             .unwrap_or(false)
+    }
+
+    fn register_callable_bounds(&mut self, generics: &[HirGenericParam]) {
+        for generic in generics {
+            if generic.callable_bounds.is_empty() {
+                continue;
+            }
+
+            let sigs = self.lower_callable_bounds(&generic.callable_bounds);
+
+            self.all_callable_bounds
+                .entry(generic.def_id)
+                .or_default()
+                .extend(sigs);
+        }
+    }
+
+    fn lower_callable_bounds(
+        &mut self,
+        bounds: &[zeen_hir::HirCallableBound],
+    ) -> Vec<CallableBoundSig> {
+        let mut sigs: Vec<CallableBoundSig> = Vec::with_capacity(bounds.len());
+
+        for bound in bounds {
+            let params = bound
+                .params
+                .iter()
+                .map(|param| self.lower_hir_type(param))
+                .collect();
+            let ret = self.lower_hir_type(&bound.ret);
+
+            sigs.push(CallableBoundSig {
+                once: bound.once,
+                params,
+                ret,
+            });
+        }
+
+        sigs
+    }
+
+    fn callable_bound_satisfies(
+        &self,
+        known: &CallableBoundSig,
+        required: &CallableBoundSig,
+    ) -> bool {
+        known.params == required.params
+            && known.ret == required.ret
+            && (!known.once || required.once)
+    }
+
+    fn type_satisfies_callable_bound(&self, ty: TypeId, bound: &CallableBoundSig) -> bool {
+        match self.result.interner.get(ty).clone() {
+            Type::Fn { params, ret } => params == bound.params && ret == bound.ret,
+
+            Type::FatFn {
+                params, ret, once, ..
+            } => params == bound.params && ret == bound.ret && (!once || bound.once),
+
+            Type::GenericParam(g) => self.all_callable_bounds.get(&g).is_some_and(|bounds| {
+                bounds
+                    .iter()
+                    .any(|known| self.callable_bound_satisfies(known, bound))
+            }),
+
+            _ => false,
+        }
+    }
+
+    fn display_callable_bound(&self, bound: &CallableBoundSig) -> String {
+        let name = if bound.once { "FnOnce" } else { "Fn" };
+        let params: Vec<String> = bound
+            .params
+            .iter()
+            .map(|&param| self.display_type(param))
+            .collect();
+
+        format!(
+            "{name}({}) {}",
+            params.join(", "),
+            self.display_type(bound.ret)
+        )
+    }
+
+    fn check_callable_bounds(&mut self, generic: DefId, concrete_ty: TypeId, source: &Source) {
+        let Some(bounds) = self.all_callable_bounds.get(&generic).cloned() else {
+            return;
+        };
+
+        for bound in bounds {
+            if self.type_satisfies_callable_bound(concrete_ty, &bound) {
+                continue;
+            }
+
+            let generic_name = {
+                let interner = self.interner.borrow();
+                interner
+                    .resolve(&self.resolution.defs[&generic].name)
+                    .into()
+            };
+            let bound_text = self.display_callable_bound(&bound);
+            let ty = self.display_type(concrete_ty).into();
+
+            self.report(TypeError::GenericBoundNotSatisfied {
+                generic: generic_name,
+                bound: bound_text.into(),
+                ty,
+                src: source.src(),
+                span: source.span,
+            });
+        }
     }
 
     fn lower_hir_type_inner(&mut self, ty: &HirTypeExpr) -> TypeId {
@@ -5726,6 +5858,10 @@ impl<'res> TypeChecker<'res> {
             }
         }
 
+        for g in &sig_generics {
+            self.check_callable_bounds(*g, bindings[g], &source);
+        }
+
         let resolved_generic_args: Vec<TypeId> = sig_generics.iter().map(|g| bindings[g]).collect();
 
         self.result.call_resolutions.insert(
@@ -6718,6 +6854,10 @@ impl<'res> TypeChecker<'res> {
             }
         }
 
+        for g in &sig_generics {
+            self.check_callable_bounds(*g, bindings[g], &source);
+        }
+
         let resolved_generic_args: Vec<TypeId> = sig_generics.iter().map(|g| bindings[g]).collect();
 
         self.check_impl_entry_bounds(struct_def, method_def_id, &bindings, &source);
@@ -7697,6 +7837,10 @@ impl<'res> TypeChecker<'res> {
             }
         }
 
+        for g in &sig_generics {
+            self.check_callable_bounds(*g, bindings[g], source);
+        }
+
         let resolved_generic_args: Vec<TypeId> = sig_generics.iter().map(|g| bindings[g]).collect();
 
         self.check_impl_entry_bounds(struct_def, method_def_id, &bindings, source);
@@ -7805,6 +7949,32 @@ impl<'res> TypeChecker<'res> {
                 ret
             }
 
+            Type::GenericParam(g) => {
+                let Some(bound) = self.callable_bound_for_arity(g, args.len()) else {
+                    self.report(TypeError::NotCallable {
+                        ty: self.display_type(callee_ty).into(),
+                        src: source.src(),
+                        span: source.span,
+                    });
+                    return self.result.interner.error();
+                };
+
+                if args.len() != bound.params.len() {
+                    self.report(TypeError::ArgCountMismatch {
+                        expected: bound.params.len(),
+                        found: args.len(),
+                        src: source.src(),
+                        span: source.span,
+                    });
+                }
+
+                for (param_ty, arg) in bound.params.iter().zip(args.iter()) {
+                    self.check_expr(arg, *param_ty, false);
+                }
+
+                bound.ret
+            }
+
             Type::Error => self.result.interner.error(),
 
             _ => {
@@ -7816,6 +7986,20 @@ impl<'res> TypeChecker<'res> {
                 self.result.interner.error()
             }
         }
+    }
+
+    fn callable_bound_for_arity(&self, g: DefId, arity: usize) -> Option<CallableBoundSig> {
+        let bounds = self.all_callable_bounds.get(&g)?;
+
+        bounds
+            .iter()
+            .find(|bound| bound.params.len() == arity)
+            .or_else(|| bounds.first())
+            .cloned()
+    }
+
+    fn callable_bound_for_generic(&self, g: DefId) -> Option<CallableBoundSig> {
+        self.all_callable_bounds.get(&g)?.first().cloned()
     }
 
     fn seed_inference_bindings(
@@ -7897,6 +8081,33 @@ impl<'res> TypeChecker<'res> {
         source: Source,
     ) {
         let substituted = self.substitute_generics(param_ty, bindings);
+
+        if let Type::GenericParam(g) = self.result.interner.get(substituted).clone()
+            && let Some(bound) = self.callable_bound_for_generic(g)
+        {
+            if let HirExprKind::Closure { def_id, def } = &arg.kind {
+                let expected = self.result.interner.intern(Type::FatFn {
+                    params: bound.params.clone(),
+                    ret: bound.ret,
+                    once: bound.once,
+                    erased: false,
+                });
+                let arg_ty = self.check_closure(*def_id, def, expected, &arg.source);
+                self.result.record_expr_type(arg.id, arg_ty);
+
+                self.unify_for_inference(param_ty, arg_ty, bindings, source);
+
+                return;
+            }
+
+            let arg_ty = self.synth_expr(arg);
+            let arg_ty = self.default_literal_with_value(arg, arg_ty);
+            self.result.record_expr_type(arg.id, arg_ty);
+
+            self.unify_for_inference(param_ty, arg_ty, bindings, source);
+
+            return;
+        }
 
         if self.type_contains_generic(substituted) {
             let arg_ty = self.synth_expr(arg);
@@ -8978,27 +9189,34 @@ impl<'res> TypeChecker<'res> {
             let subject = self.lower_hir_type_with_const(&clause.ty).0;
 
             match &clause.kind {
-                HirWhereClauseKind::Bound { bounds } => {
-                    match self.result.interner.get(subject).clone() {
-                        Type::GenericParam(g) => {
-                            self.all_generic_bounds
-                                .entry(g)
+                HirWhereClauseKind::Bound {
+                    bounds,
+                    callable_bounds,
+                } => match self.result.interner.get(subject).clone() {
+                    Type::GenericParam(g) => {
+                        self.all_generic_bounds
+                            .entry(g)
+                            .or_default()
+                            .extend(bounds.iter().copied());
+
+                        if !callable_bounds.is_empty() {
+                            let sigs = self.lower_callable_bounds(callable_bounds);
+
+                            self.all_callable_bounds.entry(g).or_default().extend(sigs);
+                        }
+                    }
+
+                    Type::Associated { base, def } => {
+                        if let Type::GenericParam(g) = self.result.interner.get(base).clone() {
+                            self.generic_assoc_bounds
+                                .entry((g, def))
                                 .or_default()
                                 .extend(bounds.iter().copied());
                         }
-
-                        Type::Associated { base, def } => {
-                            if let Type::GenericParam(g) = self.result.interner.get(base).clone() {
-                                self.generic_assoc_bounds
-                                    .entry((g, def))
-                                    .or_default()
-                                    .extend(bounds.iter().copied());
-                            }
-                        }
-
-                        _ => {}
                     }
-                }
+
+                    _ => {}
+                },
 
                 HirWhereClauseKind::Equality { ty } => {
                     let eq_ty = self.lower_hir_type(ty);

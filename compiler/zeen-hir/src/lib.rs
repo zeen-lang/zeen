@@ -5,7 +5,9 @@ use lasso::{Rodeo, Spur};
 use smol_str::SmolStr;
 
 use zeen_ast::{
-    declarations::{Declaration, DeclarationKind, EnumVariantPayload, FnParam, GenericType},
+    declarations::{
+        CallableBound, Declaration, DeclarationKind, EnumVariantPayload, FnParam, GenericType,
+    },
     expressions::{Expression, ExpressionKind},
     statements::{Statement, StatementKind},
     types::{TypeExpr, TypeKind},
@@ -33,7 +35,7 @@ pub struct HirModule {
 // =========| Public Exports |=========
 
 pub use decl::{
-    HirAlias, HirAssociatedType, HirDecl, HirDeclKind, HirEnum, HirEnumVariant,
+    HirAlias, HirAssociatedType, HirCallableBound, HirDecl, HirDeclKind, HirEnum, HirEnumVariant,
     HirEnumVariantPayload, HirField, HirFn, HirGenericParam, HirImplement, HirInterface, HirParam,
     HirStruct, HirWhereClause, HirWhereClauseKind,
 };
@@ -581,11 +583,36 @@ impl<'res> HirLowering<'res> {
                     })
                     .unwrap_or_default();
 
+                let callable_bounds = self.lower_callable_bounds(gtype.callable_bounds);
+
                 HirGenericParam {
                     def_id,
                     name: gtype.name,
                     bounds,
+                    callable_bounds,
                 }
+            })
+            .collect()
+    }
+
+    fn lower_callable_bounds(
+        &mut self,
+        bounds: Option<&[CallableBound<'_>]>,
+    ) -> Vec<HirCallableBound> {
+        let Some(bounds) = bounds else {
+            return Vec::new();
+        };
+
+        bounds
+            .iter()
+            .map(|bound| HirCallableBound {
+                once: bound.once,
+                params: bound
+                    .params
+                    .iter()
+                    .map(|param| Rc::new(self.lower_type(param)))
+                    .collect(),
+                ret: Rc::new(self.lower_type(bound.ret)),
             })
             .collect()
     }
@@ -629,14 +656,16 @@ impl<'res> HirLowering<'res> {
                 let ty = Rc::new(self.lower_type(clause.ty));
 
                 let kind = match clause.kind {
-                    zeen_ast::declarations::WhereClauseKind::Bound { bounds } => {
-                        HirWhereClauseKind::Bound {
-                            bounds: bounds
-                                .iter()
-                                .filter_map(|(name, _)| self.lookup_type_def_by_name(*name))
-                                .collect(),
-                        }
-                    }
+                    zeen_ast::declarations::WhereClauseKind::Bound {
+                        bounds,
+                        callable_bounds,
+                    } => HirWhereClauseKind::Bound {
+                        bounds: bounds
+                            .iter()
+                            .filter_map(|(name, _)| self.lookup_type_def_by_name(*name))
+                            .collect(),
+                        callable_bounds: self.lower_callable_bounds(callable_bounds),
+                    },
 
                     zeen_ast::declarations::WhereClauseKind::Equality { ty: eq } => {
                         HirWhereClauseKind::Equality {
