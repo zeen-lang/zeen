@@ -332,7 +332,7 @@ fn compile(args: cli::Args) {
     //     format!("program ({} declarations)", program.len()),
     // );
 
-    let (resolved_program, mut resolution_result) = zeen_resolve::resolve(
+    let (resolved_program, resolution_result) = zeen_resolve::resolve(
         Rc::clone(&filename),
         Arc::clone(&content),
         Path::new(&path),
@@ -372,7 +372,7 @@ fn compile(args: cli::Args) {
     // );
 
     let mut typechecker =
-        zeen_typecheck::TypeChecker::new(&mut resolution_result, &context, Rc::clone(&rodeo));
+        zeen_typecheck::TypeChecker::new(&resolution_result, &context, Rc::clone(&rodeo));
     typechecker.check_module(&hir_module);
 
     let mut typechecker_result = typechecker.finish().unwrap_or_else(|errors| {

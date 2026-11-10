@@ -70,7 +70,7 @@ fn compile_mode(src: &str, mode: CompilationMode) -> Result<String, Vec<String>>
             .collect::<Vec<String>>()
     })?;
 
-    let (resolved_program, mut resolution_result) = zeen_resolve::resolve(
+    let (resolved_program, resolution_result) = zeen_resolve::resolve(
         Rc::clone(&filename),
         Arc::clone(&content),
         Path::new("/test.zn"),
@@ -91,7 +91,7 @@ fn compile_mode(src: &str, mode: CompilationMode) -> Result<String, Vec<String>>
 
     drop(bump);
 
-    let mut typechecker = TypeChecker::new(&mut resolution_result, &context, Rc::clone(&rodeo));
+    let mut typechecker = TypeChecker::new(&resolution_result, &context, Rc::clone(&rodeo));
     typechecker.check_module(&hir_module);
     let mut typecheck_result = typechecker.finish().map_err(|errors| {
         errors

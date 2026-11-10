@@ -62,7 +62,7 @@ fn compile_mir_mode(
         .parse_program()
         .map_err(|errs| errs.iter().map(|e| e.to_string()).collect::<Vec<_>>())?;
 
-    let (resolved_program, mut resolution_result) = zeen_resolve::resolve(
+    let (resolved_program, resolution_result) = zeen_resolve::resolve(
         Rc::clone(&filename),
         Arc::clone(&content),
         Path::new("/test.zn"),
@@ -77,7 +77,7 @@ fn compile_mir_mode(
     let hir_module = hir_lowering.lower_module(resolved_program);
 
     let mut typechecker =
-        zeen_typecheck::TypeChecker::new(&mut resolution_result, &context, Rc::clone(&rodeo));
+        zeen_typecheck::TypeChecker::new(&resolution_result, &context, Rc::clone(&rodeo));
     typechecker.check_module(&hir_module);
 
     let mut typecheck = typechecker
@@ -1809,7 +1809,7 @@ fn print_mir_ok(src: &str) -> String {
         .map_err(|errs| errs.iter().map(|e| e.to_string()).collect::<Vec<_>>())
         .expect("parse must succeed");
 
-    let (resolved_program, mut resolution_result) = zeen_resolve::resolve(
+    let (resolved_program, resolution_result) = zeen_resolve::resolve(
         Rc::clone(&filename),
         Arc::clone(&content),
         Path::new("/test.zn"),
@@ -1825,7 +1825,7 @@ fn print_mir_ok(src: &str) -> String {
     let hir_module = hir_lowering.lower_module(resolved_program);
 
     let mut typechecker =
-        zeen_typecheck::TypeChecker::new(&mut resolution_result, &context, Rc::clone(&rodeo));
+        zeen_typecheck::TypeChecker::new(&resolution_result, &context, Rc::clone(&rodeo));
     typechecker.check_module(&hir_module);
 
     let mut typecheck = typechecker

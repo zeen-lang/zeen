@@ -55,7 +55,7 @@ pub const DEFAULT_INT_LITERAL: BuiltinType = BuiltinType::i32;
 pub const DEFAULT_FLOAT_LITERAL: BuiltinType = BuiltinType::f64;
 
 pub struct TypeChecker<'res> {
-    resolution: &'res mut ResolutionResult,
+    resolution: &'res ResolutionResult,
     compilation_context: &'res CompilationContext,
     expect_assign_interface: bool,
     found_main_fn: bool,
@@ -74,6 +74,14 @@ pub struct TypeChecker<'res> {
     closure_ret_types: HashMap<DefId, TypeId>,
     closure_tail: Option<HirId>,
     inference_hints: HashMap<DefId, TypeId>,
+
+    allow_defer: bool,
+    defer_infer: bool,
+    open_generics: HashSet<DefId>,
+    infer_bindings: HashMap<DefId, TypeId>,
+    deferred_locals: Vec<(DefId, TypeId)>,
+    local_type_hints: HashMap<DefId, TypeId>,
+    resolved_local_hints: HashMap<DefId, TypeId>,
 
     interface_registry: InterfaceRegistry,
     interface_methods: HashMap<DefId, Vec<DefId>>,
@@ -230,7 +238,7 @@ fn literal_kind_word(lit: &Literal) -> &'static str {
 
 impl<'res> TypeChecker<'res> {
     pub fn new(
-        resolution: &'res mut ResolutionResult,
+        resolution: &'res ResolutionResult,
         compilation_context: &'res CompilationContext,
         interner: Rc<RefCell<lasso::Rodeo>>,
     ) -> Self {
@@ -252,6 +260,13 @@ impl<'res> TypeChecker<'res> {
             closure_ret_types: HashMap::default(),
             closure_tail: None,
             inference_hints: HashMap::default(),
+            allow_defer: false,
+            defer_infer: false,
+            open_generics: HashSet::default(),
+            infer_bindings: HashMap::default(),
+            deferred_locals: Vec::new(),
+            local_type_hints: HashMap::default(),
+            resolved_local_hints: HashMap::default(),
             interface_registry,
             interface_methods: HashMap::default(),
             interface_generics: HashMap::default(),
@@ -344,6 +359,25 @@ impl<'res> TypeChecker<'res> {
     // --> Entry Point
 
     pub fn check_module(&mut self, module: &HirModule) {
+        let mut probe = TypeChecker::new(
+            self.resolution,
+            self.compilation_context,
+            Rc::clone(&self.interner),
+        );
+        probe.allow_defer = true;
+        probe.run_passes(module);
+
+        if probe.open_generics.is_empty() {
+            *self = probe;
+            return;
+        }
+
+        self.result.interner = std::mem::take(&mut probe.result.interner);
+        self.local_type_hints = probe.resolved_local_hints;
+        self.run_passes(module);
+    }
+
+    fn run_passes(&mut self, module: &HirModule) {
         // Few words here: we're doing multiple passes here:
         // 0. Register struct generic params (for lower_hir_type_inner)
         // 1. Declare signatures
@@ -450,6 +484,7 @@ impl<'res> TypeChecker<'res> {
             self.check_decl_body(decl);
         }
 
+        self.finalize_local_hints();
         self.finalize_fat_types();
         self.finalize_type_name_usage();
 
@@ -2422,13 +2457,30 @@ impl<'res> TypeChecker<'res> {
                     None => self.inference_hints.get(def_id).copied(),
                 };
 
+                let local_hint = match (declared_ty, hint_ty) {
+                    (None, None) => self.local_type_hints.get(def_id).copied(),
+                    _ => None,
+                };
+
                 let value_ty = value.as_ref().map(|val| match declared_ty {
                     Some(expected) => self.check_expr(val, expected, true),
-                    None => self.synth_expr(val),
+                    None => match local_hint {
+                        Some(hint) => self.check_expr(val, hint, true),
+                        None => {
+                            let previous = self.defer_infer;
+                            self.defer_infer = self.allow_defer;
+                            let ty = self.synth_expr(val);
+                            self.defer_infer = previous;
+
+                            ty
+                        }
+                    },
                 });
 
                 let value_ty = match (declared_ty, value.as_deref(), value_ty) {
-                    (None, Some(val), Some(ty)) => Some(self.inferred_local_type(*def_id, val, ty)),
+                    (None, Some(val), Some(ty)) if local_hint.is_none() => {
+                        Some(self.inferred_local_type(*def_id, val, ty))
+                    }
                     (_, _, ty) => ty,
                 };
 
@@ -2450,6 +2502,14 @@ impl<'res> TypeChecker<'res> {
 
                 self.result.def_types.insert(*def_id, final_ty);
                 self.result.expr_types.insert(stmt.id, final_ty);
+
+                if declared_ty.is_none()
+                    && local_hint.is_none()
+                    && value.is_some()
+                    && self.type_mentions_open(final_ty)
+                {
+                    self.deferred_locals.push((*def_id, final_ty));
+                }
 
                 if matches!(self.result.interner.get(final_ty), Type::FatFn { .. })
                     && let Some(v) = value
@@ -2662,6 +2722,208 @@ impl<'res> TypeChecker<'res> {
         }
 
         self.speculating = previous;
+    }
+
+    fn finalize_local_hints(&mut self) {
+        if self.deferred_locals.is_empty() {
+            return;
+        }
+
+        for (def, ty) in std::mem::take(&mut self.deferred_locals) {
+            let resolved = self.resolve_open(ty);
+
+            if self.type_mentions_open(resolved) {
+                continue;
+            }
+
+            self.resolved_local_hints.insert(def, resolved);
+        }
+    }
+
+    fn generic_placeholder(&mut self, generic: DefId) -> TypeId {
+        if !self.defer_infer {
+            return self.result.interner.error();
+        }
+
+        self.open_generics.insert(generic);
+
+        self.result.interner.intern(Type::GenericParam(generic))
+    }
+
+    fn is_open(&self, generic: DefId) -> bool {
+        self.open_generics.contains(&generic)
+    }
+
+    fn type_mentions_open(&self, ty: TypeId) -> bool {
+        !self.open_generics.is_empty() && self.type_mentions_any(ty, &self.open_generics)
+    }
+
+    fn resolve_open(&mut self, ty: TypeId) -> TypeId {
+        if !self.type_mentions_open(ty) {
+            return ty;
+        }
+
+        let bindings = self.infer_bindings.clone();
+        let substituted = self.substitute_generics(ty, &bindings);
+
+        if substituted == ty {
+            return ty;
+        }
+
+        self.resolve_open(substituted)
+    }
+
+    fn bind_open(&mut self, generic: DefId, ty: TypeId) {
+        let ty = self.resolve_open(ty);
+        let ty = self.default_literal(ty);
+
+        if let Type::GenericParam(inner) = self.result.interner.get(ty)
+            && *inner == generic
+        {
+            return;
+        }
+
+        self.infer_bindings.entry(generic).or_insert(ty);
+    }
+
+    fn unify_open(&mut self, left: TypeId, right: TypeId) -> bool {
+        let left = self.resolve_open(left);
+        let right = self.resolve_open(right);
+
+        if left == right {
+            return true;
+        }
+
+        if let Type::GenericParam(generic) = self.result.interner.get(left).clone()
+            && self.is_open(generic)
+        {
+            self.bind_open(generic, right);
+            return true;
+        }
+
+        if let Type::GenericParam(generic) = self.result.interner.get(right).clone()
+            && self.is_open(generic)
+        {
+            self.bind_open(generic, left);
+            return true;
+        }
+
+        match (
+            self.result.interner.get(left).clone(),
+            self.result.interner.get(right).clone(),
+        ) {
+            (
+                Type::Pointer {
+                    inner: left_inner, ..
+                },
+                Type::Pointer {
+                    inner: right_inner, ..
+                },
+            )
+            | (
+                Type::ManyPointer {
+                    inner: left_inner, ..
+                },
+                Type::ManyPointer {
+                    inner: right_inner, ..
+                },
+            ) => self.unify_open(left_inner, right_inner),
+
+            (
+                Type::Array {
+                    element: left_elem, ..
+                },
+                Type::Array {
+                    element: right_elem,
+                    ..
+                },
+            )
+            | (
+                Type::Slice {
+                    element: left_elem, ..
+                },
+                Type::Slice {
+                    element: right_elem,
+                    ..
+                },
+            )
+            | (
+                Type::Array {
+                    element: left_elem, ..
+                },
+                Type::Slice {
+                    element: right_elem,
+                    ..
+                },
+            )
+            | (
+                Type::Slice {
+                    element: left_elem, ..
+                },
+                Type::Array {
+                    element: right_elem,
+                    ..
+                },
+            ) => self.unify_open(left_elem, right_elem),
+
+            (
+                Type::Struct {
+                    def_id: left_def,
+                    generic_args: left_args,
+                },
+                Type::Struct {
+                    def_id: right_def,
+                    generic_args: right_args,
+                },
+            )
+            | (
+                Type::Enum {
+                    def_id: left_def,
+                    generic_args: left_args,
+                },
+                Type::Enum {
+                    def_id: right_def,
+                    generic_args: right_args,
+                },
+            ) if left_def == right_def && left_args.len() == right_args.len() => left_args
+                .iter()
+                .zip(right_args.iter())
+                .all(|(&left_arg, &right_arg)| self.unify_open(left_arg, right_arg)),
+
+            (
+                Type::Fn {
+                    params: left_params,
+                    ret: left_ret,
+                },
+                Type::Fn {
+                    params: right_params,
+                    ret: right_ret,
+                },
+            )
+            | (
+                Type::FatFn {
+                    params: left_params,
+                    ret: left_ret,
+                    ..
+                },
+                Type::FatFn {
+                    params: right_params,
+                    ret: right_ret,
+                    ..
+                },
+            ) if left_params.len() == right_params.len() => {
+                left_params
+                    .iter()
+                    .zip(right_params.iter())
+                    .all(|(&left_param, &right_param)| self.unify_open(left_param, right_param))
+                    && self.unify_open(left_ret, right_ret)
+            }
+
+            _ => {
+                try_coerce(&mut self.result.interner, left, right).is_ok()
+                    || try_coerce(&mut self.result.interner, right, left).is_ok()
+            }
+        }
     }
 
     fn inferred_local_type(&mut self, def_id: DefId, value: &HirExpr, ty: TypeId) -> TypeId {
@@ -3494,6 +3756,7 @@ impl<'res> TypeChecker<'res> {
                         .insert(expr.id, (*def_id, expr.source.clone()));
                 }
                 let ty = self.lookup_def_type(*def_id, expr.source.clone());
+                let ty = self.resolve_open(ty);
                 if matches!(self.result.interner.get(ty), Type::FatFn { .. }) {
                     self.result.fat_value_defs.insert(expr.id, *def_id);
                 }
@@ -5066,7 +5329,7 @@ impl<'res> TypeChecker<'res> {
                     span: init_source.span,
                 });
 
-                bindings.insert(*g, self.result.interner.error());
+                bindings.insert(*g, self.generic_placeholder(*g));
             }
         }
 
@@ -5350,6 +5613,17 @@ impl<'res> TypeChecker<'res> {
     ) -> TypeId {
         let source = expr.source.clone();
         let id = expr.id;
+
+        let expected = self.resolve_open(expected);
+
+        if self.type_mentions_open(actual) || self.type_mentions_open(expected) {
+            let actual = self.resolve_open(actual);
+
+            if self.unify_open(actual, expected) {
+                self.result.record_expr_type(id, expected);
+                return expected;
+            }
+        }
 
         if let HirExprKind::Literal(Literal::Int(n)) = &expr.kind
             && let Type::Builtin(b) = self.result.interner.get(expected).clone()
@@ -6315,7 +6589,7 @@ impl<'res> TypeChecker<'res> {
                     span: source.span,
                 });
 
-                bindings.insert(*g, self.result.interner.error());
+                bindings.insert(*g, self.generic_placeholder(*g));
             }
         }
 
@@ -7305,7 +7579,7 @@ impl<'res> TypeChecker<'res> {
                     span: source.span,
                 });
 
-                bindings.insert(*g, self.result.interner.error());
+                bindings.insert(*g, self.generic_placeholder(*g));
             }
         }
 
@@ -7322,7 +7596,7 @@ impl<'res> TypeChecker<'res> {
                         span: source.span,
                     });
 
-                    bindings.insert(*g, self.result.interner.error());
+                    bindings.insert(*g, self.generic_placeholder(*g));
                 }
             }
         }
@@ -7546,7 +7820,7 @@ impl<'res> TypeChecker<'res> {
                             span: field_span,
                         });
 
-                        generic_args.push(self.result.interner.error());
+                        generic_args.push(self.generic_placeholder(*g));
                     }
                 }
             }
@@ -7751,7 +8025,7 @@ impl<'res> TypeChecker<'res> {
                         span: source.span,
                     });
 
-                    bindings.insert(*g, self.result.interner.error());
+                    bindings.insert(*g, self.generic_placeholder(*g));
                 }
             }
 
@@ -8032,7 +8306,7 @@ impl<'res> TypeChecker<'res> {
                     span: init_source.span,
                 });
 
-                bindings.insert(*g, self.result.interner.error());
+                bindings.insert(*g, self.generic_placeholder(*g));
             }
         }
 
@@ -8312,7 +8586,7 @@ impl<'res> TypeChecker<'res> {
                     span: source.span,
                 });
 
-                bindings.insert(*g, self.result.interner.error());
+                bindings.insert(*g, self.generic_placeholder(*g));
             }
         }
 
@@ -8367,7 +8641,19 @@ impl<'res> TypeChecker<'res> {
                     span: source.span,
                 });
 
-                bindings.insert(*g, self.result.interner.error());
+                bindings.insert(*g, self.generic_placeholder(*g));
+            }
+        }
+
+        if let Some(entry) = self.method_impl_entry(struct_def, method_def_id) {
+            for (imp_g, struct_g) in &entry.generic_bindings {
+                if let Some(&concrete) = bindings.get(imp_g) {
+                    bindings.entry(*struct_g).or_insert(concrete);
+                }
+
+                if let Some(&concrete) = bindings.get(struct_g) {
+                    bindings.entry(*imp_g).or_insert(concrete);
+                }
             }
         }
 
@@ -8518,11 +8804,20 @@ impl<'res> TypeChecker<'res> {
         expected: TypeId,
         bindings: &mut HashMap<DefId, TypeId>,
     ) {
+        let expected = self.resolve_open(expected);
+
         match (
             self.result.interner.get(pattern).clone(),
             self.result.interner.get(expected).clone(),
         ) {
             (Type::GenericParam(g), Type::GenericParam(e)) if g == e => {}
+
+            (Type::GenericParam(g), _) if self.is_open(g) => {
+                self.bind_open(g, expected);
+                bindings
+                    .entry(g)
+                    .or_insert_with(|| self.resolve_open(expected));
+            }
 
             (Type::GenericParam(g), _) => {
                 bindings.entry(g).or_insert(expected);
@@ -8631,6 +8926,12 @@ impl<'res> TypeChecker<'res> {
             self.unify_for_inference(param_ty, arg_ty, bindings, source);
 
             let substituted = self.substitute_generics(param_ty, bindings);
+            let substituted = self.resolve_open(substituted);
+
+            if self.type_mentions_open(substituted) {
+                return;
+            }
+
             match try_coerce(&mut self.result.interner, arg_ty, substituted) {
                 CoerceResult::ArrayToSlice
                     if !matches!(&arg.kind, HirExprKind::Literal(Literal::String(_))) =>
@@ -8664,6 +8965,10 @@ impl<'res> TypeChecker<'res> {
         self.collect_unresolved_generics(ty, bindings, &mut unresolved);
 
         for g in unresolved {
+            if self.is_open(g) {
+                continue;
+            }
+
             bindings.insert(g, self.result.interner.error());
         }
     }
@@ -8815,25 +9120,54 @@ impl<'res> TypeChecker<'res> {
             self.result.interner.get(param_ty).clone(),
             self.result.interner.get(arg_ty).clone(),
         ) {
-            (Type::GenericParam(g), _) => match bindings.get(&g) {
-                Some(&existing)
-                    if existing != arg_ty
-                        && !try_coerce(&mut self.result.interner, arg_ty, existing).is_ok() =>
-                {
-                    self.report(TypeError::GenericConflict {
-                        param: self.display_type(param_ty).into(),
-                        first: self.display_type(existing).into(),
-                        second: self.display_type(arg_ty).into(),
-                        src: source.src(),
-                        span: source.span,
-                    });
-                }
+            (Type::GenericParam(g), _) if self.is_open(g) => {
+                let arg_ty = self.resolve_open(arg_ty);
 
-                Some(_) => {}
-                None => {
+                self.bind_open(g, arg_ty);
+
+                let replace = match bindings.get(&g) {
+                    None => true,
+                    Some(&existing) => {
+                        let existing = self.resolve_open(existing);
+
+                        self.type_mentions_open(existing)
+                            || matches!(self.result.interner.get(existing), Type::GenericParam(inner) if *inner == g)
+                    }
+                };
+
+                if replace {
                     bindings.insert(g, arg_ty);
                 }
-            },
+            }
+
+            (Type::GenericParam(g), _) => {
+                let arg_ty = self.resolve_open(arg_ty);
+
+                match bindings.get(&g).copied() {
+                    Some(existing) => {
+                        let existing = self.resolve_open(existing);
+
+                        if self.type_mentions_open(existing) {
+                            self.unify_open(existing, arg_ty);
+                            bindings.insert(g, self.resolve_open(existing));
+                        } else if existing != arg_ty
+                            && !try_coerce(&mut self.result.interner, arg_ty, existing).is_ok()
+                        {
+                            self.report(TypeError::GenericConflict {
+                                param: self.display_type(param_ty).into(),
+                                first: self.display_type(existing).into(),
+                                second: self.display_type(arg_ty).into(),
+                                src: source.src(),
+                                span: source.span,
+                            });
+                        }
+                    }
+
+                    None => {
+                        bindings.insert(g, arg_ty);
+                    }
+                }
+            }
 
             (Type::Pointer { inner: pinner, .. }, Type::Pointer { inner: ainner, .. })
             | (Type::ManyPointer { inner: pinner, .. }, Type::ManyPointer { inner: ainner, .. }) => {
@@ -12974,7 +13308,7 @@ mod tests {
         );
         let program = parser.parse_program().expect("parser returned errors");
 
-        let (resolved_program, mut resolution_result) = resolve(
+        let (resolved_program, resolution_result) = resolve(
             Rc::clone(&filename),
             Arc::clone(&content),
             Path::new("test.zn"),
@@ -12988,7 +13322,7 @@ mod tests {
         let mut hir_lowering = HirLowering::new(&resolution_result, Rc::clone(&rodeo));
         let hir_module = hir_lowering.lower_module(resolved_program);
 
-        let mut typechecker = TypeChecker::new(&mut resolution_result, &context, Rc::clone(&rodeo));
+        let mut typechecker = TypeChecker::new(&resolution_result, &context, Rc::clone(&rodeo));
         typechecker.check_module(&hir_module);
         typechecker.finish()
     }
