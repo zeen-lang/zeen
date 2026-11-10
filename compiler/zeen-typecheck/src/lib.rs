@@ -19028,4 +19028,66 @@ mod tests {
             "expected a mismatch diagnostic, got: {errors:?}"
         );
     }
+
+    #[test]
+    fn closure_param_infers_from_annotated_operand() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let base: u8 = 3;
+                let shifted = |x| x + base;
+
+                let result = shifted(4);
+            }
+            "#,
+        )
+        .expect("an annotated operand must infer the closure parameter");
+    }
+
+    #[test]
+    fn closure_param_infers_from_fn_param_operand() {
+        typecheck_full(
+            r#"
+            fn scale(factor: u8) u8 {
+                let apply = |value| value * factor;
+
+                return apply(2);
+            }
+
+            fn main() {
+                let result = scale(4);
+            }
+            "#,
+        )
+        .expect("a typed function parameter must infer the closure parameter");
+    }
+
+    #[test]
+    fn closure_param_infers_from_annotated_comparison_operand() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let limit: i64 = 10;
+                let over = |value| value > limit;
+
+                let result = over(11);
+            }
+            "#,
+        )
+        .expect("a comparison operand must infer the closure parameter");
+    }
+
+    #[test]
+    fn local_infers_from_annotated_operand() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let base: u8 = 3;
+                let offset = 2;
+                let total = offset + base;
+            }
+            "#,
+        )
+        .expect("an annotated operand must infer a literal local");
+    }
 }

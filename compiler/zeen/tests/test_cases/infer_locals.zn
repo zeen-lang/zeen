@@ -38,4 +38,11 @@ fn main() {
   let packed: [2]u8 = bytes;
 
   @println("{} {}", packed[0], packed[1]);
+
+  let base: u8 = 3;
+  let shifted = |x| x + base;
+  let offset = 2;
+  let total = offset + base;
+
+  @println("{} {} {}", shifted(4), total, offset);
 }
