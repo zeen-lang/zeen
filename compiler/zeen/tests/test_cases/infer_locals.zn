@@ -28,4 +28,14 @@ fn main() {
   let end = len - 1;
 
   @println("{}", items[end]);
+
+  let wide = 1;
+  let wide_value: i64 = wide + 2;
+
+  @println("{}", wide_value);
+
+  let bytes = {1, 2};
+  let packed: [2]u8 = bytes;
+
+  @println("{} {}", packed[0], packed[1]);
 }

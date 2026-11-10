@@ -18938,4 +18938,94 @@ mod tests {
             "expected an i32 binding"
         );
     }
+
+    #[test]
+    fn local_infers_through_binary_expression() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                let wide: i64 = value + 2;
+                let other: i64 = value * 3;
+            }
+            "#,
+        )
+        .expect("an arithmetic annotation must reach its operands");
+    }
+
+    #[test]
+    fn local_infers_through_array_literal() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let items = {1, 2};
+                let packed: [2]u8 = items;
+            }
+            "#,
+        )
+        .expect("an array annotation must reach a literal array");
+    }
+
+    #[test]
+    fn local_infers_through_nested_array_literal() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let grid = {{1, 2}, {3, 4}};
+                let packed: [2][2]u8 = grid;
+            }
+            "#,
+        )
+        .expect("a nested array annotation must reach the inner arrays");
+    }
+
+    #[test]
+    fn local_infers_through_if_branches() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let value = 3;
+                let picked: u32 = if (true) { value } else { 4 };
+            }
+            "#,
+        )
+        .expect("an annotation must reach both if branches");
+    }
+
+    #[test]
+    fn local_infers_through_return_expression() {
+        typecheck_full(
+            r#"
+            fn small() u8 {
+                let value = 1;
+                return value + 1;
+            }
+
+            fn main() {
+                let byte = small();
+            }
+            "#,
+        )
+        .expect("a return annotation must reach the operands");
+    }
+
+    #[test]
+    fn array_hint_requires_matching_length() {
+        let errors = typecheck_full(
+            r#"
+            fn main() {
+                let items = {1, 2};
+                let packed: [3]u8 = items;
+            }
+            "#,
+        )
+        .expect_err("a length mismatch must not retype the array");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| matches!(error, TypeError::Mismatch { .. })),
+            "expected a mismatch diagnostic, got: {errors:?}"
+        );
+    }
 }
