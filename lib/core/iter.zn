@@ -14,12 +14,12 @@ interface Iterator {
 
   pub fn next(*self) Option[Item];
 
-  pub fn map[U](self, f: Fn(Item) U) MapIter[Self, U] {
-    return MapIter#[Self, U] { .inner = self, .f = f };
+  pub fn map[U, F: Callable(Item) U](self, f: F) MapIter[Self, U, F] {
+    return MapIter#[Self, U, F] { .inner = self, .f = f };
   }
 
-  pub fn filter(self, pred: Fn(Item) bool) FilterIter[Self] {
-    return FilterIter#[Self] { .inner = self, .pred = pred };
+  pub fn filter[P: Callable(Item) bool](self, pred: P) FilterIter[Self, P] {
+    return FilterIter#[Self, P] { .inner = self, .pred = pred };
   }
 
   pub fn take(self, count: usize) TakeIter[Self] {
@@ -30,7 +30,7 @@ interface Iterator {
     return SkipIter#[Self] { .inner = self, .remaining = count };
   }
 
-  pub fn any(self, pred: Fn(Item) bool) bool {
+  pub fn any[P: Callable(Item) bool](self, pred: P) bool {
     while (true) {
       switch (self.next()) {
         .Some(item) => {
@@ -45,7 +45,7 @@ interface Iterator {
     return false;
   }
 
-  pub fn all(self, pred: Fn(Item) bool) bool {
+  pub fn all[P: Callable(Item) bool](self, pred: P) bool {
     while (true) {
       switch (self.next()) {
         .Some(item) => {
@@ -119,7 +119,7 @@ interface Iterator {
     return total;
   }
 
-  pub fn for_each(self, f: Fn(Item) void) {
+  pub fn for_each[F: Callable(Item) void](self, f: F) {
     while (true) {
       switch (self.next()) {
         .Some(item) => { f(item); },
@@ -128,7 +128,7 @@ interface Iterator {
     }
   }
 
-  pub fn fold[Acc](self, init: Acc, f: Fn(Acc, Item) Acc) Acc {
+  pub fn fold[Acc, F: Callable(Acc, Item) Acc](self, init: Acc, f: F) Acc {
     let acc = init;
 
     while (true) {
@@ -142,17 +142,17 @@ interface Iterator {
   }
 }
 
-pub struct MapIter[I: Iterator, U] {
+pub struct MapIter[I: Iterator, U, F] {
   inner: I,
-  f: Fn(I.Item) U,
+  f: F,
 }
 
-pub struct FilterIter[I: Iterator] {
+pub struct FilterIter[I: Iterator, P] {
   inner: I,
-  pred: Fn(I.Item) bool,
+  pred: P,
 }
 
-implement[I: Iterator, U] Iterator : MapIter[I, U] {
+implement[I: Iterator, U, F: Callable(I.Item) U] Iterator : MapIter[I, U, F] {
   alias Item = U;
 
   fn next(*self) Option[U] {
@@ -163,7 +163,7 @@ implement[I: Iterator, U] Iterator : MapIter[I, U] {
   }
 }
 
-implement[I: Iterator] Iterator : FilterIter[I] {
+implement[I: Iterator, P: Callable(I.Item) bool] Iterator : FilterIter[I, P] {
   alias Item = I.Item;
 
   fn next(*self) Option[I.Item] {

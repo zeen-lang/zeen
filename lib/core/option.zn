@@ -28,7 +28,7 @@ implement[T] Option[T] {
     }
   }
 
-  pub fn unwrap_or_else(self, f: FnOnce() T) T {
+  pub fn unwrap_or_else[F: CallableOnce() T](self, f: F) T {
     switch (self) {
       .None => f(),
       .Some(value) => value,
@@ -42,21 +42,21 @@ implement[T] Option[T] {
     }
   }
 
-  pub fn map[U](self, f: FnOnce(T) U) Option[U] {
+  pub fn map[U, F: CallableOnce(T) U](self, f: F) Option[U] {
     switch (self) {
       .Some(value) => Option.Some(f(value)),
       .None => Option.None,
     }
   }
 
-  pub fn map_or[U](self, f: FnOnce(T) U, default: U) Option[U] {
+  pub fn map_or[U, F: CallableOnce(T) U](self, f: F, default: U) Option[U] {
     switch (self) {
       .Some(value) => Option.Some(f(value)),
       .None => Option.Some(default),
     }
   }
 
-  pub fn inspect(self, f: FnOnce(*T) void) Option[T] {
+  pub fn inspect[F: CallableOnce(*T) void](self, f: F) Option[T] {
     switch (self) {
       .Some(&value) => f(value),
       .None => {}
@@ -72,21 +72,21 @@ implement[T] Option[T] {
     }
   }
 
-  pub fn ok_or_else[E](self, err: FnOnce() E) Result[T, E] {
+  pub fn ok_or_else[E, F: CallableOnce() E](self, f: F) Result[T, E] {
     switch (self) {
       .Some(value) => Result.Ok(value),
-      .None => Result.Err(err()),
+      .None => Result.Err(f()),
     }
   }
 
-  pub fn and_then[U](self, f: FnOnce(T) Option[U]) Option[U] {
+  pub fn and_then[U, F: CallableOnce(T) Option[U]](self, f: F) Option[U] {
     switch (self) {
       .Some(value) => f(value),
       .None => Option.None,
     }
   }
 
-  pub fn filter(self, predicate: FnOnce(*T) bool) Option[T] {
+  pub fn filter[P: CallableOnce(*T) bool](self, predicate: P) Option[T] {
     switch (self) {
       .Some(value) => if (predicate(&value)) self else Option.None,
       .None => Option.None,
