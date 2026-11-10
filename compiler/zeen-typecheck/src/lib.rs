@@ -8452,6 +8452,8 @@ impl<'res> TypeChecker<'res> {
                 char_display || self.builtin_shape_implements_interface(ty, iface_def)
             }
 
+            Type::Fn { .. } => matches!(self.def_name(iface_def).as_deref(), Some("Copy")),
+
             Type::Struct {
                 def_id,
                 generic_args,
@@ -14556,6 +14558,51 @@ mod tests {
             result.is_ok(),
             "zero-capture closure must coerce to `|i32| -> i32` parameter: {:?}",
             result.err().map(|errors| errors.len())
+        );
+    }
+
+    #[test]
+    fn callable_bound_copy_accepts_basic_fn() {
+        typecheck_full(
+            r#"
+            fn apply[F: Fn(i32) i32 + Copy](f: F, x: i32) i32 {
+                return f(x);
+            }
+
+            fn double(x: i32) i32 {
+                return x * 2;
+            }
+
+            fn main() {
+                let a = apply(double, 21);
+                let b = apply(|x| x + 1, 41);
+            }
+            "#,
+        )
+        .expect("a basic fn and a zero-capture closure must satisfy the Copy bound");
+    }
+
+    #[test]
+    fn callable_bound_copy_rejects_capturing_closure() {
+        let errors = typecheck_full(
+            r#"
+            fn apply[F: Fn() i32 + Copy](f: F) i32 {
+                return f();
+            }
+
+            fn main() {
+                let n = 1;
+                let c = apply(|| n + 1);
+            }
+            "#,
+        )
+        .expect_err("a capturing closure is a move-only fat value and must not satisfy Copy");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::GenericBoundNotSatisfied { .. })),
+            "expected GenericBoundNotSatisfied error, got: {errors:?}"
         );
     }
 
