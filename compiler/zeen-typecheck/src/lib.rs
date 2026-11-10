@@ -1428,12 +1428,21 @@ impl<'res> TypeChecker<'res> {
         )
     }
 
-    fn check_callable_bounds(&mut self, generic: DefId, concrete_ty: TypeId, source: &Source) {
+    fn check_callable_bounds(
+        &mut self,
+        generic: DefId,
+        concrete_ty: TypeId,
+        source: &Source,
+        self_ty: Option<TypeId>,
+        bindings: &HashMap<DefId, TypeId>,
+    ) {
         let Some(bounds) = self.all_callable_bounds.get(&generic).cloned() else {
             return;
         };
 
         for bound in bounds {
+            let bound = self.substitute_callable_bound(bound, self_ty, bindings);
+
             if self.type_satisfies_callable_bound(concrete_ty, &bound) {
                 continue;
             }
@@ -2663,7 +2672,12 @@ impl<'res> TypeChecker<'res> {
         }
 
         let explicit_ret = def.return_type.as_ref().map(|ty| self.lower_hir_type(ty));
-        let ret = explicit_ret.or_else(|| expected_sig.as_ref().map(|(_, ret)| *ret));
+        let ret = explicit_ret.or_else(|| {
+            expected_sig
+                .as_ref()
+                .map(|(_, ret)| *ret)
+                .filter(|ret| !self.type_contains_generic(*ret))
+        });
 
         match ret {
             Some(ret) => {
@@ -5802,7 +5816,7 @@ impl<'res> TypeChecker<'res> {
         }
 
         for (param_ty, arg) in sig_params.iter().zip(args.iter()) {
-            self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone());
+            self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone(), None);
         }
 
         for arg in args.iter().skip(sig_params.len()) {
@@ -5863,7 +5877,7 @@ impl<'res> TypeChecker<'res> {
         }
 
         for g in &sig_generics {
-            self.check_callable_bounds(*g, bindings[g], &source);
+            self.check_callable_bounds(*g, bindings[g], &source, None, &bindings);
         }
 
         let resolved_generic_args: Vec<TypeId> = sig_generics.iter().map(|g| bindings[g]).collect();
@@ -6047,7 +6061,7 @@ impl<'res> TypeChecker<'res> {
         let mut bindings: HashMap<DefId, TypeId> = HashMap::default();
         for (param_ty, arg) in user_params.iter().zip(args.iter()) {
             let param_ty = self.substitute_self(*param_ty, recv_ty);
-            self.infer_or_check_arg(param_ty, arg, &mut bindings, source.clone());
+            self.infer_or_check_arg(param_ty, arg, &mut bindings, source.clone(), Some(recv_ty));
         }
 
         for (g, explicit) in sig_generics.iter().zip(explicit_generic_args.iter()) {
@@ -6164,7 +6178,7 @@ impl<'res> TypeChecker<'res> {
         let mut bindings: HashMap<DefId, TypeId> = HashMap::default();
         for (param_ty, arg) in user_params.iter().zip(args.iter()) {
             let param_ty = self.substitute_self(*param_ty, recv_ty);
-            self.infer_or_check_arg(param_ty, arg, &mut bindings, source.clone());
+            self.infer_or_check_arg(param_ty, arg, &mut bindings, source.clone(), Some(recv_ty));
         }
 
         for (generic, explicit) in sig_generics.iter().zip(explicit_generic_args.iter()) {
@@ -6262,7 +6276,7 @@ impl<'res> TypeChecker<'res> {
         }
 
         for (param_ty, arg) in sig_params.iter().zip(args.iter()) {
-            self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone());
+            self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone(), None);
         }
 
         if let Some(expected) = expected {
@@ -6333,7 +6347,13 @@ impl<'res> TypeChecker<'res> {
                     let mut bindings: HashMap<DefId, TypeId> = HashMap::default();
                     for (param_ty, arg) in sig_params.iter().skip(1).zip(args.iter()) {
                         let param_ty = self.substitute_self(*param_ty, recv_ty);
-                        self.infer_or_check_arg(param_ty, arg, &mut bindings, source.clone());
+                        self.infer_or_check_arg(
+                            param_ty,
+                            arg,
+                            &mut bindings,
+                            source.clone(),
+                            Some(recv_ty),
+                        );
                     }
                     let resolved_generic_args: Vec<TypeId> = sig_generics
                         .iter()
@@ -6786,7 +6806,13 @@ impl<'res> TypeChecker<'res> {
         };
 
         for (param_ty, arg) in user_params.iter().zip(args.iter()) {
-            self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone());
+            self.infer_or_check_arg(
+                *param_ty,
+                arg,
+                &mut bindings,
+                source.clone(),
+                interface_self,
+            );
         }
 
         if let Some(expected) = expected {
@@ -6859,7 +6885,7 @@ impl<'res> TypeChecker<'res> {
         }
 
         for g in &sig_generics {
-            self.check_callable_bounds(*g, bindings[g], &source);
+            self.check_callable_bounds(*g, bindings[g], &source, interface_self, &bindings);
         }
 
         let resolved_generic_args: Vec<TypeId> = sig_generics.iter().map(|g| bindings[g]).collect();
@@ -7769,7 +7795,13 @@ impl<'res> TypeChecker<'res> {
         };
 
         for (param_ty, arg) in sig_params.iter().zip(args.iter()) {
-            self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone());
+            self.infer_or_check_arg(
+                *param_ty,
+                arg,
+                &mut bindings,
+                source.clone(),
+                interface_self,
+            );
         }
 
         if let Some(expected) = expected {
@@ -7842,7 +7874,7 @@ impl<'res> TypeChecker<'res> {
         }
 
         for g in &sig_generics {
-            self.check_callable_bounds(*g, bindings[g], source);
+            self.check_callable_bounds(*g, bindings[g], source, interface_self, &bindings);
         }
 
         let resolved_generic_args: Vec<TypeId> = sig_generics.iter().map(|g| bindings[g]).collect();
@@ -8083,12 +8115,15 @@ impl<'res> TypeChecker<'res> {
         arg: &HirExpr,
         bindings: &mut HashMap<DefId, TypeId>,
         source: Source,
+        self_ty: Option<TypeId>,
     ) {
         let substituted = self.substitute_generics(param_ty, bindings);
 
         if let Type::GenericParam(g) = self.result.interner.get(substituted).clone()
             && let Some(bound) = self.callable_bound_for_generic(g)
         {
+            let bound = self.substitute_callable_bound(bound, self_ty, bindings);
+
             if let HirExprKind::Closure { def_id, def } = &arg.kind {
                 let expected = self.result.interner.intern(Type::FatFn {
                     params: bound.params.clone(),
@@ -8099,6 +8134,7 @@ impl<'res> TypeChecker<'res> {
                 let arg_ty = self.check_closure(*def_id, def, expected, &arg.source);
                 self.result.record_expr_type(arg.id, arg_ty);
 
+                self.unify_callable_bound_types(&bound, arg_ty, bindings, source.clone());
                 self.unify_for_inference(param_ty, arg_ty, bindings, source);
 
                 return;
@@ -8108,6 +8144,7 @@ impl<'res> TypeChecker<'res> {
             let arg_ty = self.default_literal_with_value(arg, arg_ty);
             self.result.record_expr_type(arg.id, arg_ty);
 
+            self.unify_callable_bound_types(&bound, arg_ty, bindings, source.clone());
             self.unify_for_inference(param_ty, arg_ty, bindings, source);
 
             return;
@@ -8217,6 +8254,80 @@ impl<'res> TypeChecker<'res> {
             }
             _ => false,
         }
+    }
+
+    fn substitute_callable_bound(
+        &mut self,
+        bound: CallableBoundSig,
+        self_ty: Option<TypeId>,
+        bindings: &HashMap<DefId, TypeId>,
+    ) -> CallableBoundSig {
+        let bound = self.substitute_callable_bound_self(bound, self_ty);
+
+        let params = bound
+            .params
+            .iter()
+            .map(|param| self.substitute_generics(*param, bindings))
+            .collect();
+        let ret = self.substitute_generics(bound.ret, bindings);
+
+        CallableBoundSig {
+            once: bound.once,
+            params,
+            ret,
+        }
+    }
+
+    fn substitute_callable_bound_self(
+        &mut self,
+        bound: CallableBoundSig,
+        self_ty: Option<TypeId>,
+    ) -> CallableBoundSig {
+        let Some(self_ty) = self_ty else {
+            return bound;
+        };
+
+        let params = bound
+            .params
+            .iter()
+            .map(|param| {
+                let substituted = self.substitute_self(*param, self_ty);
+                self.normalize_associated(substituted)
+            })
+            .collect();
+
+        let ret = {
+            let substituted = self.substitute_self(bound.ret, self_ty);
+            self.normalize_associated(substituted)
+        };
+
+        CallableBoundSig {
+            once: bound.once,
+            params,
+            ret,
+        }
+    }
+
+    fn unify_callable_bound_types(
+        &mut self,
+        bound: &CallableBoundSig,
+        arg_ty: TypeId,
+        bindings: &mut HashMap<DefId, TypeId>,
+        source: Source,
+    ) {
+        let (params, ret) = match self.result.interner.get(arg_ty).clone() {
+            Type::Fn { params, ret } => (params, ret),
+            Type::FatFn { params, ret, .. } => (params, ret),
+            _ => return,
+        };
+
+        if bound.params.len() == params.len() {
+            for (bound_param, arg_param) in bound.params.iter().zip(params.iter()) {
+                self.unify_for_inference(*bound_param, *arg_param, bindings, source.clone());
+            }
+        }
+
+        self.unify_for_inference(bound.ret, ret, bindings, source);
     }
 
     fn unify_for_inference(
@@ -9804,7 +9915,7 @@ impl<'res> TypeChecker<'res> {
             }
 
             for (param_ty, arg) in sig_params.iter().zip(args.iter()) {
-                self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone());
+                self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone(), None);
             }
 
             if let Some(expected) = expected {
@@ -10267,7 +10378,13 @@ impl<'res> TypeChecker<'res> {
             }
 
             for (param_ty, arg) in user_params.iter().zip(args.iter()) {
-                self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone());
+                self.infer_or_check_arg(
+                    *param_ty,
+                    arg,
+                    &mut bindings,
+                    source.clone(),
+                    Some(self_ty),
+                );
             }
 
             if let Some(expected) = expected {
