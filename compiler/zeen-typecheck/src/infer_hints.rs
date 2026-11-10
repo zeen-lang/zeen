@@ -1,9 +1,9 @@
 use std::rc::Rc;
 
-use zeen_ast::expressions::{BinaryOp, Literal};
+use zeen_ast::expressions::{BinaryOp, Literal, UnaryOp};
 use zeen_hir::{
     HirDecl, HirDeclKind, HirExpr, HirExprKind, HirFn, HirMacroKind, HirModule, HirStmt,
-    HirStmtKind, HirTypeExpr,
+    HirStmtKind, HirTypeExpr, HirTypeKind,
 };
 use zeen_resolve::DefId;
 
@@ -290,14 +290,7 @@ impl Collector {
             return;
         };
 
-        let Some(target) = var_ref(value) else {
-            return;
-        };
-
-        self.hints.push(Hint {
-            target,
-            source: HintSource::Annotation(annotation.clone()),
-        });
+        self.expected(annotation, value);
     }
 
     fn assigned_value(&mut self, object: &HirExpr, value: &HirExpr) {
@@ -316,17 +309,80 @@ impl Collector {
             return;
         };
 
-        let Some(Some(annotation)) = self.return_types.last() else {
+        let Some(Some(annotation)) = self.return_types.last().cloned() else {
             return;
         };
 
-        let Some(target) = var_ref(value) else {
-            return;
-        };
+        self.expected(&annotation, value);
+    }
 
+    fn expected(&mut self, ty: &Rc<HirTypeExpr>, expr: &HirExpr) {
+        match &expr.kind {
+            HirExprKind::VarRef { def, .. } => self.annotation_hint(*def, ty),
+
+            HirExprKind::Binary { lhs, rhs, op } if propagates_expected(*op) => {
+                self.expected(ty, lhs);
+                self.expected(ty, rhs);
+            }
+
+            HirExprKind::Unary {
+                expr,
+                op: UnaryOp::Neg | UnaryOp::Not | UnaryOp::BitNot,
+            } => {
+                self.expected(ty, expr);
+            }
+
+            HirExprKind::ArrayInit { elements } => {
+                if let Some(element) = expected_element(ty) {
+                    for item in elements {
+                        self.expected(element, item);
+                    }
+                }
+            }
+
+            HirExprKind::ArrayRepeatInit { element, .. } => {
+                if let Some(item_ty) = expected_element(ty) {
+                    self.expected(item_ty, element);
+                }
+            }
+
+            HirExprKind::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                self.expected_stmt(ty, then_block);
+
+                if let Some(else_block) = else_block {
+                    self.expected_stmt(ty, else_block);
+                }
+            }
+
+            HirExprKind::Switch { arms, .. } => {
+                for arm in arms {
+                    self.expected(ty, &arm.body);
+                }
+            }
+
+            HirExprKind::Block {
+                trailing: Some(trailing),
+                ..
+            } => self.expected(ty, trailing),
+
+            _ => {}
+        }
+    }
+
+    fn expected_stmt(&mut self, ty: &Rc<HirTypeExpr>, stmt: &HirStmt) {
+        if let HirStmtKind::Expr(expr) = &stmt.kind {
+            self.expected(ty, expr);
+        }
+    }
+
+    fn annotation_hint(&mut self, target: DefId, ty: &Rc<HirTypeExpr>) {
         self.hints.push(Hint {
             target,
-            source: HintSource::Annotation(annotation.clone()),
+            source: HintSource::Annotation(ty.clone()),
         });
     }
 
@@ -384,15 +440,30 @@ impl Collector {
             return;
         };
 
-        let Some(target) = var_ref(value) else {
-            return;
-        };
-
-        self.hints.push(Hint {
-            target,
-            source: HintSource::Annotation(ty.clone()),
-        });
+        self.expected(ty, value);
     }
+}
+
+fn expected_element(ty: &Rc<HirTypeExpr>) -> Option<&Rc<HirTypeExpr>> {
+    match &ty.kind {
+        HirTypeKind::Array { element, .. } => Some(element),
+        HirTypeKind::ManyPointer(element) => Some(element),
+        _ => None,
+    }
+}
+
+pub fn propagates_expected(op: BinaryOp) -> bool {
+    matches!(
+        op,
+        BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::Mod
+            | BinaryOp::BitAnd
+            | BinaryOp::BitOr
+            | BinaryOp::BitXor
+    )
 }
 
 fn hints_operand(op: BinaryOp) -> bool {

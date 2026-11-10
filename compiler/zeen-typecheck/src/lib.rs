@@ -2669,7 +2669,7 @@ impl<'res> TypeChecker<'res> {
             return self.default_literal_with_value(value, ty);
         };
 
-        if !self.literal_hint_matches(ty, hint) {
+        if !self.literal_hint_matches(ty, hint) && !self.literal_expr_fits(value, hint) {
             return self.default_literal_with_value(value, ty);
         }
 
@@ -2677,13 +2677,87 @@ impl<'res> TypeChecker<'res> {
     }
 
     fn literal_hint_matches(&self, ty: TypeId, hint: TypeId) -> bool {
-        let Type::Builtin(hint) = self.result.interner.get(hint) else {
-            return false;
-        };
+        match (self.result.interner.get(ty), self.result.interner.get(hint)) {
+            (Type::IntLiteral, Type::Builtin(hint)) => coerce::builtin_is_integer(*hint),
+            (Type::FloatLiteral, Type::Builtin(hint)) => coerce::builtin_is_float(*hint),
+            (
+                Type::Array { element, len },
+                Type::Array {
+                    element: hint_element,
+                    len: hint_len,
+                },
+            ) => len == hint_len && self.literal_hint_matches(*element, *hint_element),
+            _ => false,
+        }
+    }
 
-        match self.result.interner.get(ty) {
-            Type::IntLiteral => coerce::builtin_is_integer(*hint),
-            Type::FloatLiteral => coerce::builtin_is_float(*hint),
+    fn literal_expr_fits(&self, value: &HirExpr, hint: TypeId) -> bool {
+        match (&value.kind, self.result.interner.get(hint)) {
+            (HirExprKind::Literal(Literal::Int(_)), Type::Builtin(hint)) => {
+                coerce::builtin_is_integer(*hint)
+            }
+
+            (HirExprKind::Literal(Literal::Float(_)), Type::Builtin(hint)) => {
+                coerce::builtin_is_float(*hint)
+            }
+
+            (
+                HirExprKind::Unary {
+                    expr,
+                    op: UnaryOp::Neg | UnaryOp::BitNot,
+                },
+                _,
+            ) => self.literal_expr_fits(expr, hint),
+
+            (HirExprKind::Binary { lhs, rhs, op }, _) if infer_hints::propagates_expected(*op) => {
+                self.literal_expr_fits(lhs, hint) && self.literal_expr_fits(rhs, hint)
+            }
+
+            (
+                HirExprKind::ArrayInit { elements },
+                Type::Array {
+                    element,
+                    len: Some(len),
+                },
+            ) => {
+                *len == elements.len() as u64
+                    && elements
+                        .iter()
+                        .all(|element_expr| self.literal_expr_fits(element_expr, *element))
+            }
+
+            (HirExprKind::Block { trailing, .. }, _) => trailing
+                .as_deref()
+                .is_some_and(|trailing| self.literal_expr_fits(trailing, hint)),
+
+            (
+                HirExprKind::If {
+                    then_block,
+                    else_block,
+                    ..
+                },
+                _,
+            ) => {
+                let then_fits = self
+                    .stmt_trailing_expr(then_block)
+                    .is_some_and(|expr| self.literal_expr_fits(expr, hint));
+
+                match else_block {
+                    Some(else_block) => {
+                        then_fits
+                            && self
+                                .stmt_trailing_expr(else_block)
+                                .is_some_and(|expr| self.literal_expr_fits(expr, hint))
+                    }
+
+                    None => false,
+                }
+            }
+
+            (HirExprKind::Switch { arms, .. }, _) => arms
+                .iter()
+                .all(|arm| self.literal_expr_fits(&arm.body, hint)),
+
             _ => false,
         }
     }
