@@ -1,0 +1,40 @@
+fn apply[F: Fn(i32) i32](f: F, x: i32) i32 {
+    return f(x);
+}
+
+fn apply_where[F](f: F, x: i32) i32
+  where F: Fn(i32) i32 {
+    return f(x);
+}
+
+fn consume[F: FnOnce() i32](f: F) i32 {
+    return f();
+}
+
+fn run[F: Fn(i32) void](f: F, x: i32) void {
+    f(x);
+}
+
+fn double(x: i32) i32 {
+    return x * 2;
+}
+
+fn main() i32 {
+    let offset = 5;
+    let with_capture: Fn(i32) i32 = |x| x + offset;
+
+    @println("{} {}", apply(double, 21), apply_where(|x| x + 1, 41));
+    @println("{} {}", apply(with_capture, 10), apply(|_| 1, 0));
+
+    run(|x| @println("run {}", x), 3);
+
+    let text = String.from("once");
+    let value = consume(|| {
+        @println("{}", text);
+        return 9;
+    });
+
+    @println("{}", value);
+
+    return 0;
+}
