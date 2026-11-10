@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use rustc_hash::FxHashMap;
 use zeen_ast::expressions::{BinaryOp, Literal, UnaryOp};
 use zeen_hir::{
     HirDecl, HirDeclKind, HirExpr, HirExprKind, HirFn, HirMacroKind, HirModule, HirStmt,
@@ -42,6 +43,7 @@ pub fn collect(module: &HirModule) -> Vec<Hint> {
     let mut collector = Collector {
         hints: Vec::new(),
         return_types: Vec::new(),
+        declared: FxHashMap::default(),
     };
 
     for decl in &module.decls {
@@ -78,11 +80,24 @@ pub fn collect(module: &HirModule) -> Vec<Hint> {
 struct Collector {
     hints: Vec<Hint>,
     return_types: Vec<Option<Rc<HirTypeExpr>>>,
+    declared: FxHashMap<DefId, Rc<HirTypeExpr>>,
 }
 
 impl Collector {
     fn fn_body(&mut self, f: &HirFn) {
         self.return_types.push(f.return_type.clone());
+
+        for param in &f.params {
+            let Some(def_id) = param.def_id else {
+                continue;
+            };
+
+            if matches!(param.ty.kind, HirTypeKind::Error) {
+                continue;
+            }
+
+            self.declared.insert(def_id, param.ty.clone());
+        }
 
         if let Some(body) = &f.body {
             self.stmt(body);
@@ -100,10 +115,15 @@ impl Collector {
     fn stmt(&mut self, stmt: &HirStmt) {
         match &stmt.kind {
             HirStmtKind::Let {
+                def_id,
                 explicit_type,
                 value,
                 ..
             } => {
+                if let Some(explicit_type) = explicit_type {
+                    self.declared.insert(*def_id, explicit_type.clone());
+                }
+
                 self.annotated_value(explicit_type.as_ref(), value.as_deref());
 
                 if let Some(value) = value {
@@ -391,23 +411,24 @@ impl Collector {
             return;
         }
 
-        if let Some(literal) = literal_hint(lhs)
-            && let Some(target) = var_ref(rhs)
-        {
-            self.hints.push(Hint {
-                target,
-                source: HintSource::Literal(literal),
-            });
-        }
+        self.operand_hint(lhs, rhs);
+        self.operand_hint(rhs, lhs);
+    }
 
-        if let Some(literal) = literal_hint(rhs)
-            && let Some(target) = var_ref(lhs)
-        {
-            self.hints.push(Hint {
-                target,
-                source: HintSource::Literal(literal),
-            });
-        }
+    fn operand_hint(&mut self, source: &HirExpr, target: &HirExpr) {
+        let Some(target) = var_ref(target) else {
+            return;
+        };
+
+        let source = match literal_hint(source) {
+            Some(literal) => HintSource::Literal(literal),
+            None => match var_ref(source).and_then(|def| self.declared.get(&def)) {
+                Some(ty) => HintSource::Annotation(ty.clone()),
+                None => return,
+            },
+        };
+
+        self.hints.push(Hint { target, source });
     }
 
     fn call(&mut self, callee: &HirExpr, args: &[Rc<HirExpr>]) {
