@@ -48,6 +48,7 @@ pub mod coerce;
 pub mod context;
 pub mod error;
 pub mod format_str;
+pub mod infer_hints;
 pub mod result;
 
 pub const DEFAULT_INT_LITERAL: BuiltinType = BuiltinType::i32;
@@ -72,6 +73,7 @@ pub struct TypeChecker<'res> {
     closure_param_types: HashMap<DefId, TypeId>,
     closure_ret_types: HashMap<DefId, TypeId>,
     closure_tail: Option<HirId>,
+    inference_hints: HashMap<DefId, TypeId>,
 
     interface_registry: InterfaceRegistry,
     interface_methods: HashMap<DefId, Vec<DefId>>,
@@ -249,6 +251,7 @@ impl<'res> TypeChecker<'res> {
             closure_param_types: HashMap::default(),
             closure_ret_types: HashMap::default(),
             closure_tail: None,
+            inference_hints: HashMap::default(),
             interface_registry,
             interface_methods: HashMap::default(),
             interface_generics: HashMap::default(),
@@ -440,6 +443,8 @@ impl<'res> TypeChecker<'res> {
         self.check_duplicate_methods(module);
 
         self.result.closure_allocs = analyze_closures(module, &self.resolution.closure_captures);
+
+        self.collect_inference_hints(module);
 
         for decl in &module.decls {
             self.check_decl_body(decl);
@@ -2614,6 +2619,54 @@ impl<'res> TypeChecker<'res> {
         self.check_decl_body(decl);
     }
 
+    fn collect_inference_hints(&mut self, module: &HirModule) {
+        let hints = infer_hints::collect(module);
+
+        let previous = self.speculating;
+        self.speculating = true;
+
+        for hint in hints {
+            let ty = match hint.source {
+                infer_hints::HintSource::Literal(kind) => Some(self.literal_hint_type(kind)),
+                infer_hints::HintSource::Annotation(ty) => Some(self.lower_hir_type(&ty)),
+                infer_hints::HintSource::ParamType(def, index) => self.fn_param_hint(def, index),
+            };
+
+            let Some(ty) = ty else {
+                continue;
+            };
+
+            let ty = self.default_literal(ty);
+
+            if self.type_contains_generic(ty) || matches!(self.result.interner.get(ty), Type::Error)
+            {
+                continue;
+            }
+
+            self.inference_hints.entry(hint.target).or_insert(ty);
+        }
+
+        self.speculating = previous;
+    }
+
+    fn literal_hint_type(&mut self, kind: infer_hints::LiteralHint) -> TypeId {
+        match kind {
+            infer_hints::LiteralHint::Int => self.result.interner.int_literal(),
+            infer_hints::LiteralHint::Float => self.result.interner.float_literal(),
+            infer_hints::LiteralHint::Char => self.result.interner.builtin(BuiltinType::char),
+            infer_hints::LiteralHint::Bool => self.result.interner.builtin(BuiltinType::bool),
+        }
+    }
+
+    fn fn_param_hint(&mut self, def: DefId, index: usize) -> Option<TypeId> {
+        let ty = *self.result.def_types.get(&def)?;
+
+        match self.result.interner.get(ty).clone() {
+            Type::Fn { params, .. } => params.get(index).copied(),
+            _ => None,
+        }
+    }
+
     fn check_closure(
         &mut self,
         def_id: DefId,
@@ -2652,11 +2705,19 @@ impl<'res> TypeChecker<'res> {
                     Some(Some(ty)) => ty,
                     Some(None) => self.result.interner.error(),
                     None => {
-                        self.report(TypeError::ClosureParamTypeNeeded {
-                            src: source.src(),
-                            span: param.span,
-                        });
-                        self.result.interner.error()
+                        match param
+                            .def_id
+                            .and_then(|def| self.inference_hints.get(&def).copied())
+                        {
+                            Some(ty) => ty,
+                            None => {
+                                self.report(TypeError::ClosureParamTypeNeeded {
+                                    src: source.src(),
+                                    span: param.span,
+                                });
+                                self.result.interner.error()
+                            }
+                        }
                     }
                 }
             } else {
@@ -12706,6 +12767,7 @@ mod tests {
     use zeen_resolve::{DefId, resolve};
 
     use crate::{TypeCheckResult, TypeChecker, TypeError};
+    use zeen_ast::types::BuiltinType;
     use zeen_types::TypeId;
 
     const CORE_OPS: &str = include_str!("../../../lib/core/ops.zn");
@@ -14878,6 +14940,23 @@ mod tests {
             .find(|&ty| matches!(result.interner.get(ty), Type::FatFn { erased: false, .. }))
     }
 
+    fn closure_sig_matches(result: &TypeCheckResult, param: BuiltinType, ret: BuiltinType) -> bool {
+        result
+            .def_types
+            .values()
+            .any(|&ty| match result.interner.get(ty) {
+                Type::Fn {
+                    params,
+                    ret: ret_ty,
+                } => {
+                    params.len() == 1
+                        && matches!(result.interner.get(params[0]), Type::Builtin(b) if *b == param)
+                        && matches!(result.interner.get(*ret_ty), Type::Builtin(b) if *b == ret)
+                }
+                _ => false,
+            })
+    }
+
     #[test]
     fn zero_capture_closure_types_as_fn() {
         let result = typecheck_full("fn main() { let c = |x: i32| -> i32 { return x + 1; }; }")
@@ -15104,6 +15183,69 @@ mod tests {
                 .iter()
                 .any(|err| matches!(err, TypeError::ClosureParamTypeNeeded { .. })),
             "expected TypeError::ClosureParamTypeNeeded, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn closure_param_inferred_from_literal_operand() {
+        let result = typecheck_full(
+            r#"
+            fn main() {
+                let f = |x| x * 2;
+                let y = f(3);
+            }
+            "#,
+        )
+        .expect("a literal operand must infer the closure parameter");
+
+        assert!(
+            closure_sig_matches(&result, BuiltinType::i32, BuiltinType::i32),
+            "expected `fn(i32) i32` for the closure, got: {:?}",
+            result
+                .def_types
+                .values()
+                .map(|&ty| result.interner.get(ty))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn closure_param_inferred_from_call_argument() {
+        let result = typecheck_full(
+            r#"
+            fn take(v: u8) u8 {
+                return v;
+            }
+
+            fn main() {
+                let f = |x| take(x);
+                let y = f(3);
+            }
+            "#,
+        )
+        .expect("an argument position must infer the closure parameter");
+
+        assert!(
+            closure_sig_matches(&result, BuiltinType::u8, BuiltinType::u8),
+            "expected `fn(u8) u8` for the closure"
+        );
+    }
+
+    #[test]
+    fn closure_param_expected_type_wins_over_body_hint() {
+        let result = typecheck_full(
+            r#"
+            fn main() {
+                let f: Fn(u8) u8 = |x| x * 2;
+                let y = f(3);
+            }
+            "#,
+        )
+        .expect("an expected closure type must win over the body hint");
+
+        assert!(
+            closure_sig_matches(&result, BuiltinType::u8, BuiltinType::u8),
+            "expected `Fn(u8) u8` for the closure"
         );
     }
 
