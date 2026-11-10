@@ -1,0 +1,30 @@
+struct Counter {
+  value: i32,
+}
+
+implement Counter {
+  pub fn bump(*self) i32 {
+    self.value += 1;
+    return self.value;
+  }
+}
+
+fn main() {
+  let text = String.from("hello");
+  let read = || @println("{}", text);
+
+  read();
+  read();
+
+  let counter = Counter { .value = 0 };
+  let bump = || counter.bump();
+  @println("{} {}", bump(), bump());
+
+  let moved = String.from("gone");
+  let take = || -> String {
+    let owned = moved;
+    return owned;
+  };
+
+  @println("{}", take());
+}
