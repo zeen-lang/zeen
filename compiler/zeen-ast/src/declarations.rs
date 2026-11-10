@@ -208,10 +208,19 @@ pub struct WhereClause<'arena> {
 pub enum WhereClauseKind<'arena> {
     Bound {
         bounds: &'arena [(Spur, SourceSpan)],
+        callable_bounds: Option<&'arena [CallableBound<'arena>]>,
     },
     Equality {
         ty: &'arena TypeExpr<'arena>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CallableBound<'arena> {
+    pub once: bool,
+    pub params: &'arena [&'arena TypeExpr<'arena>],
+    pub ret: &'arena TypeExpr<'arena>,
+    pub span: SourceSpan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -228,10 +237,18 @@ pub struct FnParam<'arena> {
     pub span: SourceSpan,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClosureParam<'arena> {
+    pub name: Option<Spur>,
+    pub ty: Option<&'arena TypeExpr<'arena>>,
+    pub span: SourceSpan,
+}
+
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub struct GenericType<'arena> {
     pub name: (Spur, SourceSpan),
     pub interfaces: Option<&'arena [(Spur, SourceSpan)]>,
+    pub callable_bounds: Option<&'arena [CallableBound<'arena>]>,
 }
 
 // Struct

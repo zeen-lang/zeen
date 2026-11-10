@@ -17,24 +17,26 @@ pub use std.sync;
   alias NativeThread = c_pthread_t;
 }
 
-struct SpawnPacket[T] {
-  pub f: FnOnce() T,
+struct SpawnPacket[T, F] {
+  pub f: F,
   pub slot: *T,
 }
 
 @os[windows] {
-  fn spawn_trampoline[T](arg: *void) u32 {
-    let packet = @as(*SpawnPacket[T], arg);
-    let out = (*packet).f();
-    *(*packet).slot = out;
+  fn spawn_trampoline[T, F: CallableOnce() T](arg: *void) u32 {
+    let packet = @as(*SpawnPacket[T, F], arg);
+    let owned = *packet;
+    let out = owned.f();
+    *(owned.slot) = out;
     Allocator.dealloc(arg);
     return 0;
   }
 } else {
-  fn spawn_trampoline[T](arg: *void) *void {
-    let packet = @as(*SpawnPacket[T], arg);
-    const out = (*packet).f();
-    *(*packet).slot = out;
+  fn spawn_trampoline[T, F: CallableOnce() T](arg: *void) *void {
+    let packet = @as(*SpawnPacket[T, F], arg);
+    let owned = *packet;
+    const out = owned.f();
+    *(owned.slot) = out;
     Allocator.dealloc(arg);
     return nullptr;
   }
@@ -43,18 +45,18 @@ struct SpawnPacket[T] {
 /// OS thread spawning and joining.
 pub struct Thread {
   /// Spawn a thread running `f`, move it there.
-  pub fn spawn[T](f: FnOnce() T) JoinHandle[T] {
+  pub fn spawn[T, F: CallableOnce() T](f: F) JoinHandle[T] {
     const slot = @as(*T, Allocator.alloc(@sizeof(T)));
-    const boxed = SpawnPacket#[T] { .f = f, .slot = slot };
-    const raw = Allocator.alloc(@sizeof(SpawnPacket[T]));
+    const boxed = SpawnPacket#[T, F] { .f = f, .slot = slot };
+    const raw = Allocator.alloc(@sizeof(SpawnPacket[T, F]));
 
-    *@as(*SpawnPacket[T], raw) = boxed;
+    *@as(*SpawnPacket[T, F], raw) = boxed;
 
     @os[windows] {
       let handle = CreateThread(
         nullptr,
         0,
-        spawn_trampoline#[T],
+        spawn_trampoline#[T, F],
         raw,
         0,
         nullptr,
@@ -67,7 +69,7 @@ pub struct Thread {
       return JoinHandle { .native = handle, .slot = slot, .done = false };
     } else {
       let tid: NativeThread = @uninit();
-      const rc = pthread_create(&tid, nullptr, spawn_trampoline#[T], raw);
+      const rc = pthread_create(&tid, nullptr, spawn_trampoline#[T, F], raw);
 
       if (rc != 0) {
         @panic("spawn failed");

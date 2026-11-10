@@ -4,12 +4,12 @@ struct Wrap {
 
 fn return_adder_by(v: i32) Fn(i32) i32 {
     let base = v;
-    return fn(x: i32) i32 { return x + base; };
+    return |x: i32| -> i32 { return x + base; };
 }
 
 fn return_once(v: i32) FnOnce(i32) i32 {
     let w = Wrap { .v = v };
-    return fn(x: i32) i32 { return x + w.v; };
+    return |x: i32| -> i32 { return x + w.v; };
 }
 
 fn main() i32 {

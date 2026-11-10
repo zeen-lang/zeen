@@ -1,0 +1,20 @@
+fn apply(f: fn(i32) i32, x: i32) i32 {
+  return f(x);
+}
+
+fn main() i32 {
+  let scale = 3;
+  let double: fn(i32) i32 = |x| x * 2;
+  let add = |a: i32, b: i32| a + b;
+  let ignore: fn(i32) void = |_| {};
+  let forty_two: fn() i32 = || 42;
+  let block: fn(i32) i32 = |x| { let y = 4; x + y };
+  let capture: Fn(i32) i32 = |x| x + scale;
+
+  ignore(1);
+
+  @println("{} {} {} {}", double(21), add(1, 2), forty_two(), block(1));
+  @println("{} {}", apply(|x| x + 1, 41), capture(2));
+
+  return 0;
+}

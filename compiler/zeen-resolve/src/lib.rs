@@ -996,7 +996,7 @@ mod tests {
 
     #[test]
     fn closure_registers_def_and_captures_local() {
-        let fx = resolve_ok_with_std("fn main() { let x = 1; let c = fn() i32 { return x; }; }");
+        let fx = resolve_ok_with_std("fn main() { let x = 1; let c = || -> i32 { return x; }; }");
 
         let closure = fx
             .def_id_by_name("closure0")
@@ -1009,7 +1009,7 @@ mod tests {
 
     #[test]
     fn zero_capture_closure_has_no_captures() {
-        let fx = resolve_ok_with_std("fn main() { let x = 1; let c = fn() i32 { return 0; }; }");
+        let fx = resolve_ok_with_std("fn main() { let x = 1; let c = || -> i32 { return 0; }; }");
 
         let closure = fx
             .def_id_by_name("closure0")
@@ -1021,7 +1021,7 @@ mod tests {
     #[test]
     fn nested_closure_capture_cascades_to_outer() {
         let fx = resolve_ok_with_std(
-            "fn main() { let x = 1; let outer = fn() i32 { let y = 2; let inner = fn() i32 { return x + y; }; return inner(); }; }",
+            "fn main() { let x = 1; let outer = || -> i32 { let y = 2; let inner = || -> i32 { return x + y; }; return inner(); }; }",
         );
 
         let outer = fx
@@ -1041,7 +1041,7 @@ mod tests {
     #[test]
     fn closure_dedups_and_keeps_first_use_order() {
         let fx = resolve_ok_with_std(
-            "fn main() { let a = 1; let b = 2; let c = fn() i32 { return a + b + a + a; }; }",
+            "fn main() { let a = 1; let b = 2; let c = || -> i32 { return a + b + a + a; }; }",
         );
 
         let closure = fx
@@ -1057,7 +1057,7 @@ mod tests {
     #[test]
     fn closure_inside_nested_fn_captures_only_nested_fn_frame() {
         let fx = resolve_ok_with_std(
-            "fn main() { let x = 1; fn nested() i32 { let y = 2; let c = fn() i32 { return y; }; return c(); } return x; }",
+            "fn main() { let x = 1; fn nested() i32 { let y = 2; let c = || -> i32 { return y; }; return c(); } return x; }",
         );
 
         let closure = fx
@@ -1070,7 +1070,7 @@ mod tests {
     #[test]
     fn closure_in_nested_fn_cannot_reach_enclosing_frame() {
         let errs = resolve_full_with_std(
-            "fn main() { let x = 1; fn nested() i32 { let c = fn() i32 { return x; }; return c(); } return 0; }",
+            "fn main() { let x = 1; fn nested() i32 { let c = || -> i32 { return x; }; return c(); } return 0; }",
         )
         .unwrap_err();
 
@@ -1082,7 +1082,7 @@ mod tests {
     #[test]
     fn nested_fn_inside_closure_cannot_capture_closure_frame() {
         let errs = resolve_full_with_std(
-            "fn main() { let x = 1; let c = fn() i32 { fn nested() i32 { return x; } return nested(); }; }",
+            "fn main() { let x = 1; let c = || -> i32 { fn nested() i32 { return x; } return nested(); }; }",
         )
         .unwrap_err();
 
@@ -1094,7 +1094,7 @@ mod tests {
     #[test]
     fn self_inside_closure_is_reported() {
         let errs = resolve_full_with_std(
-            "interface Getter { fn get(self) i32; } struct Foo { v: i32 } implement Getter: Foo { fn get(self) i32 { let c = fn() i32 { return self.v; }; return c(); } }",
+            "interface Getter { fn get(self) i32; } struct Foo { v: i32 } implement Getter: Foo { fn get(self) i32 { let c = || -> i32 { return self.v; }; return c(); } }",
         )
         .unwrap_err();
 
@@ -1106,8 +1106,8 @@ mod tests {
 
     #[test]
     fn closure_param_named_self_is_reported() {
-        let errs =
-            resolve_full_with_std("fn main() { let c = fn(self) i32 { return 1; }; }").unwrap_err();
+        let errs = resolve_full_with_std("fn main() { let c = |self| -> i32 { return 1; }; }")
+            .unwrap_err();
 
         assert!(
             errs.iter()
@@ -1118,7 +1118,7 @@ mod tests {
     #[test]
     fn closure_capturing_generic_param_is_recorded() {
         let fx = resolve_ok_with_std(
-            "fn generic[T](v: T) T { let c = fn() T { return v; }; return c(); }",
+            "fn generic[T](v: T) T { let c = || -> T { return v; }; return c(); }",
         );
 
         let closure = fx
@@ -1134,7 +1134,7 @@ mod tests {
     #[test]
     fn closure_calling_sibling_function_is_not_a_capture() {
         let fx = resolve_ok_with_std(
-            "fn helper() i32 { return 1; } fn main() { let c = fn() i32 { return helper(); }; }",
+            "fn helper() i32 { return 1; } fn main() { let c = || -> i32 { return helper(); }; }",
         );
 
         let closure = fx

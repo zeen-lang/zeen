@@ -26,8 +26,8 @@ use zeen_driver::{CompilationContext, CompilationOutput};
 use zeen_hir::{
     HirId, HirModule,
     decl::{
-        HirAssociatedType, HirDecl, HirDeclKind, HirEnumVariantPayload, HirFn, HirWhereClause,
-        HirWhereClauseKind,
+        HirAssociatedType, HirDecl, HirDeclKind, HirEnumVariantPayload, HirFn, HirGenericParam,
+        HirWhereClause, HirWhereClauseKind,
     },
     expr::{
         HirExpr, HirExprKind, HirFieldInit, HirMacroKind, HirPattern, HirPatternBinding,
@@ -69,6 +69,10 @@ pub struct TypeChecker<'res> {
 
     fn_sigs: HashMap<DefId, FnSignature>,
 
+    closure_param_types: HashMap<DefId, TypeId>,
+    closure_ret_types: HashMap<DefId, TypeId>,
+    closure_tail: Option<HirId>,
+
     interface_registry: InterfaceRegistry,
     interface_methods: HashMap<DefId, Vec<DefId>>,
     interface_generics: HashMap<DefId, Vec<DefId>>,
@@ -92,6 +96,7 @@ pub struct TypeChecker<'res> {
     in_progress_aliases: HashSet<DefId>,
 
     all_generic_bounds: HashMap<DefId, Vec<DefId>>,
+    all_callable_bounds: HashMap<DefId, Vec<CallableBoundSig>>,
     method_owning_interface: HashMap<DefId, DefId>,
     extracting_typename: bool,
     speculating: bool,
@@ -113,6 +118,13 @@ struct FnSignature {
     self_mode: Option<SelfMode>,
     is_pub: bool,
     is_variadic: bool,
+}
+
+#[derive(Clone, Debug)]
+struct CallableBoundSig {
+    once: bool,
+    params: Vec<TypeId>,
+    ret: TypeId,
 }
 
 #[derive(Clone)]
@@ -234,6 +246,9 @@ impl<'res> TypeChecker<'res> {
             bodies_in_progress: HashSet::default(),
             interner,
             fn_sigs: HashMap::default(),
+            closure_param_types: HashMap::default(),
+            closure_ret_types: HashMap::default(),
+            closure_tail: None,
             interface_registry,
             interface_methods: HashMap::default(),
             interface_generics: HashMap::default(),
@@ -254,6 +269,7 @@ impl<'res> TypeChecker<'res> {
             type_aliases: HashMap::default(),
             in_progress_aliases: HashSet::default(),
             all_generic_bounds: HashMap::default(),
+            all_callable_bounds: HashMap::default(),
             method_owning_interface: HashMap::default(),
             extracting_typename: false,
             speculating: false,
@@ -341,6 +357,8 @@ impl<'res> TypeChecker<'res> {
                     self.all_generic_bounds
                         .insert(generic.def_id, generic.bounds.clone());
                 }
+
+                self.register_callable_bounds(&s.generics);
             }
 
             if let HirDeclKind::Enum(e) = &decl.kind {
@@ -351,6 +369,8 @@ impl<'res> TypeChecker<'res> {
                     self.all_generic_bounds
                         .insert(generic.def_id, generic.bounds.clone());
                 }
+
+                self.register_callable_bounds(&e.generics);
             }
 
             if let HirDeclKind::Interface(i) = &decl.kind {
@@ -374,6 +394,8 @@ impl<'res> TypeChecker<'res> {
                     self.assoc_type_bounds
                         .insert(alias.def_id, alias.bounds.clone());
                 }
+
+                self.register_callable_bounds(&i.generics);
             }
         }
 
@@ -658,6 +680,8 @@ impl<'res> TypeChecker<'res> {
                         ty: alias.ty.clone(),
                     },
                 );
+
+                self.register_callable_bounds(&alias.generics);
             }
 
             HirDeclKind::ExternLink | HirDeclKind::ExternInclude => {}
@@ -688,6 +712,8 @@ impl<'res> TypeChecker<'res> {
                 .entry(*g)
                 .or_insert_with(|| bounds.clone());
         }
+
+        self.register_callable_bounds(&hir_fn.generics);
 
         self.register_where_clauses(&hir_fn.where_clauses);
 
@@ -723,7 +749,13 @@ impl<'res> TypeChecker<'res> {
                     }
                 }
 
-                let (ty, is_const) = self.lower_hir_type_with_const(&param.ty);
+                let (ty, is_const) = match param
+                    .def_id
+                    .and_then(|id| self.closure_param_types.get(&id).copied())
+                {
+                    Some(ty) if matches!(param.ty.kind, HirTypeKind::Error) => (ty, false),
+                    _ => self.lower_hir_type_with_const(&param.ty),
+                };
                 let ty = self.normalize_associated(ty);
 
                 let effective_const = if idx == 0 {
@@ -750,6 +782,7 @@ impl<'res> TypeChecker<'res> {
             .return_type
             .as_ref()
             .map(|ty| self.lower_hir_type(ty))
+            .or_else(|| self.closure_ret_types.get(&def_id).copied())
             .unwrap_or_else(|| self.result.interner.void());
 
         let fn_ty = self.result.interner.intern(Type::Fn {
@@ -777,6 +810,8 @@ impl<'res> TypeChecker<'res> {
             self.all_generic_bounds
                 .insert(generic.def_id, generic.bounds.clone());
         }
+
+        self.register_callable_bounds(&imp.generics);
 
         if let Some(object_def) = imp.object
             && let Some(DefKind::BuiltinShape(shape)) = self.def_kind(object_def).cloned()
@@ -1305,6 +1340,130 @@ impl<'res> TypeChecker<'res> {
             .get(&gen_def)
             .map(|bounds| bounds.contains(&iface_def))
             .unwrap_or(false)
+    }
+
+    fn register_callable_bounds(&mut self, generics: &[HirGenericParam]) {
+        for generic in generics {
+            if generic.callable_bounds.is_empty() {
+                continue;
+            }
+
+            let sigs = self.lower_callable_bounds(&generic.callable_bounds);
+
+            self.all_callable_bounds
+                .entry(generic.def_id)
+                .or_default()
+                .extend(sigs);
+        }
+    }
+
+    fn lower_callable_bounds(
+        &mut self,
+        bounds: &[zeen_hir::HirCallableBound],
+    ) -> Vec<CallableBoundSig> {
+        let mut sigs: Vec<CallableBoundSig> = Vec::with_capacity(bounds.len());
+
+        for bound in bounds {
+            let params = bound
+                .params
+                .iter()
+                .map(|param| self.lower_hir_type(param))
+                .collect();
+            let ret = self.lower_hir_type(&bound.ret);
+
+            sigs.push(CallableBoundSig {
+                once: bound.once,
+                params,
+                ret,
+            });
+        }
+
+        sigs
+    }
+
+    fn callable_bound_satisfies(
+        &self,
+        known: &CallableBoundSig,
+        required: &CallableBoundSig,
+    ) -> bool {
+        known.params == required.params
+            && known.ret == required.ret
+            && (!known.once || required.once)
+    }
+
+    fn type_satisfies_callable_bound(&self, ty: TypeId, bound: &CallableBoundSig) -> bool {
+        match self.result.interner.get(ty).clone() {
+            Type::Fn { params, ret } => params == bound.params && ret == bound.ret,
+
+            Type::FatFn {
+                params, ret, once, ..
+            } => params == bound.params && ret == bound.ret && (!once || bound.once),
+
+            Type::GenericParam(g) => self.all_callable_bounds.get(&g).is_some_and(|bounds| {
+                bounds
+                    .iter()
+                    .any(|known| self.callable_bound_satisfies(known, bound))
+            }),
+
+            _ => false,
+        }
+    }
+
+    fn display_callable_bound(&self, bound: &CallableBoundSig) -> String {
+        let name = if bound.once {
+            "CallableOnce"
+        } else {
+            "Callable"
+        };
+        let params: Vec<String> = bound
+            .params
+            .iter()
+            .map(|&param| self.display_type(param))
+            .collect();
+
+        format!(
+            "{name}({}) {}",
+            params.join(", "),
+            self.display_type(bound.ret)
+        )
+    }
+
+    fn check_callable_bounds(
+        &mut self,
+        generic: DefId,
+        concrete_ty: TypeId,
+        source: &Source,
+        self_ty: Option<TypeId>,
+        bindings: &HashMap<DefId, TypeId>,
+    ) {
+        let Some(bounds) = self.all_callable_bounds.get(&generic).cloned() else {
+            return;
+        };
+
+        for bound in bounds {
+            let bound = self.substitute_callable_bound(bound, self_ty, bindings);
+
+            if self.type_satisfies_callable_bound(concrete_ty, &bound) {
+                continue;
+            }
+
+            let generic_name = {
+                let interner = self.interner.borrow();
+                interner
+                    .resolve(&self.resolution.defs[&generic].name)
+                    .into()
+            };
+            let bound_text = self.display_callable_bound(&bound);
+            let ty = self.display_type(concrete_ty).into();
+
+            self.report(TypeError::GenericBoundNotSatisfied {
+                generic: generic_name,
+                bound: bound_text.into(),
+                ty,
+                src: source.src(),
+                span: source.span,
+            });
+        }
     }
 
     fn lower_hir_type_inner(&mut self, ty: &HirTypeExpr) -> TypeId {
@@ -1947,6 +2106,7 @@ impl<'res> TypeChecker<'res> {
             generic_bindings,
             generic_bounds,
             loop_labels: Vec::new(),
+            infer_return: false,
         });
 
         match &body.kind {
@@ -2397,22 +2557,33 @@ impl<'res> TypeChecker<'res> {
             }
 
             HirStmtKind::Return { value } => {
-                let expected = self.ctx.current().return_type;
+                if self.ctx.current().infer_return {
+                    self.report(TypeError::ClosureReturnTypeNeeded {
+                        src: stmt.source.src(),
+                        span: stmt.source.span,
+                    });
 
-                match value {
-                    Some(v) => {
-                        self.coerce_return_expr(v);
+                    if let Some(v) = value {
+                        self.synth_expr(v);
                     }
+                } else {
+                    let expected = self.ctx.current().return_type;
 
-                    None => {
-                        let void = self.result.interner.void();
-                        if !try_coerce(&mut self.result.interner, void, expected).is_ok() {
-                            self.report(TypeError::Mismatch {
-                                expected: self.display_type(expected).into(),
-                                found: self.display_type(void).into(),
-                                src: stmt.source.src(),
-                                span: stmt.source.span,
-                            });
+                    match value {
+                        Some(v) => {
+                            self.coerce_return_expr(v);
+                        }
+
+                        None => {
+                            let void = self.result.interner.void();
+                            if !try_coerce(&mut self.result.interner, void, expected).is_ok() {
+                                self.report(TypeError::Mismatch {
+                                    expected: self.display_type(expected).into(),
+                                    found: self.display_type(void).into(),
+                                    src: stmt.source.src(),
+                                    span: stmt.source.span,
+                                });
+                            }
                         }
                     }
                 }
@@ -2443,10 +2614,135 @@ impl<'res> TypeChecker<'res> {
         self.check_decl_body(decl);
     }
 
-    fn check_closure(&mut self, def_id: DefId, def: &Rc<HirFn>, source: &Source) -> TypeId {
-        self.declare_fn_signature(def_id, def);
-        self.check_fn_body(def_id, def, None, None);
+    fn check_closure(
+        &mut self,
+        def_id: DefId,
+        def: &Rc<HirFn>,
+        expected: TypeId,
+        source: &Source,
+    ) -> TypeId {
+        let expected_sig = match self.result.interner.get(expected).clone() {
+            Type::Fn { params, ret } | Type::FatFn { params, ret, .. } => Some((params, ret)),
+            _ => None,
+        };
 
+        if self.fn_sigs.contains_key(&def_id) {
+            return self.closure_value_type(def_id, def, source);
+        }
+
+        if let Some((types, _)) = &expected_sig
+            && types.len() != def.params.len()
+        {
+            self.report(TypeError::ClosureParamCountMismatch {
+                expected: types.len(),
+                found: def.params.len(),
+                src: source.src(),
+                span: source.span,
+            });
+        }
+
+        let mut params = Vec::with_capacity(def.params.len());
+
+        for (idx, param) in def.params.iter().enumerate() {
+            let ty = if matches!(param.ty.kind, HirTypeKind::Error) {
+                match expected_sig
+                    .as_ref()
+                    .map(|(types, _)| types.get(idx).copied())
+                {
+                    Some(Some(ty)) => ty,
+                    Some(None) => self.result.interner.error(),
+                    None => {
+                        self.report(TypeError::ClosureParamTypeNeeded {
+                            src: source.src(),
+                            span: param.span,
+                        });
+                        self.result.interner.error()
+                    }
+                }
+            } else {
+                self.lower_hir_type(&param.ty)
+            };
+
+            if let Some(param_def) = param.def_id {
+                self.result.def_types.insert(param_def, ty);
+                self.closure_param_types.insert(param_def, ty);
+            }
+
+            params.push(ty);
+        }
+
+        let explicit_ret = def.return_type.as_ref().map(|ty| self.lower_hir_type(ty));
+        let ret = explicit_ret.or_else(|| {
+            expected_sig
+                .as_ref()
+                .map(|(_, ret)| *ret)
+                .filter(|ret| !self.type_contains_generic(*ret))
+        });
+
+        match ret {
+            Some(ret) => {
+                let tail = def.body.as_ref().and_then(|body| match &body.kind {
+                    HirStmtKind::Expr(expr) => match &expr.kind {
+                        HirExprKind::Block {
+                            trailing: Some(trailing),
+                            ..
+                        } => Some(trailing.id),
+                        _ => None,
+                    },
+                    _ => None,
+                });
+
+                self.closure_ret_types.insert(def_id, ret);
+                self.declare_fn_signature(def_id, def);
+
+                let previous_tail = self.closure_tail;
+                self.closure_tail = tail;
+                self.check_fn_body(def_id, def, None, None);
+                self.closure_tail = previous_tail;
+            }
+            None => {
+                self.infer_closure_return(def_id, def);
+            }
+        }
+
+        self.closure_value_type(def_id, def, source)
+    }
+
+    fn infer_closure_return(&mut self, def_id: DefId, def: &Rc<HirFn>) -> TypeId {
+        let error = self.result.interner.error();
+
+        self.ctx.push_fn(FnCtx {
+            fn_def: def_id,
+            return_type: error,
+            self_type: None,
+            struct_def: None,
+            generic_bindings: HashMap::default(),
+            generic_bounds: HashMap::default(),
+            loop_labels: Vec::new(),
+            infer_return: true,
+        });
+
+        let body_ty = match &def.body {
+            Some(body) => self.check_stmt_as_block_value(body, None),
+            None => self.result.interner.void(),
+        };
+
+        self.ctx.pop_fn();
+
+        let mut ret = self.default_literal(body_ty);
+
+        if matches!(self.result.interner.get(ret), Type::Never) {
+            ret = self.result.interner.void();
+        }
+
+        self.closure_ret_types.insert(def_id, ret);
+        self.declare_fn_signature(def_id, def);
+        self.bodies_checked.insert(def_id);
+
+        ret
+    }
+
+    fn closure_value_type(&mut self, def_id: DefId, def: &Rc<HirFn>, source: &Source) -> TypeId {
         let fn_ty = *self
             .result
             .def_types
@@ -2477,10 +2773,7 @@ impl<'res> TypeChecker<'res> {
             return fn_ty;
         }
 
-        let once = captures.iter().any(|captured| {
-            let cap_ty = self.lookup_def_type(*captured, source.clone());
-            !self.capture_is_copy(cap_ty)
-        });
+        let once = self.closure_moves_capture(def, &captures, source);
 
         self.result.interner.intern(Type::FatFn {
             params,
@@ -2488,6 +2781,309 @@ impl<'res> TypeChecker<'res> {
             once,
             erased: false,
         })
+    }
+
+    fn closure_moves_capture(
+        &mut self,
+        def: &Rc<HirFn>,
+        captures: &[DefId],
+        source: &Source,
+    ) -> bool {
+        let movable: HashSet<DefId> = captures
+            .iter()
+            .copied()
+            .filter(|captured| {
+                let cap_ty = self.lookup_def_type(*captured, source.clone());
+                !self.capture_is_copy(cap_ty)
+            })
+            .collect();
+
+        if movable.is_empty() {
+            return false;
+        }
+
+        let Some(body) = &def.body else {
+            return false;
+        };
+
+        let mut moved = false;
+        self.walk_closure_stmt(body, false, &movable, &mut moved);
+
+        moved
+    }
+
+    fn walk_closure_stmt(
+        &self,
+        stmt: &HirStmt,
+        nested: bool,
+        movable: &HashSet<DefId>,
+        moved: &mut bool,
+    ) {
+        if *moved {
+            return;
+        }
+
+        match &stmt.kind {
+            HirStmtKind::Let { value, .. } => {
+                if let Some(value) = value {
+                    self.walk_closure_expr(value, true, nested, movable, moved);
+                }
+            }
+
+            HirStmtKind::Assign { object, value } => {
+                self.walk_closure_expr(object, false, nested, movable, moved);
+                self.walk_closure_expr(value, true, nested, movable, moved);
+            }
+
+            HirStmtKind::CompoundAssign { object, value, .. } => {
+                self.walk_closure_expr(object, true, nested, movable, moved);
+                self.walk_closure_expr(value, true, nested, movable, moved);
+            }
+
+            HirStmtKind::Return { value } => {
+                if let Some(value) = value {
+                    self.walk_closure_expr(value, true, nested, movable, moved);
+                }
+            }
+
+            HirStmtKind::While {
+                condition,
+                update,
+                block,
+                else_block,
+                ..
+            } => {
+                self.walk_closure_expr(condition, true, nested, movable, moved);
+
+                if let Some(update) = update {
+                    self.walk_closure_stmt(update, nested, movable, moved);
+                }
+
+                self.walk_closure_stmt(block, nested, movable, moved);
+
+                if let Some(else_block) = else_block {
+                    self.walk_closure_stmt(else_block, nested, movable, moved);
+                }
+            }
+
+            HirStmtKind::For {
+                iterator,
+                block,
+                else_block,
+                ..
+            } => {
+                self.walk_closure_expr(iterator, true, nested, movable, moved);
+                self.walk_closure_stmt(block, nested, movable, moved);
+
+                if let Some(else_block) = else_block {
+                    self.walk_closure_stmt(else_block, nested, movable, moved);
+                }
+            }
+
+            HirStmtKind::Expr(expr) => {
+                self.walk_closure_expr(expr, true, nested, movable, moved);
+            }
+
+            HirStmtKind::Break { .. }
+            | HirStmtKind::Continue { .. }
+            | HirStmtKind::FnDecl(_)
+            | HirStmtKind::Error => {}
+        }
+    }
+
+    fn walk_closure_expr(
+        &self,
+        expr: &HirExpr,
+        consumed: bool,
+        nested: bool,
+        movable: &HashSet<DefId>,
+        moved: &mut bool,
+    ) {
+        if *moved {
+            return;
+        }
+
+        match &expr.kind {
+            HirExprKind::VarRef { def, .. } => {
+                if movable.contains(def) && (nested || consumed) {
+                    *moved = true;
+                }
+            }
+
+            HirExprKind::Binary { lhs, rhs, op } => {
+                let borrowed = matches!(
+                    op,
+                    BinaryOp::Eq
+                        | BinaryOp::Ne
+                        | BinaryOp::Lt
+                        | BinaryOp::Gt
+                        | BinaryOp::Le
+                        | BinaryOp::Ge
+                );
+
+                self.walk_closure_expr(lhs, consumed && !borrowed, nested, movable, moved);
+                self.walk_closure_expr(rhs, consumed && !borrowed, nested, movable, moved);
+            }
+
+            HirExprKind::Unary { expr, op } => {
+                let borrowed = matches!(op, UnaryOp::AddrOf | UnaryOp::Deref);
+                self.walk_closure_expr(expr, consumed && !borrowed, nested, movable, moved);
+            }
+
+            HirExprKind::Call { callee, args, .. } => {
+                self.walk_closure_callee(expr.id, callee, nested, movable, moved);
+
+                for arg in args {
+                    self.walk_closure_expr(arg, true, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::MacroCall { kind, args } => {
+                let borrowed = matches!(
+                    kind.0,
+                    HirMacroKind::Print
+                        | HirMacroKind::Println
+                        | HirMacroKind::Format
+                        | HirMacroKind::EnumTag
+                );
+
+                for arg in args {
+                    self.walk_closure_expr(arg, !borrowed, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                self.walk_closure_expr(condition, true, nested, movable, moved);
+                self.walk_closure_stmt(then_block, nested, movable, moved);
+
+                if let Some(else_block) = else_block {
+                    self.walk_closure_stmt(else_block, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::Switch { object, arms } => {
+                self.walk_closure_expr(object, true, nested, movable, moved);
+
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.walk_closure_expr(guard, true, nested, movable, moved);
+                    }
+
+                    self.walk_closure_expr(&arm.body, consumed, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::FieldAccess { object, .. } => {
+                self.walk_closure_expr(object, consumed, nested, movable, moved);
+            }
+
+            HirExprKind::SliceAccess { object, index } => {
+                let borrowed = matches!(index.kind, HirExprKind::Range { .. });
+
+                self.walk_closure_expr(object, consumed && !borrowed, nested, movable, moved);
+                self.walk_closure_expr(index, true, nested, movable, moved);
+            }
+
+            HirExprKind::StructInit { fields, .. }
+            | HirExprKind::AnonymousStructInit { fields } => {
+                for field in fields {
+                    self.walk_closure_expr(&field.value, true, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::ArrayInit { elements } => {
+                for element in elements {
+                    self.walk_closure_expr(element, true, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::ArrayRepeatInit { element, len } => {
+                self.walk_closure_expr(element, true, nested, movable, moved);
+                self.walk_closure_expr(len, true, nested, movable, moved);
+            }
+
+            HirExprKind::Block { stmts, trailing } => {
+                for stmt in stmts {
+                    self.walk_closure_stmt(stmt, nested, movable, moved);
+                }
+
+                if let Some(trailing) = trailing {
+                    self.walk_closure_expr(trailing, consumed, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::Closure { def, .. } => {
+                if let Some(body) = &def.body {
+                    self.walk_closure_stmt(body, true, movable, moved);
+                }
+            }
+
+            HirExprKind::Range { start, end, .. } => {
+                if let Some(start) = start {
+                    self.walk_closure_expr(start, true, nested, movable, moved);
+                }
+
+                if let Some(end) = end {
+                    self.walk_closure_expr(end, true, nested, movable, moved);
+                }
+            }
+
+            HirExprKind::Try { expr } => {
+                self.walk_closure_expr(expr, true, nested, movable, moved);
+            }
+
+            HirExprKind::Literal(_)
+            | HirExprKind::GenericParamRef(_)
+            | HirExprKind::SelfValue(_)
+            | HirExprKind::Type(_)
+            | HirExprKind::Error => {}
+        }
+    }
+
+    fn walk_closure_callee(
+        &self,
+        call_id: HirId,
+        callee: &HirExpr,
+        nested: bool,
+        movable: &HashSet<DefId>,
+        moved: &mut bool,
+    ) {
+        match &callee.kind {
+            HirExprKind::FieldAccess { object, .. } => {
+                let consumes_receiver = self.call_consumes_receiver(call_id);
+                self.walk_closure_expr(object, consumes_receiver, nested, movable, moved);
+            }
+
+            _ => {
+                let consumes_callee = self.result.expr_types.get(&callee.id).is_some_and(|ty| {
+                    matches!(
+                        self.result.interner.get(*ty),
+                        Type::FatFn { once: true, .. }
+                    )
+                });
+
+                self.walk_closure_expr(callee, consumes_callee, nested, movable, moved);
+            }
+        }
+    }
+
+    fn call_consumes_receiver(&self, call_id: HirId) -> bool {
+        let Some(resolution) = self.result.call_resolutions.get(&call_id) else {
+            return true;
+        };
+
+        match self
+            .fn_sigs
+            .get(&resolution.fn_def)
+            .and_then(|sig| sig.self_mode)
+        {
+            Some(SelfMode::Value | SelfMode::ValueConst) => true,
+            Some(SelfMode::RefMut | SelfMode::RefConst) | None => false,
+        }
     }
 
     fn check_loop_label(&mut self, label: Option<Spur>, stmt: &HirStmt) {
@@ -2846,7 +3442,10 @@ impl<'res> TypeChecker<'res> {
                 self.check_switch(object, arms, &expr.source, None)
             }
 
-            HirExprKind::Closure { def_id, def } => self.check_closure(*def_id, def, &expr.source),
+            HirExprKind::Closure { def_id, def } => {
+                let error = self.result.interner.error();
+                self.check_closure(*def_id, def, error, &expr.source)
+            }
 
             HirExprKind::SliceAccess { object, index } => {
                 let obj_ty = self.synth_expr(object);
@@ -4555,6 +5154,12 @@ impl<'res> TypeChecker<'res> {
                 ty
             }
 
+            HirExprKind::Closure { def_id, def } => {
+                let ty = self.check_closure(*def_id, def, expected, &expr.source);
+                self.result.record_expr_type(expr.id, ty);
+                ty
+            }
+
             _ => self.synth_expr(expr),
         };
 
@@ -4651,12 +5256,24 @@ impl<'res> TypeChecker<'res> {
                     return actual;
                 }
 
-                self.report(TypeError::Mismatch {
-                    expected: self.display_type(expected).into(),
-                    found: self.display_type(actual).into(),
-                    src: source.src(),
-                    span: source.span,
-                });
+                let expected = self.display_type(expected);
+                let found = self.display_type(actual);
+
+                if self.closure_tail == Some(id) {
+                    self.report(TypeError::ClosureBodyTypeMismatch {
+                        expected: expected.into(),
+                        found: found.into(),
+                        src: source.src(),
+                        span: source.span,
+                    });
+                } else {
+                    self.report(TypeError::Mismatch {
+                        expected: expected.into(),
+                        found: found.into(),
+                        src: source.src(),
+                        span: source.span,
+                    });
+                }
 
                 actual
             }
@@ -5499,7 +6116,7 @@ impl<'res> TypeChecker<'res> {
         }
 
         for (param_ty, arg) in sig_params.iter().zip(args.iter()) {
-            self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone());
+            self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone(), None);
         }
 
         for arg in args.iter().skip(sig_params.len()) {
@@ -5557,6 +6174,10 @@ impl<'res> TypeChecker<'res> {
                     });
                 }
             }
+        }
+
+        for g in &sig_generics {
+            self.check_callable_bounds(*g, bindings[g], &source, None, &bindings);
         }
 
         let resolved_generic_args: Vec<TypeId> = sig_generics.iter().map(|g| bindings[g]).collect();
@@ -5740,7 +6361,7 @@ impl<'res> TypeChecker<'res> {
         let mut bindings: HashMap<DefId, TypeId> = HashMap::default();
         for (param_ty, arg) in user_params.iter().zip(args.iter()) {
             let param_ty = self.substitute_self(*param_ty, recv_ty);
-            self.infer_or_check_arg(param_ty, arg, &mut bindings, source.clone());
+            self.infer_or_check_arg(param_ty, arg, &mut bindings, source.clone(), Some(recv_ty));
         }
 
         for (g, explicit) in sig_generics.iter().zip(explicit_generic_args.iter()) {
@@ -5857,7 +6478,7 @@ impl<'res> TypeChecker<'res> {
         let mut bindings: HashMap<DefId, TypeId> = HashMap::default();
         for (param_ty, arg) in user_params.iter().zip(args.iter()) {
             let param_ty = self.substitute_self(*param_ty, recv_ty);
-            self.infer_or_check_arg(param_ty, arg, &mut bindings, source.clone());
+            self.infer_or_check_arg(param_ty, arg, &mut bindings, source.clone(), Some(recv_ty));
         }
 
         for (generic, explicit) in sig_generics.iter().zip(explicit_generic_args.iter()) {
@@ -5955,7 +6576,7 @@ impl<'res> TypeChecker<'res> {
         }
 
         for (param_ty, arg) in sig_params.iter().zip(args.iter()) {
-            self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone());
+            self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone(), None);
         }
 
         if let Some(expected) = expected {
@@ -6026,7 +6647,13 @@ impl<'res> TypeChecker<'res> {
                     let mut bindings: HashMap<DefId, TypeId> = HashMap::default();
                     for (param_ty, arg) in sig_params.iter().skip(1).zip(args.iter()) {
                         let param_ty = self.substitute_self(*param_ty, recv_ty);
-                        self.infer_or_check_arg(param_ty, arg, &mut bindings, source.clone());
+                        self.infer_or_check_arg(
+                            param_ty,
+                            arg,
+                            &mut bindings,
+                            source.clone(),
+                            Some(recv_ty),
+                        );
                     }
                     let resolved_generic_args: Vec<TypeId> = sig_generics
                         .iter()
@@ -6479,7 +7106,13 @@ impl<'res> TypeChecker<'res> {
         };
 
         for (param_ty, arg) in user_params.iter().zip(args.iter()) {
-            self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone());
+            self.infer_or_check_arg(
+                *param_ty,
+                arg,
+                &mut bindings,
+                source.clone(),
+                interface_self,
+            );
         }
 
         if let Some(expected) = expected {
@@ -6549,6 +7182,10 @@ impl<'res> TypeChecker<'res> {
                     });
                 }
             }
+        }
+
+        for g in &sig_generics {
+            self.check_callable_bounds(*g, bindings[g], &source, interface_self, &bindings);
         }
 
         let resolved_generic_args: Vec<TypeId> = sig_generics.iter().map(|g| bindings[g]).collect();
@@ -7458,7 +8095,13 @@ impl<'res> TypeChecker<'res> {
         };
 
         for (param_ty, arg) in sig_params.iter().zip(args.iter()) {
-            self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone());
+            self.infer_or_check_arg(
+                *param_ty,
+                arg,
+                &mut bindings,
+                source.clone(),
+                interface_self,
+            );
         }
 
         if let Some(expected) = expected {
@@ -7528,6 +8171,10 @@ impl<'res> TypeChecker<'res> {
                     });
                 }
             }
+        }
+
+        for g in &sig_generics {
+            self.check_callable_bounds(*g, bindings[g], source, interface_self, &bindings);
         }
 
         let resolved_generic_args: Vec<TypeId> = sig_generics.iter().map(|g| bindings[g]).collect();
@@ -7638,6 +8285,32 @@ impl<'res> TypeChecker<'res> {
                 ret
             }
 
+            Type::GenericParam(g) => {
+                let Some(bound) = self.callable_bound_for_arity(g, args.len()) else {
+                    self.report(TypeError::NotCallable {
+                        ty: self.display_type(callee_ty).into(),
+                        src: source.src(),
+                        span: source.span,
+                    });
+                    return self.result.interner.error();
+                };
+
+                if args.len() != bound.params.len() {
+                    self.report(TypeError::ArgCountMismatch {
+                        expected: bound.params.len(),
+                        found: args.len(),
+                        src: source.src(),
+                        span: source.span,
+                    });
+                }
+
+                for (param_ty, arg) in bound.params.iter().zip(args.iter()) {
+                    self.check_expr(arg, *param_ty, false);
+                }
+
+                bound.ret
+            }
+
             Type::Error => self.result.interner.error(),
 
             _ => {
@@ -7649,6 +8322,20 @@ impl<'res> TypeChecker<'res> {
                 self.result.interner.error()
             }
         }
+    }
+
+    fn callable_bound_for_arity(&self, g: DefId, arity: usize) -> Option<CallableBoundSig> {
+        let bounds = self.all_callable_bounds.get(&g)?;
+
+        bounds
+            .iter()
+            .find(|bound| bound.params.len() == arity)
+            .or_else(|| bounds.first())
+            .cloned()
+    }
+
+    fn callable_bound_for_generic(&self, g: DefId) -> Option<CallableBoundSig> {
+        self.all_callable_bounds.get(&g)?.first().cloned()
     }
 
     fn seed_inference_bindings(
@@ -7728,8 +8415,40 @@ impl<'res> TypeChecker<'res> {
         arg: &HirExpr,
         bindings: &mut HashMap<DefId, TypeId>,
         source: Source,
+        self_ty: Option<TypeId>,
     ) {
         let substituted = self.substitute_generics(param_ty, bindings);
+
+        if let Type::GenericParam(g) = self.result.interner.get(substituted).clone()
+            && let Some(bound) = self.callable_bound_for_generic(g)
+        {
+            let bound = self.substitute_callable_bound(bound, self_ty, bindings);
+
+            if let HirExprKind::Closure { def_id, def } = &arg.kind {
+                let expected = self.result.interner.intern(Type::FatFn {
+                    params: bound.params.clone(),
+                    ret: bound.ret,
+                    once: bound.once,
+                    erased: false,
+                });
+                let arg_ty = self.check_closure(*def_id, def, expected, &arg.source);
+                self.result.record_expr_type(arg.id, arg_ty);
+
+                self.unify_callable_bound_types(&bound, arg_ty, bindings, source.clone());
+                self.unify_for_inference(param_ty, arg_ty, bindings, source);
+
+                return;
+            }
+
+            let arg_ty = self.synth_expr(arg);
+            let arg_ty = self.default_literal_with_value(arg, arg_ty);
+            self.result.record_expr_type(arg.id, arg_ty);
+
+            self.unify_callable_bound_types(&bound, arg_ty, bindings, source.clone());
+            self.unify_for_inference(param_ty, arg_ty, bindings, source);
+
+            return;
+        }
 
         if self.type_contains_generic(substituted) {
             let arg_ty = self.synth_expr(arg);
@@ -7835,6 +8554,80 @@ impl<'res> TypeChecker<'res> {
             }
             _ => false,
         }
+    }
+
+    fn substitute_callable_bound(
+        &mut self,
+        bound: CallableBoundSig,
+        self_ty: Option<TypeId>,
+        bindings: &HashMap<DefId, TypeId>,
+    ) -> CallableBoundSig {
+        let bound = self.substitute_callable_bound_self(bound, self_ty);
+
+        let params = bound
+            .params
+            .iter()
+            .map(|param| self.substitute_generics(*param, bindings))
+            .collect();
+        let ret = self.substitute_generics(bound.ret, bindings);
+
+        CallableBoundSig {
+            once: bound.once,
+            params,
+            ret,
+        }
+    }
+
+    fn substitute_callable_bound_self(
+        &mut self,
+        bound: CallableBoundSig,
+        self_ty: Option<TypeId>,
+    ) -> CallableBoundSig {
+        let Some(self_ty) = self_ty else {
+            return bound;
+        };
+
+        let params = bound
+            .params
+            .iter()
+            .map(|param| {
+                let substituted = self.substitute_self(*param, self_ty);
+                self.normalize_associated(substituted)
+            })
+            .collect();
+
+        let ret = {
+            let substituted = self.substitute_self(bound.ret, self_ty);
+            self.normalize_associated(substituted)
+        };
+
+        CallableBoundSig {
+            once: bound.once,
+            params,
+            ret,
+        }
+    }
+
+    fn unify_callable_bound_types(
+        &mut self,
+        bound: &CallableBoundSig,
+        arg_ty: TypeId,
+        bindings: &mut HashMap<DefId, TypeId>,
+        source: Source,
+    ) {
+        let (params, ret) = match self.result.interner.get(arg_ty).clone() {
+            Type::Fn { params, ret } => (params, ret),
+            Type::FatFn { params, ret, .. } => (params, ret),
+            _ => return,
+        };
+
+        if bound.params.len() == params.len() {
+            for (bound_param, arg_param) in bound.params.iter().zip(params.iter()) {
+                self.unify_for_inference(*bound_param, *arg_param, bindings, source.clone());
+            }
+        }
+
+        self.unify_for_inference(bound.ret, ret, bindings, source);
     }
 
     fn unify_for_inference(
@@ -8073,6 +8866,8 @@ impl<'res> TypeChecker<'res> {
 
                 char_display || self.builtin_shape_implements_interface(ty, iface_def)
             }
+
+            Type::Fn { .. } => matches!(self.def_name(iface_def).as_deref(), Some("Copy")),
 
             Type::Struct {
                 def_id,
@@ -8811,27 +9606,34 @@ impl<'res> TypeChecker<'res> {
             let subject = self.lower_hir_type_with_const(&clause.ty).0;
 
             match &clause.kind {
-                HirWhereClauseKind::Bound { bounds } => {
-                    match self.result.interner.get(subject).clone() {
-                        Type::GenericParam(g) => {
-                            self.all_generic_bounds
-                                .entry(g)
+                HirWhereClauseKind::Bound {
+                    bounds,
+                    callable_bounds,
+                } => match self.result.interner.get(subject).clone() {
+                    Type::GenericParam(g) => {
+                        self.all_generic_bounds
+                            .entry(g)
+                            .or_default()
+                            .extend(bounds.iter().copied());
+
+                        if !callable_bounds.is_empty() {
+                            let sigs = self.lower_callable_bounds(callable_bounds);
+
+                            self.all_callable_bounds.entry(g).or_default().extend(sigs);
+                        }
+                    }
+
+                    Type::Associated { base, def } => {
+                        if let Type::GenericParam(g) = self.result.interner.get(base).clone() {
+                            self.generic_assoc_bounds
+                                .entry((g, def))
                                 .or_default()
                                 .extend(bounds.iter().copied());
                         }
-
-                        Type::Associated { base, def } => {
-                            if let Type::GenericParam(g) = self.result.interner.get(base).clone() {
-                                self.generic_assoc_bounds
-                                    .entry((g, def))
-                                    .or_default()
-                                    .extend(bounds.iter().copied());
-                            }
-                        }
-
-                        _ => {}
                     }
-                }
+
+                    _ => {}
+                },
 
                 HirWhereClauseKind::Equality { ty } => {
                     let eq_ty = self.lower_hir_type(ty);
@@ -9413,7 +10215,7 @@ impl<'res> TypeChecker<'res> {
             }
 
             for (param_ty, arg) in sig_params.iter().zip(args.iter()) {
-                self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone());
+                self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone(), None);
             }
 
             if let Some(expected) = expected {
@@ -9876,7 +10678,13 @@ impl<'res> TypeChecker<'res> {
             }
 
             for (param_ty, arg) in user_params.iter().zip(args.iter()) {
-                self.infer_or_check_arg(*param_ty, arg, &mut bindings, source.clone());
+                self.infer_or_check_arg(
+                    *param_ty,
+                    arg,
+                    &mut bindings,
+                    source.clone(),
+                    Some(self_ty),
+                );
             }
 
             if let Some(expected) = expected {
@@ -14072,7 +14880,7 @@ mod tests {
 
     #[test]
     fn zero_capture_closure_types_as_fn() {
-        let result = typecheck_full("fn main() { let c = fn(x: i32) i32 { return x + 1; }; }")
+        let result = typecheck_full("fn main() { let c = |x: i32| -> i32 { return x + 1; }; }")
             .expect("zero-capture closure must typecheck");
 
         assert!(
@@ -14096,7 +14904,7 @@ mod tests {
 
     #[test]
     fn capturing_closure_types_as_fat_fn() {
-        let result = typecheck_full("fn main() { let x = 1; let c = fn() i32 { return x; }; }")
+        let result = typecheck_full("fn main() { let x = 1; let c = || -> i32 { return x; }; }")
             .expect("capturing closure must typecheck");
 
         let fat = find_fat_fn(&result).expect("capturing closure must be typed as `Fn`");
@@ -14109,9 +14917,10 @@ mod tests {
 
     #[test]
     fn closure_call_checks_argument_types() {
-        let result =
-            typecheck_full("fn main() { let c = fn(a: i32) i32 { return a + 1; }; let r = c(2); }")
-                .expect("closure call with matching args must typecheck");
+        let result = typecheck_full(
+            "fn main() { let c = |a: i32| -> i32 { return a + 1; }; let r = c(2); }",
+        )
+        .expect("closure call with matching args must typecheck");
 
         assert!(
             result.expr_types.values().any(|&ty| matches!(
@@ -14122,7 +14931,7 @@ mod tests {
         );
 
         let errors = typecheck_full(
-            "fn main() { let c = fn(a: i32) i32 { return a + 1; }; let r = c(true); }",
+            "fn main() { let c = |a: i32| -> i32 { return a + 1; }; let r = c(true); }",
         )
         .expect_err("closure call with mismatched arg must be reported");
 
@@ -14136,11 +14945,11 @@ mod tests {
 
     #[test]
     fn capturing_closure_call_checks_args() {
-        typecheck_full("fn main() { let x = 5; let c = fn() i32 { return x; }; let r = c(); }")
+        typecheck_full("fn main() { let x = 5; let c = || -> i32 { return x; }; let r = c(); }")
             .expect("capturing closure call must typecheck");
 
         let errors = typecheck_full(
-            "fn main() { let x = 5; let c = fn() i32 { return x; }; let r = c(1); }",
+            "fn main() { let x = 5; let c = || -> i32 { return x; }; let r = c(1); }",
         )
         .expect_err("capturing closure call with extra arg must be reported");
 
@@ -14161,21 +14970,185 @@ mod tests {
             }
 
             fn main() {
-                let r = apply(fn(x: i32) i32 { return x * 2; });
+                let r = apply(|x: i32| -> i32 { return x * 2; });
             }
             "#,
         );
 
         assert!(
             result.is_ok(),
-            "zero-capture closure must coerce to `fn(i32) i32` parameter: {:?}",
+            "zero-capture closure must coerce to `|i32| -> i32` parameter: {:?}",
             result.err().map(|errors| errors.len())
         );
     }
 
     #[test]
+    fn callable_bound_copy_accepts_basic_fn() {
+        typecheck_full(
+            r#"
+            fn apply[F: Callable(i32) i32 + Copy](f: F, x: i32) i32 {
+                return f(x);
+            }
+
+            fn double(x: i32) i32 {
+                return x * 2;
+            }
+
+            fn main() {
+                let a = apply(double, 21);
+                let b = apply(|x| x + 1, 41);
+            }
+            "#,
+        )
+        .expect("a basic fn and a zero-capture closure must satisfy the Copy bound");
+    }
+
+    #[test]
+    fn callable_bound_copy_rejects_capturing_closure() {
+        let errors = typecheck_full(
+            r#"
+            fn apply[F: Callable() i32 + Copy](f: F) i32 {
+                return f();
+            }
+
+            fn main() {
+                let n = 1;
+                let c = apply(|| n + 1);
+            }
+            "#,
+        )
+        .expect_err("a capturing closure is a move-only fat value and must not satisfy Copy");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::GenericBoundNotSatisfied { .. })),
+            "expected GenericBoundNotSatisfied error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn closure_params_inferred_from_basic_fn() {
+        typecheck_full(
+            r#"
+            fn apply(f: fn(i32) i32, x: i32) i32 {
+                return f(x);
+            }
+
+            fn main() {
+                let r = apply(|x| x * 2, 21);
+            }
+            "#,
+        )
+        .expect("closure parameters must come from the expected basic fn type");
+    }
+
+    #[test]
+    fn closure_params_inferred_from_fat_fn_binding() {
+        let result = typecheck_full(
+            r#"
+            fn main() {
+                let n = 10;
+                let f: Fn(i32) i32 = |x| x + n;
+            }
+            "#,
+        )
+        .expect("closure parameters must come from the expected fat fn type");
+
+        assert!(find_fat_fn(&result).is_some());
+    }
+
+    #[test]
+    fn closure_wildcard_param_accepts_any_argument() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let f: fn(i32) i32 = |_| 7;
+                let r = f(1);
+            }
+            "#,
+        )
+        .expect("a wildcard parameter must accept the expected parameter type");
+    }
+
+    #[test]
+    fn closure_return_inferred_from_body() {
+        let result = typecheck_full(
+            r#"
+            fn main() {
+                let f = |x: i32| x * 2;
+                let r = f(2);
+            }
+            "#,
+        )
+        .expect("an annotated parameter and an expression body must infer the return type");
+
+        assert!(
+            result.def_types.values().any(|&ty| matches!(
+                result.interner.get(ty),
+                Type::Fn { params, ret }
+                    if params.len() == 1
+                        && matches!(result.interner.get(*ret), Type::Builtin(zeen_ast::types::BuiltinType::i32))
+            )),
+            "closure must infer `fn(i32) i32` from its body"
+        );
+    }
+
+    #[test]
+    fn closure_param_type_needed_is_reported() {
+        let errors = typecheck_full("fn main() { let f = |x| x; }")
+            .expect_err("an unannotated parameter without an expected type must be rejected");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::ClosureParamTypeNeeded { .. })),
+            "expected TypeError::ClosureParamTypeNeeded, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn closure_return_type_needed_is_reported() {
+        let errors = typecheck_full("fn main() { let f = |x: i32| { return x; }; }")
+            .expect_err("a return without an expected or declared return type must be rejected");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::ClosureReturnTypeNeeded { .. })),
+            "expected TypeError::ClosureReturnTypeNeeded, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn closure_param_count_mismatch_is_reported() {
+        let errors = typecheck_full("fn main() { let f: fn(i32) i32 = |a, b| a + b; }")
+            .expect_err("a closure with the wrong parameter count must be rejected");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::ClosureParamCountMismatch { .. })),
+            "expected TypeError::ClosureParamCountMismatch, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn closure_body_type_mismatch_is_reported() {
+        let errors = typecheck_full("fn main() { let f: fn() i32 = || true; }")
+            .expect_err("a closure body with the wrong type must be rejected");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::ClosureBodyTypeMismatch { .. })),
+            "expected TypeError::ClosureBodyTypeMismatch, got: {errors:?}"
+        );
+    }
+
+    #[test]
     fn closure_body_return_type_is_checked() {
-        let errors = typecheck_full("fn main() { let c = fn() i32 { return true; }; }")
+        let errors = typecheck_full("fn main() { let c = || -> i32 { return true; }; }")
             .expect_err("closure body return mismatch must be reported");
 
         assert!(
@@ -14189,7 +15162,7 @@ mod tests {
     #[test]
     fn closure_capture_type_mismatch_is_reported() {
         let errors = typecheck_full(
-            "fn main() { let x = 1; let c = fn(y: bool) bool { return y; }; let r = c(x); }",
+            "fn main() { let x = 1; let c = |y: bool| -> bool { return y; }; let r = c(x); }",
         )
         .expect_err("captured value passed as wrong arg type must be reported");
 
@@ -14202,8 +15175,8 @@ mod tests {
     }
 
     const MULT_SOURCE: &str =
-        "fn mult() Fn(i32) i32 { let a = 10; return fn(x: i32) i32 { return x * a; }; }";
-    const MULT_WITH_MAIN: &str = "fn mult() Fn(i32) i32 { let a = 10; return fn(x: i32) i32 { return x * a; }; } fn main() i32 { let r = mult(); let q = mult()(2); return 0; }";
+        "fn mult() Fn(i32) i32 { let a = 10; return |x: i32| -> i32 { return x * a; }; }";
+    const MULT_WITH_MAIN: &str = "fn mult() Fn(i32) i32 { let a = 10; return |x: i32| -> i32 { return x * a; }; } fn main() i32 { let r = mult(); let q = mult()(2); return 0; }";
 
     #[test]
     fn closure_return_types_as_fat_fn() {
@@ -14222,7 +15195,7 @@ mod tests {
     #[test]
     fn capturing_closure_fat_type_carries_body() {
         let result = typecheck_full(
-            "fn main() i32 { let x = 1; let add = fn(a: i32) i32 { return a + x; }; return add(2); }",
+            "fn main() i32 { let x = 1; let add = |a: i32| -> i32 { return a + x; }; return add(2); }",
         )
         .expect("capturing closure must typecheck");
 
@@ -14242,7 +15215,7 @@ mod tests {
             "struct Wrap { pub v: i32 } \
              fn main() i32 { \
                  let w = Wrap { .v = 3 }; \
-                 let c = fn(a: i32) i32 { return a + w.v; }; \
+                 let c = |a: i32| -> i32 { return a + w.v; }; \
                  return c(2); \
              }",
         )
@@ -14297,7 +15270,7 @@ mod tests {
 
             fn main() i32 {
                 let a = 10;
-                return apply(fn(x: i32) i32 { return x * a; });
+                return apply(|x: i32| -> i32 { return x * a; });
             }
             "#,
         )
@@ -14315,7 +15288,7 @@ mod tests {
             }
 
             fn main() i32 {
-                return apply(fn(x: i32) i32 { return x * 2; });
+                return apply(|x: i32| -> i32 { return x * 2; });
             }
             "#,
         )
@@ -14330,7 +15303,7 @@ mod tests {
 
             fn main() {
                 let foo = Foo {};
-                let c = fn() void { let _ = foo; };
+                let c = || -> void { let _ = foo; };
             }
             "#,
         )
@@ -14339,8 +15312,88 @@ mod tests {
         let fat = find_fat_fn(&result).expect("capturing closure must be a fat pointer");
         assert!(
             matches!(result.interner.get(fat), Type::FatFn { once: true, .. }),
-            "non-Copy capture must produce `FnOnce`, got: {:?}",
+            "moving a non-Copy capture out must produce `FnOnce`, got: {:?}",
             result.interner.get(fat)
+        );
+    }
+
+    #[test]
+    fn borrowed_non_copy_capture_stays_fn() {
+        let result = typecheck_full(
+            r#"
+            struct Foo {}
+
+            implement Foo {
+                pub fn ping(*const self) i32 {
+                    return 7;
+                }
+            }
+
+            fn main() {
+                let foo = Foo {};
+                let c = || -> i32 { return foo.ping(); };
+
+                let a = c();
+                let b = c();
+            }
+            "#,
+        )
+        .expect("borrowing a move-only capture must typecheck");
+
+        let fat = find_fat_fn(&result).expect("capturing closure must be a fat pointer");
+        assert!(
+            matches!(result.interner.get(fat), Type::FatFn { once: false, .. }),
+            "a borrowed non-Copy capture must produce `Fn`, got: {:?}",
+            result.interner.get(fat)
+        );
+    }
+
+    #[test]
+    fn capture_moved_into_nested_closure_makes_outer_fnonce() {
+        let result = typecheck_full(
+            r#"
+            struct Foo {}
+
+            implement Foo {
+                pub fn ping(*const self) i32 {
+                    return 7;
+                }
+            }
+
+            fn main() {
+                let foo = Foo {};
+                let outer = || -> i32 {
+                    let inner = || -> i32 { return foo.ping(); };
+                    return inner();
+                };
+
+                let a = outer();
+            }
+            "#,
+        )
+        .expect("a capture reached from a nested closure must typecheck");
+
+        let fns: Vec<zeen_types::TypeId> = result
+            .def_types
+            .values()
+            .copied()
+            .chain(result.expr_types.values().copied())
+            .filter(|&ty| matches!(result.interner.get(ty), Type::FatFn { erased: false, .. }))
+            .collect();
+
+        let has_fn = fns
+            .iter()
+            .any(|&ty| matches!(result.interner.get(ty), Type::FatFn { once: false, .. }));
+        let has_fnonce = fns
+            .iter()
+            .any(|&ty| matches!(result.interner.get(ty), Type::FatFn { once: true, .. }));
+
+        assert!(
+            has_fn && has_fnonce,
+            "the inner closure must stay `Fn` while the outer one becomes `FnOnce`, got: {:?}",
+            fns.iter()
+                .map(|&ty| result.interner.get(ty))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -14362,7 +15415,7 @@ mod tests {
 
             fn main() {
                 let a = 10;
-                let r = apply(fn(x: i32) i32 { return x + a; });
+                let r = apply(|x: i32| -> i32 { return x + a; });
                 let s = apply(id);
                 let t = apply_once(id);
             }
@@ -14379,9 +15432,10 @@ mod tests {
 
     #[test]
     fn closure_only_called_stays_on_stack() {
-        let result =
-            typecheck_full("fn main() { let x = 1; let c = fn() i32 { return x; }; let r = c(); }")
-                .expect("closure only used as a call target must typecheck");
+        let result = typecheck_full(
+            "fn main() { let x = 1; let c = || -> i32 { return x; }; let r = c(); }",
+        )
+        .expect("closure only used as a call target must typecheck");
 
         assert_eq!(
             allocs(&result),
@@ -14392,7 +15446,7 @@ mod tests {
 
     #[test]
     fn unused_closure_is_elided() {
-        let result = typecheck_full("fn main() { let x = 1; let c = fn() i32 { return x; }; }")
+        let result = typecheck_full("fn main() { let x = 1; let c = || -> i32 { return x; }; }")
             .expect("an unused closure must typecheck");
 
         assert_eq!(
@@ -14408,7 +15462,7 @@ mod tests {
             r#"
             fn make() Fn() i32 {
                 let x = 1;
-                return fn() i32 { return x; };
+                return || -> i32 { return x; };
             }
 
             fn main() void {
@@ -14435,7 +15489,7 @@ mod tests {
 
             fn main() void {
                 let b = 2;
-                let r = apply(fn(a: i32) i32 { return a + b; });
+                let r = apply(|a: i32| -> i32 { return a + b; });
             }
             "#,
         )
@@ -14449,8 +15503,9 @@ mod tests {
 
     #[test]
     fn closure_called_in_place_stays_on_stack() {
-        let result = typecheck_full("fn main() { let r = (fn(a: i32) i32 { return a + 1; })(2); }")
-            .expect("immediately-called closure must typecheck");
+        let result =
+            typecheck_full("fn main() { let r = (|a: i32| -> i32 { return a + 1; })(2); }")
+                .expect("immediately-called closure must typecheck");
 
         assert_eq!(
             allocs(&result),
@@ -14465,8 +15520,8 @@ mod tests {
             r#"
             fn main() void {
                 let x = 1;
-                let c = fn() i32 { return x; };
-                let outer = fn() i32 { return c(); };
+                let c = || -> i32 { return x; };
+                let outer = || -> i32 { return c(); };
                 let r = outer();
             }
             "#,
@@ -14486,7 +15541,7 @@ mod tests {
             r#"
             fn main() void {
                 let x = 1;
-                let c = fn() i32 { return x; };
+                let c = || -> i32 { return x; };
                 let d = c;
                 let r = d();
             }
@@ -16993,7 +18048,7 @@ mod tests {
             fn main() {
                 let number = Number { .value = 3 };
 
-                number.emit(fn(value: i32) void { });
+                number.emit(|value: i32| -> void { });
             }
             "#,
         )

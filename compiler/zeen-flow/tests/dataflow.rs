@@ -290,7 +290,7 @@ fn fnonce_double_call_is_error() {
 struct Wrap { pub v: i32 }
 fn main() i32 {
     let w = Wrap { .v = 3 };
-    let c = fn(a: i32) i32 { return a + w.v; };
+    let c = |a: i32| -> i32 { return a + w.v; };
     let r = c(1);
     let s = c(2);
     return r + s;
@@ -310,7 +310,7 @@ fn fnonce_use_after_call_is_error() {
 struct Wrap { pub v: i32 }
 fn main() i32 {
     let w = Wrap { .v = 3 };
-    let c = fn(a: i32) i32 { return a + w.v; };
+    let c = |a: i32| -> i32 { return a + w.v; };
     let r = c(1);
     let d = c;
     return r;
@@ -330,7 +330,7 @@ fn fnonce_single_call_passes() {
 struct Wrap { pub v: i32 }
 fn main() i32 {
     let w = Wrap { .v = 3 };
-    let c = fn(a: i32) i32 { return a + w.v; };
+    let c = |a: i32| -> i32 { return a + w.v; };
     let r = c(1);
     return r;
 }
@@ -346,7 +346,7 @@ fn fn_once_closure_stays_callable() {
         r#"
 fn main() i32 {
     let n = 5;
-    let add = fn(a: i32) i32 { return a + n; };
+    let add = |a: i32| -> i32 { return a + n; };
     let r = add(1);
     let s = add(2);
     return r + s;
@@ -363,7 +363,7 @@ struct Wrap { pub v: i32 }
 fn apply_once(f: FnOnce(i32) i32, x: i32) i32 { return f(x); }
 fn main() i32 {
     let w = Wrap { .v = 3 };
-    let c = fn(a: i32) i32 { return a + w.v; };
+    let c = |a: i32| -> i32 { return a + w.v; };
     return apply_once(c, 10);
 }
 "#,
@@ -378,7 +378,7 @@ struct Wrap { pub v: i32 }
 fn apply_once(f: FnOnce(i32) i32, x: i32) i32 { return f(x); }
 fn main() i32 {
     let w = Wrap { .v = 3 };
-    let c = fn(a: i32) i32 { return a + w.v; };
+    let c = |a: i32| -> i32 { return a + w.v; };
     let r = apply_once(c, 10);
     let s = apply_once(c, 20);
     return r + s;
@@ -400,7 +400,7 @@ fn live_uncalled_fnonce_closure_passes_scope_exit() {
 struct Wrap { pub v: i32 }
 fn main() i32 {
     let w = Wrap { .v = 3 };
-    let c = fn(a: i32) i32 { return a + w.v; };
+    let c = |a: i32| -> i32 { return a + w.v; };
     let p = &c;
     return 0;
 }
@@ -418,7 +418,7 @@ fn apply_twice(f: FnOnce(i32) i32, x: i32) i32 {
     return r + s;
 }
 fn main() i32 {
-    return apply_twice(fn(a: i32) i32 { return a + 1; }, 41);
+    return apply_twice(|a: i32| -> i32 { return a + 1; }, 41);
 }
 "#,
     );
@@ -437,7 +437,7 @@ fn fat_value_move_transfers_ownership() {
 struct Wrap { pub v: i32 }
 fn main() i32 {
     let w = Wrap { .v = 3 };
-    let c = fn(a: i32) i32 { return a + w.v; };
+    let c = |a: i32| -> i32 { return a + w.v; };
     let g = c;
     return c(1) + g(2);
 }
@@ -458,7 +458,7 @@ fn fn_closure_value_is_move_only() {
         r#"
 fn main() i32 {
     let n = 5;
-    let add = fn(a: i32) i32 { return a + n; };
+    let add = |a: i32| -> i32 { return a + n; };
     let g = add;
     return add(1) + g(2);
 }
@@ -473,7 +473,7 @@ fn main() i32 {
         r#"
 fn main() i32 {
     let n = 5;
-    let add = fn(a: i32) i32 { return a + n; };
+    let add = |a: i32| -> i32 { return a + n; };
     return add(1) + add(2);
 }
 "#,
@@ -486,7 +486,7 @@ fn fat_value_move_then_single_owner_passes() {
         r#"
 fn main() i32 {
     let n = 5;
-    let add = fn(a: i32) i32 { return a + n; };
+    let add = |a: i32| -> i32 { return a + n; };
     let g = add;
     return g(1) + g(2);
 }
@@ -502,8 +502,8 @@ fn captured_closure_env_cascade_passes() {
         r#"
 fn main() i32 {
     let base = 100;
-    let inner = fn(x: i32) i32 { return x + base; };
-    let outer = fn(x: i32) i32 { return inner(x) * 2; };
+    let inner = |x: i32| -> i32 { return x + base; };
+    let outer = |x: i32| -> i32 { return inner(x) * 2; };
     let r = outer(5);
     return r;
 }

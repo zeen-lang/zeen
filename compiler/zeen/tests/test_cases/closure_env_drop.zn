@@ -10,7 +10,7 @@ implement Drop : Tag {
 
 fn main() void {
     let a = Tag { .name = 1 };
-    let f = fn() void {
+    let f = || -> void {
         let x = a;
         @println("body ran");
     };
@@ -18,7 +18,7 @@ fn main() void {
     @println("after f");
 
     let b = Tag { .name = 2 };
-    let g = fn() void {
+    let g = || -> void {
         let x = b;
         @println("g body");
     };

@@ -35,7 +35,7 @@ implement[T, E] Result[T, E] {
     }
   }
 
-  pub fn unwrap_or_else(self, f: FnOnce() T) T {
+  pub fn unwrap_or_else[F: CallableOnce() T](self, f: F) T {
     switch (self) {
       .Ok(value) => value,
       .Err(_error) => f(),
@@ -70,35 +70,35 @@ implement[T, E] Result[T, E] {
     }
   }
 
-  pub fn map[U](self, f: FnOnce(T) U) Result[U, E] {
+  pub fn map[U, F: CallableOnce(T) U](self, f: F) Result[U, E] {
     switch (self) {
       .Ok(value) => Result.Ok(f(value)),
       .Err(error) => Result.Err(error),
     }
   }
 
-  pub fn map_or[U](self, f: FnOnce(T) U, default: U) Result[U, E] {
+  pub fn map_or[U, F: CallableOnce(T) U](self, f: F, default: U) Result[U, E] {
     switch (self) {
       .Ok(value) => Result.Ok(f(value)),
       .Err(_error) => Result.Ok(default),
     }
   }
 
-  pub fn map_err[F](self, f: FnOnce(E) F) Result[T, F] {
+  pub fn map_err[G, F: CallableOnce(E) G](self, f: F) Result[T, G] {
     switch (self) {
       .Ok(value) => Result.Ok(value),
       .Err(error) => Result.Err(f(error)),
     }
   }
 
-  pub fn and_then[U](self, f: FnOnce(T) Result[U, E]) Result[U, E] {
+  pub fn and_then[U, F: CallableOnce(T) Result[U, E]](self, f: F) Result[U, E] {
     switch (self) {
       .Ok(value) => f(value),
       .Err(error) => Result.Err(error),
     }
   }
 
-  pub fn inspect(self, f: FnOnce(*T) void) Self {
+  pub fn inspect[F: CallableOnce(*T) void](self, f: F) Self {
     switch (self) {
       .Ok(&value) => f(value),
       .Err(_error) => {},
@@ -107,7 +107,7 @@ implement[T, E] Result[T, E] {
     self
   }
 
-  pub fn inspect_err(self, f: FnOnce(*E) void) Self {
+  pub fn inspect_err[F: CallableOnce(*E) void](self, f: F) Self {
     switch (self) {
       .Ok(_value) => {},
       .Err(&error) => f(error),

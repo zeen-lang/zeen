@@ -14,6 +14,7 @@ pub struct FnCtx {
     pub generic_bindings: HashMap<DefId, TypeId>,
     pub generic_bounds: HashMap<DefId, Vec<DefId>>,
     pub loop_labels: Vec<Option<Spur>>,
+    pub infer_return: bool,
 }
 
 #[derive(Default)]
@@ -139,6 +140,7 @@ mod tests {
             generic_bindings: HashMap::default(),
             generic_bounds: HashMap::default(),
             loop_labels: Vec::new(),
+            infer_return: false,
         }
     }
 

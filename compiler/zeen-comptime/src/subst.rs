@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use zeen_ast::{
     Declaration, DeclarationKind, Expression, ExpressionKind, Statement, StatementKind, TypeExpr,
     TypeKind,
-    declarations::{AliasDecl, FnParam, GenericType, WhereClause, WhereClauseKind},
+    declarations::{AliasDecl, ClosureParam, FnParam, GenericType, WhereClause, WhereClauseKind},
     expressions::{Arm, BinaryOp, FieldInit, Literal, Pattern},
 };
 
@@ -605,7 +605,13 @@ impl<'arena> Interp<'arena> {
             };
 
             let kind = match clause.kind {
-                WhereClauseKind::Bound { bounds } => WhereClauseKind::Bound { bounds },
+                WhereClauseKind::Bound {
+                    bounds,
+                    callable_bounds,
+                } => WhereClauseKind::Bound {
+                    bounds,
+                    callable_bounds,
+                },
                 WhereClauseKind::Equality { ty: eq } => {
                     let eq = match self.substitute_type(module, eq)? {
                         None => eq,
@@ -1472,24 +1478,27 @@ impl<'arena> Interp<'arena> {
                     }
                 }
 
-                let mut new_params: Vec<FnParam<'arena>> = Vec::with_capacity(params.len());
+                let mut new_params: Vec<ClosureParam<'arena>> = Vec::with_capacity(params.len());
                 let mut changed = false;
 
                 for param in params.iter() {
-                    match self.substitute_type(module, param.ty) {
-                        Ok(None) => new_params.push(*param),
-                        Ok(Some(new_ty)) => {
-                            changed = true;
-                            new_params.push(FnParam {
-                                name: param.name,
-                                ty: new_ty,
-                                span: param.span,
-                            });
-                        }
-                        Err(errors) => {
-                            self.pop_shadow();
-                            return Err(errors);
-                        }
+                    match param.ty {
+                        None => new_params.push(*param),
+                        Some(ty) => match self.substitute_type(module, ty) {
+                            Ok(None) => new_params.push(*param),
+                            Ok(Some(new_ty)) => {
+                                changed = true;
+                                new_params.push(ClosureParam {
+                                    name: param.name,
+                                    ty: Some(new_ty),
+                                    span: param.span,
+                                });
+                            }
+                            Err(errors) => {
+                                self.pop_shadow();
+                                return Err(errors);
+                            }
+                        },
                     }
                 }
 

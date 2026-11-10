@@ -5,7 +5,8 @@ use zeen_ast::{
     Declaration, DeclarationKind, Expression, ExpressionKind, Statement, StatementKind, TypeExpr,
     TypeKind,
     declarations::{
-        AssociatedTypeDecl, EnumVariantPayload, FnParam, StructField, WhereClause, WhereClauseKind,
+        AssociatedTypeDecl, ClosureParam, EnumVariantPayload, FnParam, StructField, WhereClause,
+        WhereClauseKind,
     },
     expressions::{Arm, FieldInit},
 };
@@ -313,7 +314,7 @@ impl<'arena> Interp<'arena> {
                 return_type,
                 body,
             } => {
-                let new_params = self.capture_params(module, params)?;
+                let new_params = self.capture_closure_params(module, params)?;
                 let new_return = match return_type {
                     Some(ty) => Some(self.capture_type(module, ty)?),
                     None => None,
@@ -1444,7 +1445,13 @@ impl<'arena> Interp<'arena> {
             let ty = self.capture_type(module, clause.ty)?;
 
             let kind = match clause.kind {
-                WhereClauseKind::Bound { bounds } => WhereClauseKind::Bound { bounds },
+                WhereClauseKind::Bound {
+                    bounds,
+                    callable_bounds,
+                } => WhereClauseKind::Bound {
+                    bounds,
+                    callable_bounds,
+                },
                 WhereClauseKind::Equality { ty: eq } => WhereClauseKind::Equality {
                     ty: self.capture_type(module, eq)?,
                 },
@@ -1476,6 +1483,39 @@ impl<'arena> Interp<'arena> {
         }
 
         Ok((Some(self.arena.alloc_slice_copy(&rebuilt)), true))
+    }
+
+    fn capture_closure_params(
+        &mut self,
+        module: &PathBuf,
+        params: &'arena [ClosureParam<'arena>],
+    ) -> Result<&'arena [ClosureParam<'arena>], ()> {
+        let mut rebuilt: Vec<ClosureParam<'arena>> = Vec::with_capacity(params.len());
+        let mut changed = false;
+
+        for param in params.iter() {
+            let new_ty = match param.ty {
+                Some(ty) => Some(self.capture_type(module, ty)?),
+                None => None,
+            };
+
+            if param.ty == new_ty {
+                rebuilt.push(*param);
+            } else {
+                changed = true;
+                rebuilt.push(ClosureParam {
+                    name: param.name,
+                    ty: new_ty,
+                    span: param.span,
+                });
+            }
+        }
+
+        if !changed {
+            return Ok(params);
+        }
+
+        Ok(self.arena.alloc_slice_copy(&rebuilt))
     }
 
     fn capture_params(

@@ -33,6 +33,10 @@ impl NodeKey {
         NodeKey(p as *const _ as usize)
     }
 
+    pub fn from_closure_param(p: &zeen_ast::declarations::ClosureParam) -> Self {
+        NodeKey(p as *const _ as usize)
+    }
+
     pub fn from_field(f: &StructField) -> Self {
         NodeKey(f as *const _ as usize)
     }
@@ -201,6 +205,12 @@ impl ResolutionResult {
 
     pub fn def_of_param(&self, p: &zeen_ast::declarations::FnParam) -> Option<DefId> {
         self.binding_sites.get(&NodeKey::from_param(p)).copied()
+    }
+
+    pub fn def_of_closure_param(&self, p: &zeen_ast::declarations::ClosureParam) -> Option<DefId> {
+        self.binding_sites
+            .get(&NodeKey::from_closure_param(p))
+            .copied()
     }
 
     pub fn def_of_field(&self, f: &zeen_ast::declarations::StructField) -> Option<DefId> {

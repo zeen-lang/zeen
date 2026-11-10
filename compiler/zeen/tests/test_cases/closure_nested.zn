@@ -1,6 +1,6 @@
 fn outer(a: i32) Fn(i32) i32 {
-    let inner = fn(b: i32) i32 {
-        let scale = fn(c: i32) i32 { return c * 2; };
+    let inner = |b: i32| -> i32 {
+        let scale = |c: i32| -> i32 { return c * 2; };
         let doubled = scale(b);
         return doubled + a;
     };

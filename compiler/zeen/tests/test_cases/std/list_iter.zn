@@ -53,7 +53,7 @@ fn main() i32 {
     *score = *score * 10;
   };
 
-  scores.iter_mut().for_each(fn(score: *i32) void { *score += 1; });
+  scores.iter_mut().for_each(|score: *i32| -> void { *score += 1; });
 
   for (score : scores.iter()) {
     @println("mutated={}", *score);

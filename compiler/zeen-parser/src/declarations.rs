@@ -481,27 +481,62 @@ impl<'tok, 'ctx, 'pr> DeclParser<'tok, 'ctx, 'pr> {
                 let _ = self.p.expect(TokenKind::Colon, ":")?;
 
                 let mut bounds_buffer: SmallVec<[(Spur, miette::SourceSpan); 4]> = SmallVec::new();
+                let mut callable_buffer: SmallVec<[declarations::CallableBound<'ctx>; 4]> =
+                    SmallVec::new();
                 let mut end = ty.span;
 
                 while !matches!(
                     self.p.current().kind,
                     TokenKind::Comma | TokenKind::OpenBrace | TokenKind::Semicolon | TokenKind::Eof
                 ) {
-                    let interface_token = self.p.expect(TokenKind::Ident, "interface name")?;
-                    let interface_slice = self.p.src[interface_token.span.offset()
-                        ..interface_token.span.offset() + interface_token.span.len()]
-                        .to_owned();
+                    let current_span = self.p.current().span;
+                    let current_slice = &self.p.src
+                        [current_span.offset()..current_span.offset() + current_span.len()];
 
-                    let interface_id = self.p.get_or_intern(interface_slice);
-                    bounds_buffer.push((interface_id, interface_token.span));
-                    end = interface_token.span;
+                    let is_callable = matches!(current_slice, "Callable" | "CallableOnce")
+                        && self.p.peek_ahead_kind(0) == Some(TokenKind::OpenParen);
+
+                    if is_callable {
+                        let mut type_parser = TypeParser::new(self.p);
+
+                        let bound = type_parser.parse_callable_bound(&[
+                            TokenKind::Comma,
+                            TokenKind::OpenBrace,
+                            TokenKind::Semicolon,
+                            TokenKind::Eof,
+                        ])?;
+
+                        end = bound.span;
+                        callable_buffer.push(bound);
+                    } else {
+                        let interface_token = self.p.expect(TokenKind::Ident, "interface name")?;
+                        let interface_slice = self.p.src[interface_token.span.offset()
+                            ..interface_token.span.offset() + interface_token.span.len()]
+                            .to_owned();
+
+                        let interface_id = self.p.get_or_intern(interface_slice);
+                        bounds_buffer.push((interface_id, interface_token.span));
+                        end = interface_token.span;
+                    }
 
                     let _ = self.p.eat(TokenKind::Plus);
                 }
 
                 let bounds = self.p.arena.alloc_slice_copy(&bounds_buffer);
+                let callable_bounds: Option<&'ctx [declarations::CallableBound<'ctx>]> =
+                    if callable_buffer.is_empty() {
+                        None
+                    } else {
+                        Some(self.p.arena.alloc_slice_copy(&callable_buffer))
+                    };
 
-                (declarations::WhereClauseKind::Bound { bounds }, end)
+                (
+                    declarations::WhereClauseKind::Bound {
+                        bounds,
+                        callable_bounds,
+                    },
+                    end,
+                )
             };
 
             clauses.push(declarations::WhereClause {
@@ -1941,11 +1976,13 @@ mod tests {
                     generics: Some([
                         declarations::GenericType {
                             name: _,
-                            interfaces: Some(_)
+                            interfaces: Some(_),
+                            ..
                         },
                         declarations::GenericType {
                             name: _,
-                            interfaces: Some(_)
+                            interfaces: Some(_),
+                            ..
                         },
                     ]),
                     params: [
@@ -2647,14 +2684,8 @@ mod tests {
                     is_pub: false,
 
                     generics: Some([
-                        zeen_ast::declarations::GenericType {
-                            name: _,
-                            interfaces: _,
-                        },
-                        zeen_ast::declarations::GenericType {
-                            name: _,
-                            interfaces: _,
-                        },
+                        zeen_ast::declarations::GenericType { .. },
+                        zeen_ast::declarations::GenericType { .. },
                     ]),
                     methods: [],
                 },
@@ -3056,7 +3087,8 @@ mod tests {
                     is_pub: false,
                     generics: Some([declarations::GenericType {
                         name: _,
-                        interfaces: None
+                        interfaces: None,
+                        ..
                     }]),
                     ty: TypeExpr {
                         kind: TypeKind::SinglePointer(_),
@@ -3082,7 +3114,8 @@ mod tests {
                     is_pub: false,
                     generics: Some([declarations::GenericType {
                         name: _,
-                        interfaces: Some(_)
+                        interfaces: Some(_),
+                        ..
                     }]),
                     ty: TypeExpr { .. },
                 }),
@@ -3315,7 +3348,34 @@ mod tests {
             Ok([Declaration {
                 kind: DeclarationKind::FnDecl {
                     where_clauses: Some([declarations::WhereClause {
-                        kind: declarations::WhereClauseKind::Bound { bounds: [(_, _)] },
+                        kind: declarations::WhereClauseKind::Bound {
+                            bounds: [(_, _)],
+                            ..
+                        },
+                        ..
+                    }]),
+                    ..
+                },
+                ..
+            }])
+        );
+    }
+
+    #[test]
+    fn fn_with_where_callable_bound() {
+        const SRC: &str = "fn f[F](value: F) where F: Callable(i32) i32 { }";
+
+        make_parser!(SRC, tokens, bump, rodeo, parser);
+
+        assert_matches!(
+            parser.parse_program(),
+            Ok([Declaration {
+                kind: DeclarationKind::FnDecl {
+                    where_clauses: Some([declarations::WhereClause {
+                        kind: declarations::WhereClauseKind::Bound {
+                            bounds: [],
+                            callable_bounds: Some(_),
+                        },
                         ..
                     }]),
                     ..

@@ -440,7 +440,9 @@ impl<'ctx> IncludeResolver<'ctx> {
             } => {
                 flags.has_fat = true;
                 for param in params.iter() {
-                    self.type_usage(param.ty, flags);
+                    if let Some(ty) = param.ty {
+                        self.type_usage(ty, flags);
+                    }
                 }
                 if let Some(ret) = return_type {
                     self.type_usage(ret, flags);

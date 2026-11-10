@@ -127,4 +127,17 @@ pub enum ParserError {
         #[label]
         span: SourceSpan,
     },
+
+    #[error("`fn` does not start a closure")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::parser::fn_closure_removed),
+        help("write `|params| body` instead")
+    )]
+    FnClosureRemoved {
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label("closure literal")]
+        span: SourceSpan,
+    },
 }

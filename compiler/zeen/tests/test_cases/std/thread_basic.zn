@@ -5,7 +5,7 @@ fn main() i32 {
   let c1 = m.clone();
   let c2 = m.clone();
 
-  let t1 = Thread.spawn(fn() i32 {
+  let t1 = Thread.spawn(|| -> i32 {
     let i: i32 = 0;
     while (i < 100) {
       let g = c1.get_mut().lock();
@@ -14,7 +14,7 @@ fn main() i32 {
     }
     return 1;
   });
-  let t2 = Thread.spawn(fn() i32 {
+  let t2 = Thread.spawn(|| -> i32 {
     let i: i32 = 0;
     while (i < 100) {
       let g = c2.get_mut().lock();

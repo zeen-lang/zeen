@@ -1,7 +1,7 @@
 use crate::{Parser, error::ParserError};
 
 use zeen_ast::{
-    declarations::GenericType,
+    declarations::{CallableBound, GenericType},
     types::{self, TypeExpr, TypeKind},
 };
 use zeen_lexer::{TokenKind, token};
@@ -161,6 +161,60 @@ impl<'tok, 'ctx, 'pr> TypeParser<'tok, 'ctx, 'pr> {
         Some(expr)
     }
 
+    fn parse_callable_bound_in_generics(&mut self) -> Option<CallableBound<'ctx>> {
+        self.parse_callable_bound(&[
+            TokenKind::Comma,
+            TokenKind::CloseBracket,
+            TokenKind::Plus,
+            TokenKind::Eof,
+        ])
+    }
+
+    pub(crate) fn parse_callable_bound(
+        &mut self,
+        terminators: &[TokenKind],
+    ) -> Option<CallableBound<'ctx>> {
+        let kw = self.p.current_clone();
+        let once = self.current_ident_is("CallableOnce");
+        let _ = self.p.advance_not_eof()?;
+
+        let _ = self.p.expect(TokenKind::OpenParen, "(")?;
+
+        let mut params: SmallVec<[&'ctx TypeExpr<'ctx>; 8]> = SmallVec::new();
+
+        while !(self.p.at(TokenKind::CloseParen) || self.p.at(TokenKind::Eof)) {
+            let ty = {
+                let mut type_parser = TypeParser::new(self.p).no_typeof();
+                type_parser.parse()?
+            };
+
+            params.push(ty);
+
+            let _ = self.p.eat(TokenKind::Comma);
+        }
+
+        let close = self.p.expect(TokenKind::CloseParen, ")")?;
+
+        let ret = if terminators.iter().any(|kind| self.p.at(*kind)) {
+            self.p.arena.alloc(TypeExpr {
+                kind: TypeKind::Builtin(types::BuiltinType::void),
+                span: close.span,
+            })
+        } else {
+            let mut type_parser = TypeParser::new(self.p).no_typeof();
+            type_parser.parse()?
+        };
+
+        let params = self.p.arena.alloc_slice_copy(&params);
+
+        Some(CallableBound {
+            once,
+            params,
+            ret,
+            span: kw.merge_span(ret.span),
+        })
+    }
+
     pub fn parse_generics_declarations(&mut self) -> Option<&'ctx [GenericType<'ctx>]> {
         if self.p.eat(TokenKind::OpenBracket) {
             let mut generics: SmallVec<[GenericType<'ctx>; 8]> = SmallVec::new();
@@ -177,38 +231,64 @@ impl<'tok, 'ctx, 'pr> TypeParser<'tok, 'ctx, 'pr> {
 
                 let name = (self.p.get_or_intern(name_slice), name_token.span);
 
-                let interfaces: Option<&'ctx [(lasso::Spur, miette::SourceSpan)]> =
-                    if self.p.eat(TokenKind::Colon) {
-                        let mut interfaces_buffer: SmallVec<
-                            [(lasso::Spur, miette::SourceSpan); 8],
-                        > = SmallVec::new();
+                let mut callable_bounds: Option<&'ctx [CallableBound<'ctx>]> = None;
 
-                        while !matches!(
-                            self.p.current().kind,
-                            TokenKind::CloseBracket | TokenKind::Eof | TokenKind::Comma
-                        ) {
-                            let interface_token = self.p.expect(TokenKind::Ident, "identifier")?;
-                            let interface_slice = self.p.src[interface_token.span.offset()
-                                ..interface_token.span.offset() + interface_token.span.len()]
-                                .to_owned();
+                let interfaces: Option<&'ctx [(lasso::Spur, miette::SourceSpan)]> = if self
+                    .p
+                    .eat(TokenKind::Colon)
+                {
+                    let mut interfaces_buffer: SmallVec<[(lasso::Spur, miette::SourceSpan); 8]> =
+                        SmallVec::new();
+                    let mut callable_buffer: SmallVec<[CallableBound<'ctx>; 4]> = SmallVec::new();
 
-                            let interface_id = self.p.get_or_intern(interface_slice);
-                            interfaces_buffer.push((interface_id, interface_token.span));
+                    while !matches!(
+                        self.p.current().kind,
+                        TokenKind::CloseBracket | TokenKind::Eof | TokenKind::Comma
+                    ) {
+                        if (self.current_ident_is("Callable")
+                            || self.current_ident_is("CallableOnce"))
+                            && self.p.peek_ahead_kind(0) == Some(TokenKind::OpenParen)
+                        {
+                            let bound = self.parse_callable_bound_in_generics()?;
+                            callable_buffer.push(bound);
 
                             let _ = self.p.eat(TokenKind::Plus);
+
+                            continue;
                         }
 
-                        let interfaces_arena = self.p.arena.alloc_slice_copy(&interfaces_buffer);
-                        drop(interfaces_buffer);
+                        let interface_token = self.p.expect(TokenKind::Ident, "identifier")?;
+                        let interface_slice = self.p.src[interface_token.span.offset()
+                            ..interface_token.span.offset() + interface_token.span.len()]
+                            .to_owned();
 
-                        Some(interfaces_arena)
-                    } else {
-                        None
-                    };
+                        let interface_id = self.p.get_or_intern(interface_slice);
+                        interfaces_buffer.push((interface_id, interface_token.span));
+
+                        let _ = self.p.eat(TokenKind::Plus);
+                    }
+
+                    if !callable_buffer.is_empty() {
+                        callable_bounds = Some(self.p.arena.alloc_slice_copy(&callable_buffer));
+                    }
+
+                    drop(callable_buffer);
+
+                    let interfaces_arena = self.p.arena.alloc_slice_copy(&interfaces_buffer);
+                    drop(interfaces_buffer);
+
+                    Some(interfaces_arena)
+                } else {
+                    None
+                };
 
                 let _ = self.p.eat(TokenKind::Comma);
 
-                generics.push(GenericType { name, interfaces });
+                generics.push(GenericType {
+                    name,
+                    interfaces,
+                    callable_bounds,
+                });
             }
 
             self.p.eat(TokenKind::CloseBracket);
@@ -865,6 +945,39 @@ mod tests {
     }
 
     #[test]
+    fn generics_with_callable_bounds() {
+        const SRC: &str = "[F: Callable(i32) i32, G: CallableOnce() void + Eq]";
+
+        make_type_parser!(SRC, tokens, bump, rodeo, parser, type_parser);
+
+        let generics = type_parser.parse_generics_declarations().unwrap();
+
+        assert_eq!(generics.len(), 2);
+
+        let f = generics[0].callable_bounds.unwrap();
+        assert_eq!(f.len(), 1);
+        assert!(!f[0].once);
+        assert_eq!(f[0].params.len(), 1);
+        assert_eq!(
+            f[0].params[0].kind,
+            TypeKind::Builtin(types::BuiltinType::i32)
+        );
+        assert_eq!(f[0].ret.kind, TypeKind::Builtin(types::BuiltinType::i32));
+
+        let g = generics[1];
+        assert!(g.interfaces.is_some_and(|bounds| bounds.len() == 1));
+
+        let g_bounds = g.callable_bounds.unwrap();
+        assert_eq!(g_bounds.len(), 1);
+        assert!(g_bounds[0].once);
+        assert!(g_bounds[0].params.is_empty());
+        assert_eq!(
+            g_bounds[0].ret.kind,
+            TypeKind::Builtin(types::BuiltinType::void)
+        );
+    }
+
+    #[test]
     fn fn_type_with_generic() {
         const SRC: &str = "fn[T](u32) usize";
 
@@ -881,6 +994,7 @@ mod tests {
                     generic_args: Some(&[zeen_ast::declarations::GenericType {
                         name: (rodeo.borrow_mut().get_or_intern("T"), (3, 1).into()),
                         interfaces: None,
+                        callable_bounds: None,
                     }]),
                     ret: &TypeExpr {
                         kind: TypeKind::Builtin(types::BuiltinType::usize),
@@ -942,6 +1056,7 @@ mod tests {
                                 (12, 7).into()
                             ),
                         ]),
+                        callable_bounds: None,
                     }]),
                     ret: &TypeExpr {
                         kind: TypeKind::Builtin(types::BuiltinType::usize),

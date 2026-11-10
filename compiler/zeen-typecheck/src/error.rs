@@ -208,6 +208,54 @@ pub enum TypeError {
         span: SourceSpan,
     },
 
+    #[error("closure parameter type is unknown")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::closure_param_type_needed),
+        help("annotate the parameter or store the closure in a typed binding")
+    )]
+    ClosureParamTypeNeeded {
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
+    #[error("closure return type is unknown")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::closure_return_type_needed),
+        help("add `-> Type` before the body or store the closure in a typed binding")
+    )]
+    ClosureReturnTypeNeeded {
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
+    #[error("closure takes {found} parameters, but {expected} are expected")]
+    #[diagnostic(severity(Error), code(zeen::typechecker::closure_param_count_mismatch))]
+    ClosureParamCountMismatch {
+        expected: usize,
+        found: usize,
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
+    #[error("closure body returns {found}, but {expected} is expected")]
+    #[diagnostic(severity(Error), code(zeen::typechecker::closure_body_type_mismatch))]
+    ClosureBodyTypeMismatch {
+        expected: SmolStr,
+        found: SmolStr,
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
     #[error("expected {expected} args, but found {found}")]
     #[diagnostic(severity(Error), code(zeen::typechecker::arg_count_mismatch))]
     ArgCountMismatch {

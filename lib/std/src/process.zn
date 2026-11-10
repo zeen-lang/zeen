@@ -557,11 +557,11 @@ implement Command {
       let out_handle = child.win_out;
       let err_handle = child.win_err;
 
-      let out_thread = Thread.spawn(fn() Result[String, IoError] {
+      let out_thread = Thread.spawn(|| -> Result[String, IoError] {
         return drain_handle_to_string(out_handle);
       });
 
-      let err_thread = Thread.spawn(fn() Result[String, IoError] {
+      let err_thread = Thread.spawn(|| -> Result[String, IoError] {
         return drain_handle_to_string(err_handle);
       });
 
@@ -591,11 +591,11 @@ implement Command {
       const out_fd = child.out_fd;
       const err_fd = child.err_fd;
 
-      const out_thread = Thread.spawn(fn() Result[String, IoError] {
+      const out_thread = Thread.spawn(|| -> Result[String, IoError] {
         return drain_fd_to_string(out_fd);
       });
 
-      const err_thread = Thread.spawn(fn() Result[String, IoError] {
+      const err_thread = Thread.spawn(|| -> Result[String, IoError] {
         return drain_fd_to_string(err_fd);
       });
 

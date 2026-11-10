@@ -5,7 +5,9 @@ use lasso::{Rodeo, Spur};
 use smol_str::SmolStr;
 
 use zeen_ast::{
-    declarations::{Declaration, DeclarationKind, EnumVariantPayload, FnParam, GenericType},
+    declarations::{
+        CallableBound, Declaration, DeclarationKind, EnumVariantPayload, FnParam, GenericType,
+    },
     expressions::{Expression, ExpressionKind},
     statements::{Statement, StatementKind},
     types::{TypeExpr, TypeKind},
@@ -33,7 +35,7 @@ pub struct HirModule {
 // =========| Public Exports |=========
 
 pub use decl::{
-    HirAlias, HirAssociatedType, HirDecl, HirDeclKind, HirEnum, HirEnumVariant,
+    HirAlias, HirAssociatedType, HirCallableBound, HirDecl, HirDeclKind, HirEnum, HirEnumVariant,
     HirEnumVariantPayload, HirField, HirFn, HirGenericParam, HirImplement, HirInterface, HirParam,
     HirStruct, HirWhereClause, HirWhereClauseKind,
 };
@@ -534,6 +536,30 @@ impl<'res> HirLowering<'res> {
         }
     }
 
+    fn lower_closure_param(&mut self, param: &zeen_ast::declarations::ClosureParam) -> HirParam {
+        let def_id = self.resolution.def_of_closure_param(param);
+        let name = param
+            .name
+            .or_else(|| Some(self.interner.borrow_mut().get_or_intern("_")));
+
+        let ty = match param.ty {
+            Some(ty) => Rc::new(self.lower_type(ty)),
+            None => Rc::new(HirTypeExpr {
+                id: self.fresh_id(),
+                kind: HirTypeKind::Error,
+                source: (param.span, self.current_src.clone()).into(),
+            }),
+        };
+
+        HirParam {
+            id: self.fresh_id(),
+            def_id,
+            name,
+            ty,
+            span: param.span,
+        }
+    }
+
     fn lower_generics(&mut self, generics: Option<&[GenericType]>) -> Vec<HirGenericParam> {
         let Some(generics) = generics else {
             return Vec::new();
@@ -557,11 +583,36 @@ impl<'res> HirLowering<'res> {
                     })
                     .unwrap_or_default();
 
+                let callable_bounds = self.lower_callable_bounds(gtype.callable_bounds);
+
                 HirGenericParam {
                     def_id,
                     name: gtype.name,
                     bounds,
+                    callable_bounds,
                 }
+            })
+            .collect()
+    }
+
+    fn lower_callable_bounds(
+        &mut self,
+        bounds: Option<&[CallableBound<'_>]>,
+    ) -> Vec<HirCallableBound> {
+        let Some(bounds) = bounds else {
+            return Vec::new();
+        };
+
+        bounds
+            .iter()
+            .map(|bound| HirCallableBound {
+                once: bound.once,
+                params: bound
+                    .params
+                    .iter()
+                    .map(|param| Rc::new(self.lower_type(param)))
+                    .collect(),
+                ret: Rc::new(self.lower_type(bound.ret)),
             })
             .collect()
     }
@@ -605,14 +656,16 @@ impl<'res> HirLowering<'res> {
                 let ty = Rc::new(self.lower_type(clause.ty));
 
                 let kind = match clause.kind {
-                    zeen_ast::declarations::WhereClauseKind::Bound { bounds } => {
-                        HirWhereClauseKind::Bound {
-                            bounds: bounds
-                                .iter()
-                                .filter_map(|(name, _)| self.lookup_type_def_by_name(*name))
-                                .collect(),
-                        }
-                    }
+                    zeen_ast::declarations::WhereClauseKind::Bound {
+                        bounds,
+                        callable_bounds,
+                    } => HirWhereClauseKind::Bound {
+                        bounds: bounds
+                            .iter()
+                            .filter_map(|(name, _)| self.lookup_type_def_by_name(*name))
+                            .collect(),
+                        callable_bounds: self.lower_callable_bounds(callable_bounds),
+                    },
 
                     zeen_ast::declarations::WhereClauseKind::Equality { ty: eq } => {
                         HirWhereClauseKind::Equality {
@@ -1078,7 +1131,7 @@ impl<'res> HirLowering<'res> {
 
                 let hir_params: Vec<Rc<HirParam>> = params
                     .iter()
-                    .map(|param| Rc::new(self.lower_param(param)))
+                    .map(|param| Rc::new(self.lower_closure_param(param)))
                     .collect();
 
                 let def = Rc::new(HirFn {
@@ -1904,7 +1957,7 @@ mod tests {
 
     #[test]
     fn closure_lowers_to_closure_expr_with_fn() {
-        let fx = lower_ok("fn main() { let c = fn(x: i32) i32 { return x + 1; }; }");
+        let fx = lower_ok("fn main() { let c = |x: i32| -> i32 { return x + 1; }; }");
 
         let value = closure_expr_of(&fx, "main");
 
@@ -1939,7 +1992,7 @@ mod tests {
     #[test]
     fn closure_fn_has_parent_and_capture_free_param_names() {
         let fx =
-            lower_ok("fn outer() void { let a = 1; let c = fn(b: i32) i32 { return a + b; }; }");
+            lower_ok("fn outer() void { let a = 1; let c = |b: i32| -> i32 { return a + b; }; }");
 
         let value = closure_expr_of(&fx, "outer");
 
@@ -1958,7 +2011,7 @@ mod tests {
     #[test]
     fn nested_closure_lowers_inside_outer_closure() {
         let fx = lower_ok(
-            "fn main() { let x = 1; let outer = fn() i32 { let y = 2; let inner = fn() i32 { return x + y; }; return inner(); }; }",
+            "fn main() { let x = 1; let outer = || -> i32 { let y = 2; let inner = || -> i32 { return x + y; }; return inner(); }; }",
         );
 
         let outer = closure_expr_of(&fx, "main");

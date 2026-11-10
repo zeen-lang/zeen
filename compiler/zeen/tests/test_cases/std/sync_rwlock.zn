@@ -5,7 +5,7 @@ fn main() i32 {
   let m = Arc.new(RwLock.new(0));
   let c1 = m.clone();
 
-  let t1 = Thread.spawn(fn() i32 {
+  let t1 = Thread.spawn(|| -> i32 {
     let i: i32 = 0;
 
     while (i < 50) {
@@ -22,7 +22,7 @@ fn main() i32 {
 
   let c2 = m.clone();
 
-  let t2 = Thread.spawn(fn() i32 {
+  let t2 = Thread.spawn(|| -> i32 {
     let g = c2.get_mut().read();
 
     return *g;
