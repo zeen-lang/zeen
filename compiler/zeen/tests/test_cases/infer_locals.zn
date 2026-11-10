@@ -1,3 +1,5 @@
+use std.collections.list;
+
 fn take(byte: u8) u8 {
   return byte + 1;
 }
@@ -45,4 +47,11 @@ fn main() {
   let total = offset + base;
 
   @println("{} {} {}", shifted(4), total, offset);
+
+  let numbers = List.new();
+
+  numbers.push(4);
+  numbers.push(6);
+
+  @println("{} {}", numbers.len(), numbers[0]);
 }

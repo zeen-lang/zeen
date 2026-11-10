@@ -19424,4 +19424,75 @@ mod tests {
         )
         .expect("an annotated operand must infer a literal local");
     }
+
+    const CELL_SOURCE: &str = r#"
+        struct Cell[T] {
+            ptr: *T,
+        }
+
+        implement[T] Cell[T] {
+            pub fn empty() Self {
+                return Self { .ptr = @as(*T, nullptr) };
+            }
+
+            pub fn store(*self, value: T) {
+                *self.ptr = value;
+            }
+
+            pub fn read(*const self) T {
+                return *self.ptr;
+            }
+        }
+    "#;
+
+    #[test]
+    fn local_generic_infers_from_method_argument() {
+        typecheck_full(&format!(
+            r#"
+            {CELL_SOURCE}
+
+            fn main() {{
+                let cell = Cell.empty();
+                cell.store(7);
+            }}
+            "#
+        ))
+        .expect("a later method argument must infer the generic local type");
+    }
+
+    #[test]
+    fn local_generic_infers_from_annotated_read() {
+        typecheck_full(&format!(
+            r#"
+            {CELL_SOURCE}
+
+            fn main() {{
+                let cell = Cell.empty();
+                let value: i32 = cell.read();
+            }}
+            "#
+        ))
+        .expect("an annotated read must infer the generic local type");
+    }
+
+    #[test]
+    fn local_generic_without_usage_reports_cannot_infer() {
+        let errors = typecheck_full(&format!(
+            r#"
+            {CELL_SOURCE}
+
+            fn main() {{
+                let cell = Cell.empty();
+            }}
+            "#
+        ))
+        .expect_err("an unused generic local without a hint must be rejected");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| matches!(error, TypeError::CannotInferGeneric { .. })),
+            "expected TypeError::CannotInferGeneric, got: {errors:?}"
+        );
+    }
 }
