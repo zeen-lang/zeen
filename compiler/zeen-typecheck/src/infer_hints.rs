@@ -2,8 +2,8 @@ use std::rc::Rc;
 
 use zeen_ast::expressions::{BinaryOp, Literal};
 use zeen_hir::{
-    HirDecl, HirDeclKind, HirExpr, HirExprKind, HirMacroKind, HirModule, HirStmt, HirStmtKind,
-    HirTypeExpr,
+    HirDecl, HirDeclKind, HirExpr, HirExprKind, HirFn, HirMacroKind, HirModule, HirStmt,
+    HirStmtKind, HirTypeExpr,
 };
 use zeen_resolve::DefId;
 
@@ -22,6 +22,16 @@ pub enum HintSource {
     ParamType(DefId, usize),
 }
 
+impl HintSource {
+    pub fn priority(&self) -> u8 {
+        match self {
+            HintSource::Annotation(_) => 0,
+            HintSource::ParamType(_, _) => 1,
+            HintSource::Literal(_) => 2,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Hint {
     pub target: DefId,
@@ -29,11 +39,14 @@ pub struct Hint {
 }
 
 pub fn collect(module: &HirModule) -> Vec<Hint> {
-    let mut collector = Collector { hints: Vec::new() };
+    let mut collector = Collector {
+        hints: Vec::new(),
+        return_types: Vec::new(),
+    };
 
     for decl in &module.decls {
         match &decl.kind {
-            HirDeclKind::Fn(f) => collector.fn_body(&f.body),
+            HirDeclKind::Fn(f) => collector.fn_body(f),
 
             HirDeclKind::Struct(s) => {
                 for method in &s.methods {
@@ -64,24 +77,35 @@ pub fn collect(module: &HirModule) -> Vec<Hint> {
 
 struct Collector {
     hints: Vec<Hint>,
+    return_types: Vec<Option<Rc<HirTypeExpr>>>,
 }
 
 impl Collector {
-    fn fn_body(&mut self, body: &Option<Rc<HirStmt>>) {
-        if let Some(body) = body {
+    fn fn_body(&mut self, f: &HirFn) {
+        self.return_types.push(f.return_type.clone());
+
+        if let Some(body) = &f.body {
             self.stmt(body);
         }
+
+        self.return_types.pop();
     }
 
     fn decl(&mut self, decl: &HirDecl) {
         if let HirDeclKind::Fn(f) = &decl.kind {
-            self.fn_body(&f.body);
+            self.fn_body(f);
         }
     }
 
     fn stmt(&mut self, stmt: &HirStmt) {
         match &stmt.kind {
-            HirStmtKind::Let { value, .. } => {
+            HirStmtKind::Let {
+                explicit_type,
+                value,
+                ..
+            } => {
+                self.annotated_value(explicit_type.as_ref(), value.as_deref());
+
                 if let Some(value) = value {
                     self.expr(value);
                 }
@@ -89,11 +113,15 @@ impl Collector {
 
             HirStmtKind::Assign { object, value }
             | HirStmtKind::CompoundAssign { object, value, .. } => {
+                self.assigned_value(object, value);
+
                 self.expr(object);
                 self.expr(value);
             }
 
             HirStmtKind::Return { value } => {
+                self.returned_value(value.as_deref());
+
                 if let Some(value) = value {
                     self.expr(value);
                 }
@@ -167,7 +195,7 @@ impl Collector {
                 }
             }
 
-            HirExprKind::Closure { def, .. } => self.fn_body(&def.body),
+            HirExprKind::Closure { def, .. } => self.fn_body(def),
 
             HirExprKind::If {
                 condition,
@@ -255,6 +283,51 @@ impl Collector {
             | HirExprKind::Type(_)
             | HirExprKind::Error => {}
         }
+    }
+
+    fn annotated_value(&mut self, annotation: Option<&Rc<HirTypeExpr>>, value: Option<&HirExpr>) {
+        let (Some(annotation), Some(value)) = (annotation, value) else {
+            return;
+        };
+
+        let Some(target) = var_ref(value) else {
+            return;
+        };
+
+        self.hints.push(Hint {
+            target,
+            source: HintSource::Annotation(annotation.clone()),
+        });
+    }
+
+    fn assigned_value(&mut self, object: &HirExpr, value: &HirExpr) {
+        let (Some(target), Some(literal)) = (var_ref(object), literal_hint(value)) else {
+            return;
+        };
+
+        self.hints.push(Hint {
+            target,
+            source: HintSource::Literal(literal),
+        });
+    }
+
+    fn returned_value(&mut self, value: Option<&HirExpr>) {
+        let Some(value) = value else {
+            return;
+        };
+
+        let Some(Some(annotation)) = self.return_types.last() else {
+            return;
+        };
+
+        let Some(target) = var_ref(value) else {
+            return;
+        };
+
+        self.hints.push(Hint {
+            target,
+            source: HintSource::Annotation(annotation.clone()),
+        });
     }
 
     fn binary(&mut self, lhs: &HirExpr, rhs: &HirExpr, op: BinaryOp) {

@@ -2417,10 +2417,20 @@ impl<'res> TypeChecker<'res> {
                 let declared_ty = declared.map(|(ty, _)| ty);
                 let _declared_const = declared.map(|(_, c)| c).unwrap_or(false);
 
+                let hint_ty = match declared_ty {
+                    Some(_) => None,
+                    None => self.inference_hints.get(def_id).copied(),
+                };
+
                 let value_ty = value.as_ref().map(|val| match declared_ty {
                     Some(expected) => self.check_expr(val, expected, true),
                     None => self.synth_expr(val),
                 });
+
+                let value_ty = match (declared_ty, value.as_deref(), value_ty) {
+                    (None, Some(val), Some(ty)) => Some(self.inferred_local_type(*def_id, val, ty)),
+                    (_, _, ty) => ty,
+                };
 
                 let declared_is_fat_bound =
                     declared_ty.is_some_and(|ty| self.type_contains_fat_bound(ty));
@@ -2434,8 +2444,8 @@ impl<'res> TypeChecker<'res> {
                 let final_ty = match (declared_ty, value_ty) {
                     (Some(_), Some(v)) if declared_is_fat_bound => v,
                     (Some(t), _) => t,
-                    (None, Some(t)) => self.default_literal_with_value(value.as_ref().unwrap(), t),
-                    (None, None) => self.result.interner.error(),
+                    (None, Some(t)) => t,
+                    (None, None) => hint_ty.unwrap_or_else(|| self.result.interner.error()),
                 };
 
                 self.result.def_types.insert(*def_id, final_ty);
@@ -2620,12 +2630,17 @@ impl<'res> TypeChecker<'res> {
     }
 
     fn collect_inference_hints(&mut self, module: &HirModule) {
-        let hints = infer_hints::collect(module);
+        let mut hints = infer_hints::collect(module);
+        hints.sort_by_key(|hint| hint.source.priority());
 
         let previous = self.speculating;
         self.speculating = true;
 
         for hint in hints {
+            if self.result.def_types.contains_key(&hint.target) {
+                continue;
+            }
+
             let ty = match hint.source {
                 infer_hints::HintSource::Literal(kind) => Some(self.literal_hint_type(kind)),
                 infer_hints::HintSource::Annotation(ty) => Some(self.lower_hir_type(&ty)),
@@ -2647,6 +2662,30 @@ impl<'res> TypeChecker<'res> {
         }
 
         self.speculating = previous;
+    }
+
+    fn inferred_local_type(&mut self, def_id: DefId, value: &HirExpr, ty: TypeId) -> TypeId {
+        let Some(hint) = self.inference_hints.get(&def_id).copied() else {
+            return self.default_literal_with_value(value, ty);
+        };
+
+        if !self.literal_hint_matches(ty, hint) {
+            return self.default_literal_with_value(value, ty);
+        }
+
+        self.check_expr(value, hint, true)
+    }
+
+    fn literal_hint_matches(&self, ty: TypeId, hint: TypeId) -> bool {
+        let Type::Builtin(hint) = self.result.interner.get(hint) else {
+            return false;
+        };
+
+        match self.result.interner.get(ty) {
+            Type::IntLiteral => coerce::builtin_is_integer(*hint),
+            Type::FloatLiteral => coerce::builtin_is_float(*hint),
+            _ => false,
+        }
     }
 
     fn literal_hint_type(&mut self, kind: infer_hints::LiteralHint) -> TypeId {
