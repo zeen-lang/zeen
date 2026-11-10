@@ -1,0 +1,31 @@
+fn take(byte: u8) u8 {
+  return byte + 1;
+}
+
+fn small() u8 {
+  let n = 1;
+
+  return n;
+}
+
+fn main() {
+  let value = 1;
+  let byte: u8 = value;
+
+  @println("{} {}", byte, value);
+
+  let n = 5;
+
+  @println("{}", take(n));
+
+  let double = |x| x * 2;
+
+  @println("{}", double(21));
+  @println("{}", small());
+
+  let items = {10, 20, 30};
+  let len = items.len;
+  let end = len - 1;
+
+  @println("{}", items[end]);
+}

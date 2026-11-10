@@ -18744,4 +18744,124 @@ mod tests {
         )
         .expect("concrete implementation must be preferred over generic one");
     }
+
+    #[test]
+    fn local_infers_type_from_later_annotation() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                let byte: u8 = value;
+                let other: u8 = value;
+            }
+            "#,
+        )
+        .expect("a later annotated use must infer the local type");
+    }
+
+    #[test]
+    fn local_infers_type_from_call_argument() {
+        typecheck_full(
+            r#"
+            fn take(v: u8) u8 {
+                return v;
+            }
+
+            fn main() {
+                let n = 5;
+                let out = take(n);
+            }
+            "#,
+        )
+        .expect("an argument position must infer the local type");
+    }
+
+    #[test]
+    fn local_infers_type_from_return_annotation() {
+        typecheck_full(
+            r#"
+            fn small() u8 {
+                let n = 1;
+                return n;
+            }
+
+            fn main() {
+                let byte = small();
+            }
+            "#,
+        )
+        .expect("a return position must infer the local type");
+    }
+
+    #[test]
+    fn local_keeps_its_own_type_over_literal_operand() {
+        typecheck_full(
+            r#"
+            fn tail(size: usize) usize {
+                let end = size - 1;
+                return end;
+            }
+
+            fn main() {
+                let value = tail(3);
+            }
+            "#,
+        )
+        .expect("a literal operand must not retype a local");
+    }
+
+    #[test]
+    fn local_annotation_hint_wins_over_literal_assignment() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                value = 2;
+                let byte: u8 = value;
+            }
+            "#,
+        )
+        .expect("an annotated use must win over a literal assignment");
+    }
+
+    #[test]
+    fn local_hinted_literal_is_range_checked() {
+        let errors = typecheck_full(
+            r#"
+            fn main() {
+                let value = 300;
+                let byte: u8 = value;
+            }
+            "#,
+        )
+        .expect_err("a hinted literal must respect the target range");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| matches!(error, TypeError::IntLiteralOutOfRange { .. })),
+            "expected an out of range diagnostic, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn local_without_hint_keeps_the_literal_default() {
+        let result = typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                let doubled = value * 2;
+            }
+            "#,
+        )
+        .expect("an unconstrained literal keeps its default");
+
+        assert!(
+            result
+                .def_types
+                .values()
+                .any(|&ty| matches!(result.interner.get(ty), Type::Builtin(BuiltinType::i32))),
+            "expected an i32 binding"
+        );
+    }
 }
