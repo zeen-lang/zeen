@@ -19704,4 +19704,90 @@ mod tests {
         )
         .expect("a literal hint must adapt to an annotation");
     }
+
+    const SLOT_SOURCE: &str = r#"
+        struct Slot[T] {
+            value: T,
+        }
+
+        implement[T] Slot[T] {
+            pub fn empty() Self {
+                return Self { .value = @uninit() };
+            }
+
+            pub fn set(*self, value: T) {
+                self.value = value;
+            }
+
+            pub fn get(*const self) T {
+                return self.value;
+            }
+        }
+    "#;
+
+    #[test]
+    fn generic_locals_infer_independently() {
+        typecheck_full(&format!(
+            r#"
+            {SLOT_SOURCE}
+
+            fn main() {{
+                let first = Slot.empty();
+                let second = Slot.empty();
+
+                first.set(1);
+                second.set(2.5);
+            }}
+            "#
+        ))
+        .expect("each generic local must keep its own inferred type");
+    }
+
+    #[test]
+    fn generic_local_infers_through_generic_call() {
+        typecheck_full(&format!(
+            r#"
+            {SLOT_SOURCE}
+
+            fn id[T](value: T) T {{
+                return value;
+            }}
+
+            fn main() {{
+                let source = Slot.empty();
+                let copy = id(source);
+
+                copy.set(41);
+            }}
+            "#
+        ))
+        .expect("a generic call must keep the argument local open");
+    }
+
+    #[test]
+    fn generic_local_does_not_leak_into_other_bodies() {
+        typecheck_full(&format!(
+            r#"
+            {SLOT_SOURCE}
+
+            fn fill[T](source: Slot[T]) Slot[T] {{
+                let target = Slot.empty();
+
+                target.set(source.get());
+
+                return target;
+            }}
+
+            fn main() {{
+                let source = Slot.empty();
+
+                source.set(41);
+
+                let copy = fill(source);
+                let value: i32 = copy.get();
+            }}
+            "#
+        ))
+        .expect("a generic local must not bind the generic params of another body");
+    }
 }
