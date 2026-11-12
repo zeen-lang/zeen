@@ -2690,11 +2690,12 @@ impl<'res> TypeChecker<'res> {
     }
 
     fn collect_inference_hints(&mut self, module: &HirModule) {
-        let mut hints = infer_hints::collect(module);
-        hints.sort_by_key(|hint| hint.source.priority());
+        let hints = infer_hints::collect(module);
 
         let previous = self.speculating;
         self.speculating = true;
+
+        let mut grouped: HashMap<DefId, Vec<TypeId>> = HashMap::default();
 
         for hint in hints {
             if self.result.def_types.contains_key(&hint.target) {
@@ -2711,17 +2712,111 @@ impl<'res> TypeChecker<'res> {
                 continue;
             };
 
-            let ty = self.default_literal(ty);
-
             if self.type_contains_generic(ty) || matches!(self.result.interner.get(ty), Type::Error)
             {
                 continue;
             }
 
-            self.inference_hints.entry(hint.target).or_insert(ty);
+            grouped.entry(hint.target).or_default().push(ty);
+        }
+
+        let mut ambiguous = Vec::new();
+
+        for (target, types) in grouped {
+            match self.solve_hint_types(&types) {
+                Ok(ty) => {
+                    let ty = self.default_literal(ty);
+                    self.inference_hints.insert(target, ty);
+                }
+
+                Err((first, second)) => {
+                    self.inference_hints
+                        .insert(target, self.result.interner.error());
+                    ambiguous.push((target, first, second));
+                }
+            }
         }
 
         self.speculating = previous;
+
+        for (target, first, second) in ambiguous {
+            self.report_ambiguous_inference(target, first, second);
+        }
+    }
+
+    fn solve_hint_types(&mut self, types: &[TypeId]) -> Result<TypeId, (TypeId, TypeId)> {
+        let mut concrete: Vec<TypeId> = Vec::new();
+
+        for &ty in types {
+            if matches!(
+                self.result.interner.get(ty),
+                Type::IntLiteral | Type::FloatLiteral
+            ) {
+                continue;
+            }
+
+            if !concrete.contains(&ty) {
+                concrete.push(ty);
+            }
+        }
+
+        if concrete.is_empty() {
+            let mut literals: Vec<TypeId> = Vec::new();
+
+            for &ty in types {
+                if !literals.contains(&ty) {
+                    literals.push(ty);
+                }
+            }
+
+            return match literals.as_slice() {
+                [only] => Ok(*only),
+                [first, second, ..] => Err((*first, *second)),
+                [] => Ok(self.result.interner.error()),
+            };
+        }
+
+        let first = concrete[0];
+
+        for &ty in &concrete[1..] {
+            if self.types_compatible(first, ty) {
+                continue;
+            }
+
+            return Err((first, ty));
+        }
+
+        Ok(first)
+    }
+
+    fn types_compatible(&mut self, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+
+        try_coerce(&mut self.result.interner, left, right).is_ok()
+            || try_coerce(&mut self.result.interner, right, left).is_ok()
+    }
+
+    fn report_ambiguous_inference(&mut self, target: DefId, first: TypeId, second: TypeId) {
+        let Some(info) = self.resolution.defs.get(&target) else {
+            return;
+        };
+
+        let name: SmolStr = self.interner.borrow().resolve(&info.name).into();
+        let src = info.span.src();
+        let span = info.span.span;
+
+        let first = SmolStr::from(self.display_type(first));
+        let second = SmolStr::from(self.display_type(second));
+
+        self.report(TypeError::AmbiguousInference {
+            name,
+            first,
+            second,
+            src,
+            span,
+        });
     }
 
     fn finalize_local_hints(&mut self) {
@@ -2930,6 +3025,10 @@ impl<'res> TypeChecker<'res> {
         let Some(hint) = self.inference_hints.get(&def_id).copied() else {
             return self.default_literal_with_value(value, ty);
         };
+
+        if matches!(self.result.interner.get(hint), Type::Error) {
+            return hint;
+        }
 
         if !self.literal_hint_matches(ty, hint) && !self.literal_expr_fits(value, hint) {
             return self.default_literal_with_value(value, ty);

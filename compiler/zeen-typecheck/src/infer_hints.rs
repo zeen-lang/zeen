@@ -1,10 +1,10 @@
 use std::rc::Rc;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use zeen_ast::expressions::{BinaryOp, Literal, UnaryOp};
 use zeen_hir::{
-    HirDecl, HirDeclKind, HirExpr, HirExprKind, HirFn, HirMacroKind, HirModule, HirStmt,
-    HirStmtKind, HirTypeExpr, HirTypeKind,
+    HirDecl, HirDeclKind, HirExpr, HirExprKind, HirFn, HirModule, HirStmt, HirStmtKind,
+    HirTypeExpr, HirTypeKind,
 };
 use zeen_resolve::DefId;
 
@@ -23,16 +23,6 @@ pub enum HintSource {
     ParamType(DefId, usize),
 }
 
-impl HintSource {
-    pub fn priority(&self) -> u8 {
-        match self {
-            HintSource::Annotation(_) => 0,
-            HintSource::ParamType(_, _) => 1,
-            HintSource::Literal(_) => 2,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Hint {
     pub target: DefId,
@@ -44,6 +34,8 @@ pub fn collect(module: &HirModule) -> Vec<Hint> {
         hints: Vec::new(),
         return_types: Vec::new(),
         declared: FxHashMap::default(),
+        literal_locals: FxHashSet::default(),
+        untyped_params: FxHashSet::default(),
     };
 
     for decl in &module.decls {
@@ -74,13 +66,29 @@ pub fn collect(module: &HirModule) -> Vec<Hint> {
         }
     }
 
-    collector.hints
+    let Collector {
+        hints,
+        declared,
+        literal_locals,
+        untyped_params,
+        ..
+    } = collector;
+
+    hints
+        .into_iter()
+        .filter(|hint| {
+            !declared.contains_key(&hint.target)
+                && (literal_locals.contains(&hint.target) || untyped_params.contains(&hint.target))
+        })
+        .collect()
 }
 
 struct Collector {
     hints: Vec<Hint>,
     return_types: Vec<Option<Rc<HirTypeExpr>>>,
     declared: FxHashMap<DefId, Rc<HirTypeExpr>>,
+    literal_locals: FxHashSet<DefId>,
+    untyped_params: FxHashSet<DefId>,
 }
 
 impl Collector {
@@ -93,6 +101,7 @@ impl Collector {
             };
 
             if matches!(param.ty.kind, HirTypeKind::Error) {
+                self.untyped_params.insert(def_id);
                 continue;
             }
 
@@ -122,6 +131,10 @@ impl Collector {
             } => {
                 if let Some(explicit_type) = explicit_type {
                     self.declared.insert(*def_id, explicit_type.clone());
+                } else if let Some(value) = value
+                    && literal_expr(value)
+                {
+                    self.literal_locals.insert(*def_id);
                 }
 
                 self.annotated_value(explicit_type.as_ref(), value.as_deref());
@@ -207,9 +220,7 @@ impl Collector {
                 }
             }
 
-            HirExprKind::MacroCall { kind, args } => {
-                self.macro_call(kind.0, args);
-
+            HirExprKind::MacroCall { args, .. } => {
                 for arg in args {
                     self.expr(arg);
                 }
@@ -447,22 +458,6 @@ impl Collector {
             });
         }
     }
-
-    fn macro_call(&mut self, kind: HirMacroKind, args: &[Rc<HirExpr>]) {
-        if kind != HirMacroKind::As {
-            return;
-        }
-
-        let [ty, value, ..] = args else {
-            return;
-        };
-
-        let HirExprKind::Type(ty) = &ty.kind else {
-            return;
-        };
-
-        self.expected(ty, value);
-    }
 }
 
 fn expected_element(ty: &Rc<HirTypeExpr>) -> Option<&Rc<HirTypeExpr>> {
@@ -516,6 +511,56 @@ fn literal_hint(expr: &HirExpr) -> Option<LiteralHint> {
         HirExprKind::Literal(Literal::Char(_)) => Some(LiteralHint::Char),
         HirExprKind::Literal(Literal::Bool(_)) => Some(LiteralHint::Bool),
         _ => None,
+    }
+}
+
+fn literal_expr(expr: &HirExpr) -> bool {
+    match &expr.kind {
+        HirExprKind::Literal(Literal::Null | Literal::ByteChar(_)) => false,
+        HirExprKind::Literal(_) => true,
+
+        HirExprKind::Unary {
+            expr,
+            op: UnaryOp::Neg | UnaryOp::BitNot,
+        } => literal_expr(expr),
+
+        HirExprKind::Binary { lhs, rhs, op } if propagates_expected(*op) => {
+            literal_expr(lhs) && literal_expr(rhs)
+        }
+
+        HirExprKind::ArrayInit { elements } => {
+            !elements.is_empty() && elements.iter().all(|element| literal_expr(element))
+        }
+
+        HirExprKind::Block {
+            stmts,
+            trailing: Some(trailing),
+        } => stmts.is_empty() && literal_expr(trailing),
+
+        HirExprKind::If {
+            then_block,
+            else_block: Some(else_block),
+            ..
+        } => stmt_literal(then_block) && stmt_literal(else_block),
+
+        HirExprKind::Switch { arms, .. } => {
+            !arms.is_empty() && arms.iter().all(|arm| literal_expr(&arm.body))
+        }
+
+        _ => false,
+    }
+}
+
+fn stmt_literal(stmt: &HirStmt) -> bool {
+    match &stmt.kind {
+        HirStmtKind::Expr(expr) => match &expr.kind {
+            HirExprKind::Block {
+                stmts,
+                trailing: Some(trailing),
+            } if stmts.is_empty() => literal_expr(trailing),
+            _ => literal_expr(expr),
+        },
+        _ => false,
     }
 }
 
