@@ -370,6 +370,23 @@ pub enum TypeError {
         span: SourceSpan,
     },
 
+    #[error("conflicting inferred types for `{name}`: `{first}` and `{second}`")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::ambiguous_inference),
+        help("annotate `{name}` with an explicit type")
+    )]
+    AmbiguousInference {
+        name: SmolStr,
+        first: SmolStr,
+        second: SmolStr,
+
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
     #[error("binary '{op}' is not supported between: `{lhs_type}` and `{rhs_type}`")]
     #[diagnostic(severity(Error), code(zeen::typechecker::not_supported_binary))]
     BinaryNotSupported {

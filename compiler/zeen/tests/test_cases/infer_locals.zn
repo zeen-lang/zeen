@@ -1,0 +1,57 @@
+use std.collections.list;
+
+fn take(byte: u8) u8 {
+  return byte + 1;
+}
+
+fn small() u8 {
+  let n = 1;
+
+  return n;
+}
+
+fn main() {
+  let value = 1;
+  let byte: u8 = value;
+
+  @println("{} {}", byte, value);
+
+  let n = 5;
+
+  @println("{}", take(n));
+
+  let double = |x| x * 2;
+
+  @println("{}", double(21));
+  @println("{}", small());
+
+  let items = {10, 20, 30};
+  let len = items.len;
+  let end = len - 1;
+
+  @println("{}", items[end]);
+
+  let wide = 1;
+  let wide_value: i64 = wide + 2;
+
+  @println("{}", wide_value);
+
+  let bytes = {1, 2};
+  let packed: [2]u8 = bytes;
+
+  @println("{} {}", packed[0], packed[1]);
+
+  let base: u8 = 3;
+  let shifted = |x| x + base;
+  let offset = 2;
+  let total = offset + base;
+
+  @println("{} {} {}", shifted(4), total, offset);
+
+  let numbers = List.new();
+
+  numbers.push(4);
+  numbers.push(6);
+
+  @println("{} {}", numbers.len(), numbers[0]);
+}

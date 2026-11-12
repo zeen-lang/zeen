@@ -48,13 +48,16 @@ pub mod coerce;
 pub mod context;
 pub mod error;
 pub mod format_str;
+pub mod infer_hints;
 pub mod result;
 
 pub const DEFAULT_INT_LITERAL: BuiltinType = BuiltinType::i32;
 pub const DEFAULT_FLOAT_LITERAL: BuiltinType = BuiltinType::f64;
 
+const INFER_PLACEHOLDER_BASE: u32 = 0xF200_0000;
+
 pub struct TypeChecker<'res> {
-    resolution: &'res mut ResolutionResult,
+    resolution: &'res ResolutionResult,
     compilation_context: &'res CompilationContext,
     expect_assign_interface: bool,
     found_main_fn: bool,
@@ -72,6 +75,16 @@ pub struct TypeChecker<'res> {
     closure_param_types: HashMap<DefId, TypeId>,
     closure_ret_types: HashMap<DefId, TypeId>,
     closure_tail: Option<HirId>,
+    inference_hints: HashMap<DefId, TypeId>,
+
+    allow_defer: bool,
+    defer_infer: bool,
+    open_generics: HashSet<DefId>,
+    next_infer_placeholder: u32,
+    infer_bindings: HashMap<DefId, TypeId>,
+    deferred_locals: Vec<(DefId, TypeId)>,
+    local_type_hints: HashMap<DefId, TypeId>,
+    resolved_local_hints: HashMap<DefId, TypeId>,
 
     interface_registry: InterfaceRegistry,
     interface_methods: HashMap<DefId, Vec<DefId>>,
@@ -228,7 +241,7 @@ fn literal_kind_word(lit: &Literal) -> &'static str {
 
 impl<'res> TypeChecker<'res> {
     pub fn new(
-        resolution: &'res mut ResolutionResult,
+        resolution: &'res ResolutionResult,
         compilation_context: &'res CompilationContext,
         interner: Rc<RefCell<lasso::Rodeo>>,
     ) -> Self {
@@ -249,6 +262,15 @@ impl<'res> TypeChecker<'res> {
             closure_param_types: HashMap::default(),
             closure_ret_types: HashMap::default(),
             closure_tail: None,
+            inference_hints: HashMap::default(),
+            allow_defer: false,
+            defer_infer: false,
+            open_generics: HashSet::default(),
+            next_infer_placeholder: 0,
+            infer_bindings: HashMap::default(),
+            deferred_locals: Vec::new(),
+            local_type_hints: HashMap::default(),
+            resolved_local_hints: HashMap::default(),
             interface_registry,
             interface_methods: HashMap::default(),
             interface_generics: HashMap::default(),
@@ -341,6 +363,25 @@ impl<'res> TypeChecker<'res> {
     // --> Entry Point
 
     pub fn check_module(&mut self, module: &HirModule) {
+        let mut probe = TypeChecker::new(
+            self.resolution,
+            self.compilation_context,
+            Rc::clone(&self.interner),
+        );
+        probe.allow_defer = true;
+        probe.run_passes(module);
+
+        if probe.open_generics.is_empty() {
+            *self = probe;
+            return;
+        }
+
+        self.result.interner = std::mem::take(&mut probe.result.interner);
+        self.local_type_hints = probe.resolved_local_hints;
+        self.run_passes(module);
+    }
+
+    fn run_passes(&mut self, module: &HirModule) {
         // Few words here: we're doing multiple passes here:
         // 0. Register struct generic params (for lower_hir_type_inner)
         // 1. Declare signatures
@@ -441,10 +482,13 @@ impl<'res> TypeChecker<'res> {
 
         self.result.closure_allocs = analyze_closures(module, &self.resolution.closure_captures);
 
+        self.collect_inference_hints(module);
+
         for decl in &module.decls {
             self.check_decl_body(decl);
         }
 
+        self.finalize_local_hints();
         self.finalize_fat_types();
         self.finalize_type_name_usage();
 
@@ -2412,10 +2456,37 @@ impl<'res> TypeChecker<'res> {
                 let declared_ty = declared.map(|(ty, _)| ty);
                 let _declared_const = declared.map(|(_, c)| c).unwrap_or(false);
 
+                let hint_ty = match declared_ty {
+                    Some(_) => None,
+                    None => self.inference_hints.get(def_id).copied(),
+                };
+
+                let local_hint = match (declared_ty, hint_ty) {
+                    (None, None) => self.local_type_hints.get(def_id).copied(),
+                    _ => None,
+                };
+
                 let value_ty = value.as_ref().map(|val| match declared_ty {
                     Some(expected) => self.check_expr(val, expected, true),
-                    None => self.synth_expr(val),
+                    None => match local_hint {
+                        Some(hint) => self.check_expr(val, hint, true),
+                        None => {
+                            let previous = self.defer_infer;
+                            self.defer_infer = self.allow_defer;
+                            let ty = self.synth_expr(val);
+                            self.defer_infer = previous;
+
+                            ty
+                        }
+                    },
                 });
+
+                let value_ty = match (declared_ty, value.as_deref(), value_ty) {
+                    (None, Some(val), Some(ty)) if local_hint.is_none() => {
+                        Some(self.inferred_local_type(*def_id, val, ty))
+                    }
+                    (_, _, ty) => ty,
+                };
 
                 let declared_is_fat_bound =
                     declared_ty.is_some_and(|ty| self.type_contains_fat_bound(ty));
@@ -2429,12 +2500,20 @@ impl<'res> TypeChecker<'res> {
                 let final_ty = match (declared_ty, value_ty) {
                     (Some(_), Some(v)) if declared_is_fat_bound => v,
                     (Some(t), _) => t,
-                    (None, Some(t)) => self.default_literal_with_value(value.as_ref().unwrap(), t),
-                    (None, None) => self.result.interner.error(),
+                    (None, Some(t)) => t,
+                    (None, None) => hint_ty.unwrap_or_else(|| self.result.interner.error()),
                 };
 
                 self.result.def_types.insert(*def_id, final_ty);
                 self.result.expr_types.insert(stmt.id, final_ty);
+
+                if declared_ty.is_none()
+                    && local_hint.is_none()
+                    && value.is_some()
+                    && self.type_mentions_open(final_ty)
+                {
+                    self.deferred_locals.push((*def_id, final_ty));
+                }
 
                 if matches!(self.result.interner.get(final_ty), Type::FatFn { .. })
                     && let Some(v) = value
@@ -2614,6 +2693,461 @@ impl<'res> TypeChecker<'res> {
         self.check_decl_body(decl);
     }
 
+    fn collect_inference_hints(&mut self, module: &HirModule) {
+        let hints = infer_hints::collect(module);
+
+        let previous = self.speculating;
+        self.speculating = true;
+
+        let mut grouped: HashMap<DefId, Vec<TypeId>> = HashMap::default();
+
+        for hint in hints {
+            if self.result.def_types.contains_key(&hint.target) {
+                continue;
+            }
+
+            let ty = match hint.source {
+                infer_hints::HintSource::Literal(kind) => Some(self.literal_hint_type(kind)),
+                infer_hints::HintSource::Annotation(ty) => Some(self.lower_hir_type(&ty)),
+                infer_hints::HintSource::ParamType(def, index) => self.fn_param_hint(def, index),
+            };
+
+            let Some(ty) = ty else {
+                continue;
+            };
+
+            if self.type_contains_generic(ty) || matches!(self.result.interner.get(ty), Type::Error)
+            {
+                continue;
+            }
+
+            grouped.entry(hint.target).or_default().push(ty);
+        }
+
+        let mut ambiguous = Vec::new();
+
+        for (target, types) in grouped {
+            match self.solve_hint_types(&types) {
+                Ok(ty) => {
+                    let ty = self.default_literal(ty);
+                    self.inference_hints.insert(target, ty);
+                }
+
+                Err((first, second)) => {
+                    self.inference_hints
+                        .insert(target, self.result.interner.error());
+                    ambiguous.push((target, first, second));
+                }
+            }
+        }
+
+        self.speculating = previous;
+
+        for (target, first, second) in ambiguous {
+            self.report_ambiguous_inference(target, first, second);
+        }
+    }
+
+    fn solve_hint_types(&mut self, types: &[TypeId]) -> Result<TypeId, (TypeId, TypeId)> {
+        let mut concrete: Vec<TypeId> = Vec::new();
+
+        for &ty in types {
+            if matches!(
+                self.result.interner.get(ty),
+                Type::IntLiteral | Type::FloatLiteral
+            ) {
+                continue;
+            }
+
+            if !concrete.contains(&ty) {
+                concrete.push(ty);
+            }
+        }
+
+        if concrete.is_empty() {
+            let mut literals: Vec<TypeId> = Vec::new();
+
+            for &ty in types {
+                if !literals.contains(&ty) {
+                    literals.push(ty);
+                }
+            }
+
+            return match literals.as_slice() {
+                [only] => Ok(*only),
+                [first, second, ..] => Err((*first, *second)),
+                [] => Ok(self.result.interner.error()),
+            };
+        }
+
+        let first = concrete[0];
+
+        for &ty in &concrete[1..] {
+            if self.types_compatible(first, ty) {
+                continue;
+            }
+
+            return Err((first, ty));
+        }
+
+        Ok(first)
+    }
+
+    fn types_compatible(&mut self, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+
+        try_coerce(&mut self.result.interner, left, right).is_ok()
+            || try_coerce(&mut self.result.interner, right, left).is_ok()
+    }
+
+    fn report_ambiguous_inference(&mut self, target: DefId, first: TypeId, second: TypeId) {
+        let Some(info) = self.resolution.defs.get(&target) else {
+            return;
+        };
+
+        let name: SmolStr = self.interner.borrow().resolve(&info.name).into();
+        let src = info.span.src();
+        let span = info.span.span;
+
+        let first = SmolStr::from(self.display_type(first));
+        let second = SmolStr::from(self.display_type(second));
+
+        self.report(TypeError::AmbiguousInference {
+            name,
+            first,
+            second,
+            src,
+            span,
+        });
+    }
+
+    fn finalize_local_hints(&mut self) {
+        if self.deferred_locals.is_empty() {
+            return;
+        }
+
+        for (def, ty) in std::mem::take(&mut self.deferred_locals) {
+            let resolved = self.resolve_open(ty);
+
+            if self.type_mentions_open(resolved) {
+                continue;
+            }
+
+            self.resolved_local_hints.insert(def, resolved);
+        }
+    }
+
+    fn fresh_placeholder(&mut self) -> TypeId {
+        if !self.defer_infer {
+            return self.result.interner.error();
+        }
+
+        let placeholder = DefId(INFER_PLACEHOLDER_BASE + self.next_infer_placeholder);
+        self.next_infer_placeholder += 1;
+
+        self.open_generics.insert(placeholder);
+
+        self.result.interner.intern(Type::GenericParam(placeholder))
+    }
+
+    fn is_open(&self, generic: DefId) -> bool {
+        self.open_generics.contains(&generic)
+    }
+
+    fn type_mentions_open(&self, ty: TypeId) -> bool {
+        !self.open_generics.is_empty() && self.type_mentions_any(ty, &self.open_generics)
+    }
+
+    fn resolve_open(&mut self, ty: TypeId) -> TypeId {
+        if !self.type_mentions_open(ty) {
+            return ty;
+        }
+
+        let bindings = self.infer_bindings.clone();
+        let substituted = self.substitute_generics(ty, &bindings);
+
+        if substituted == ty {
+            return ty;
+        }
+
+        self.resolve_open(substituted)
+    }
+
+    fn bind_open(&mut self, generic: DefId, ty: TypeId) {
+        let ty = self.resolve_open(ty);
+        let ty = self.default_literal(ty);
+
+        if let Type::GenericParam(inner) = self.result.interner.get(ty)
+            && *inner == generic
+        {
+            return;
+        }
+
+        self.infer_bindings.entry(generic).or_insert(ty);
+    }
+
+    fn unify_open(&mut self, left: TypeId, right: TypeId) -> bool {
+        let left = self.resolve_open(left);
+        let right = self.resolve_open(right);
+
+        if left == right {
+            return true;
+        }
+
+        if let Type::GenericParam(generic) = self.result.interner.get(left).clone()
+            && self.is_open(generic)
+        {
+            self.bind_open(generic, right);
+            return true;
+        }
+
+        if let Type::GenericParam(generic) = self.result.interner.get(right).clone()
+            && self.is_open(generic)
+        {
+            self.bind_open(generic, left);
+            return true;
+        }
+
+        match (
+            self.result.interner.get(left).clone(),
+            self.result.interner.get(right).clone(),
+        ) {
+            (
+                Type::Pointer {
+                    inner: left_inner, ..
+                },
+                Type::Pointer {
+                    inner: right_inner, ..
+                },
+            )
+            | (
+                Type::ManyPointer {
+                    inner: left_inner, ..
+                },
+                Type::ManyPointer {
+                    inner: right_inner, ..
+                },
+            ) => self.unify_open(left_inner, right_inner),
+
+            (
+                Type::Array {
+                    element: left_elem, ..
+                },
+                Type::Array {
+                    element: right_elem,
+                    ..
+                },
+            )
+            | (
+                Type::Slice {
+                    element: left_elem, ..
+                },
+                Type::Slice {
+                    element: right_elem,
+                    ..
+                },
+            )
+            | (
+                Type::Array {
+                    element: left_elem, ..
+                },
+                Type::Slice {
+                    element: right_elem,
+                    ..
+                },
+            )
+            | (
+                Type::Slice {
+                    element: left_elem, ..
+                },
+                Type::Array {
+                    element: right_elem,
+                    ..
+                },
+            ) => self.unify_open(left_elem, right_elem),
+
+            (
+                Type::Struct {
+                    def_id: left_def,
+                    generic_args: left_args,
+                },
+                Type::Struct {
+                    def_id: right_def,
+                    generic_args: right_args,
+                },
+            )
+            | (
+                Type::Enum {
+                    def_id: left_def,
+                    generic_args: left_args,
+                },
+                Type::Enum {
+                    def_id: right_def,
+                    generic_args: right_args,
+                },
+            ) if left_def == right_def && left_args.len() == right_args.len() => left_args
+                .iter()
+                .zip(right_args.iter())
+                .all(|(&left_arg, &right_arg)| self.unify_open(left_arg, right_arg)),
+
+            (
+                Type::Fn {
+                    params: left_params,
+                    ret: left_ret,
+                },
+                Type::Fn {
+                    params: right_params,
+                    ret: right_ret,
+                },
+            )
+            | (
+                Type::FatFn {
+                    params: left_params,
+                    ret: left_ret,
+                    ..
+                },
+                Type::FatFn {
+                    params: right_params,
+                    ret: right_ret,
+                    ..
+                },
+            ) if left_params.len() == right_params.len() => {
+                left_params
+                    .iter()
+                    .zip(right_params.iter())
+                    .all(|(&left_param, &right_param)| self.unify_open(left_param, right_param))
+                    && self.unify_open(left_ret, right_ret)
+            }
+
+            _ => {
+                try_coerce(&mut self.result.interner, left, right).is_ok()
+                    || try_coerce(&mut self.result.interner, right, left).is_ok()
+            }
+        }
+    }
+
+    fn inferred_local_type(&mut self, def_id: DefId, value: &HirExpr, ty: TypeId) -> TypeId {
+        let Some(hint) = self.inference_hints.get(&def_id).copied() else {
+            return self.default_literal_with_value(value, ty);
+        };
+
+        if matches!(self.result.interner.get(hint), Type::Error) {
+            return hint;
+        }
+
+        if !self.literal_hint_matches(ty, hint) && !self.literal_expr_fits(value, hint) {
+            return self.default_literal_with_value(value, ty);
+        }
+
+        self.check_expr(value, hint, true)
+    }
+
+    fn literal_hint_matches(&self, ty: TypeId, hint: TypeId) -> bool {
+        match (self.result.interner.get(ty), self.result.interner.get(hint)) {
+            (Type::IntLiteral, Type::Builtin(hint)) => coerce::builtin_is_integer(*hint),
+            (Type::FloatLiteral, Type::Builtin(hint)) => coerce::builtin_is_float(*hint),
+            (
+                Type::Array { element, len },
+                Type::Array {
+                    element: hint_element,
+                    len: hint_len,
+                },
+            ) => len == hint_len && self.literal_hint_matches(*element, *hint_element),
+            _ => false,
+        }
+    }
+
+    fn literal_expr_fits(&self, value: &HirExpr, hint: TypeId) -> bool {
+        match (&value.kind, self.result.interner.get(hint)) {
+            (HirExprKind::Literal(Literal::Int(_)), Type::Builtin(hint)) => {
+                coerce::builtin_is_integer(*hint)
+            }
+
+            (HirExprKind::Literal(Literal::Float(_)), Type::Builtin(hint)) => {
+                coerce::builtin_is_float(*hint)
+            }
+
+            (
+                HirExprKind::Unary {
+                    expr,
+                    op: UnaryOp::Neg | UnaryOp::BitNot,
+                },
+                _,
+            ) => self.literal_expr_fits(expr, hint),
+
+            (HirExprKind::Binary { lhs, rhs, op }, _) if infer_hints::propagates_expected(*op) => {
+                self.literal_expr_fits(lhs, hint) && self.literal_expr_fits(rhs, hint)
+            }
+
+            (
+                HirExprKind::ArrayInit { elements },
+                Type::Array {
+                    element,
+                    len: Some(len),
+                },
+            ) => {
+                *len == elements.len() as u64
+                    && elements
+                        .iter()
+                        .all(|element_expr| self.literal_expr_fits(element_expr, *element))
+            }
+
+            (HirExprKind::Block { trailing, .. }, _) => trailing
+                .as_deref()
+                .is_some_and(|trailing| self.literal_expr_fits(trailing, hint)),
+
+            (
+                HirExprKind::If {
+                    then_block,
+                    else_block,
+                    ..
+                },
+                _,
+            ) => {
+                let then_fits = self
+                    .stmt_trailing_expr(then_block)
+                    .is_some_and(|expr| self.literal_expr_fits(expr, hint));
+
+                match else_block {
+                    Some(else_block) => {
+                        then_fits
+                            && self
+                                .stmt_trailing_expr(else_block)
+                                .is_some_and(|expr| self.literal_expr_fits(expr, hint))
+                    }
+
+                    None => false,
+                }
+            }
+
+            (HirExprKind::Switch { arms, .. }, _) => arms
+                .iter()
+                .all(|arm| self.literal_expr_fits(&arm.body, hint)),
+
+            _ => false,
+        }
+    }
+
+    fn literal_hint_type(&mut self, kind: infer_hints::LiteralHint) -> TypeId {
+        match kind {
+            infer_hints::LiteralHint::Int => self.result.interner.int_literal(),
+            infer_hints::LiteralHint::Float => self.result.interner.float_literal(),
+            infer_hints::LiteralHint::Char => self.result.interner.builtin(BuiltinType::char),
+            infer_hints::LiteralHint::Bool => self.result.interner.builtin(BuiltinType::bool),
+        }
+    }
+
+    fn fn_param_hint(&mut self, def: DefId, index: usize) -> Option<TypeId> {
+        let ty = *self.result.def_types.get(&def)?;
+
+        match self.result.interner.get(ty).clone() {
+            Type::Fn { params, .. } => params.get(index).copied(),
+            _ => None,
+        }
+    }
+
     fn check_closure(
         &mut self,
         def_id: DefId,
@@ -2652,11 +3186,19 @@ impl<'res> TypeChecker<'res> {
                     Some(Some(ty)) => ty,
                     Some(None) => self.result.interner.error(),
                     None => {
-                        self.report(TypeError::ClosureParamTypeNeeded {
-                            src: source.src(),
-                            span: param.span,
-                        });
-                        self.result.interner.error()
+                        match param
+                            .def_id
+                            .and_then(|def| self.inference_hints.get(&def).copied())
+                        {
+                            Some(ty) => ty,
+                            None => {
+                                self.report(TypeError::ClosureParamTypeNeeded {
+                                    src: source.src(),
+                                    span: param.span,
+                                });
+                                self.result.interner.error()
+                            }
+                        }
                     }
                 }
             } else {
@@ -3320,6 +3862,7 @@ impl<'res> TypeChecker<'res> {
                         .insert(expr.id, (*def_id, expr.source.clone()));
                 }
                 let ty = self.lookup_def_type(*def_id, expr.source.clone());
+                let ty = self.resolve_open(ty);
                 if matches!(self.result.interner.get(ty), Type::FatFn { .. }) {
                     self.result.fat_value_defs.insert(expr.id, *def_id);
                 }
@@ -4892,7 +5435,7 @@ impl<'res> TypeChecker<'res> {
                     span: init_source.span,
                 });
 
-                bindings.insert(*g, self.result.interner.error());
+                bindings.insert(*g, self.fresh_placeholder());
             }
         }
 
@@ -5176,6 +5719,17 @@ impl<'res> TypeChecker<'res> {
     ) -> TypeId {
         let source = expr.source.clone();
         let id = expr.id;
+
+        let expected = self.resolve_open(expected);
+
+        if self.type_mentions_open(actual) || self.type_mentions_open(expected) {
+            let actual = self.resolve_open(actual);
+
+            if self.unify_open(actual, expected) {
+                self.result.record_expr_type(id, expected);
+                return expected;
+            }
+        }
 
         if let HirExprKind::Literal(Literal::Int(n)) = &expr.kind
             && let Type::Builtin(b) = self.result.interner.get(expected).clone()
@@ -6141,7 +6695,7 @@ impl<'res> TypeChecker<'res> {
                     span: source.span,
                 });
 
-                bindings.insert(*g, self.result.interner.error());
+                bindings.insert(*g, self.fresh_placeholder());
             }
         }
 
@@ -7131,7 +7685,7 @@ impl<'res> TypeChecker<'res> {
                     span: source.span,
                 });
 
-                bindings.insert(*g, self.result.interner.error());
+                bindings.insert(*g, self.fresh_placeholder());
             }
         }
 
@@ -7148,7 +7702,7 @@ impl<'res> TypeChecker<'res> {
                         span: source.span,
                     });
 
-                    bindings.insert(*g, self.result.interner.error());
+                    bindings.insert(*g, self.fresh_placeholder());
                 }
             }
         }
@@ -7372,7 +7926,7 @@ impl<'res> TypeChecker<'res> {
                             span: field_span,
                         });
 
-                        generic_args.push(self.result.interner.error());
+                        generic_args.push(self.fresh_placeholder());
                     }
                 }
             }
@@ -7577,7 +8131,7 @@ impl<'res> TypeChecker<'res> {
                         span: source.span,
                     });
 
-                    bindings.insert(*g, self.result.interner.error());
+                    bindings.insert(*g, self.fresh_placeholder());
                 }
             }
 
@@ -7858,7 +8412,7 @@ impl<'res> TypeChecker<'res> {
                     span: init_source.span,
                 });
 
-                bindings.insert(*g, self.result.interner.error());
+                bindings.insert(*g, self.fresh_placeholder());
             }
         }
 
@@ -8138,7 +8692,7 @@ impl<'res> TypeChecker<'res> {
                     span: source.span,
                 });
 
-                bindings.insert(*g, self.result.interner.error());
+                bindings.insert(*g, self.fresh_placeholder());
             }
         }
 
@@ -8193,7 +8747,19 @@ impl<'res> TypeChecker<'res> {
                     span: source.span,
                 });
 
-                bindings.insert(*g, self.result.interner.error());
+                bindings.insert(*g, self.fresh_placeholder());
+            }
+        }
+
+        if let Some(entry) = self.method_impl_entry(struct_def, method_def_id) {
+            for (imp_g, struct_g) in &entry.generic_bindings {
+                if let Some(&concrete) = bindings.get(imp_g) {
+                    bindings.entry(*struct_g).or_insert(concrete);
+                }
+
+                if let Some(&concrete) = bindings.get(struct_g) {
+                    bindings.entry(*imp_g).or_insert(concrete);
+                }
             }
         }
 
@@ -8344,11 +8910,20 @@ impl<'res> TypeChecker<'res> {
         expected: TypeId,
         bindings: &mut HashMap<DefId, TypeId>,
     ) {
+        let expected = self.resolve_open(expected);
+
         match (
             self.result.interner.get(pattern).clone(),
             self.result.interner.get(expected).clone(),
         ) {
             (Type::GenericParam(g), Type::GenericParam(e)) if g == e => {}
+
+            (Type::GenericParam(g), _) if self.is_open(g) => {
+                self.bind_open(g, expected);
+                bindings
+                    .entry(g)
+                    .or_insert_with(|| self.resolve_open(expected));
+            }
 
             (Type::GenericParam(g), _) => {
                 bindings.entry(g).or_insert(expected);
@@ -8457,6 +9032,12 @@ impl<'res> TypeChecker<'res> {
             self.unify_for_inference(param_ty, arg_ty, bindings, source);
 
             let substituted = self.substitute_generics(param_ty, bindings);
+            let substituted = self.resolve_open(substituted);
+
+            if self.type_mentions_open(substituted) {
+                return;
+            }
+
             match try_coerce(&mut self.result.interner, arg_ty, substituted) {
                 CoerceResult::ArrayToSlice
                     if !matches!(&arg.kind, HirExprKind::Literal(Literal::String(_))) =>
@@ -8490,6 +9071,10 @@ impl<'res> TypeChecker<'res> {
         self.collect_unresolved_generics(ty, bindings, &mut unresolved);
 
         for g in unresolved {
+            if self.is_open(g) {
+                continue;
+            }
+
             bindings.insert(g, self.result.interner.error());
         }
     }
@@ -8641,25 +9226,54 @@ impl<'res> TypeChecker<'res> {
             self.result.interner.get(param_ty).clone(),
             self.result.interner.get(arg_ty).clone(),
         ) {
-            (Type::GenericParam(g), _) => match bindings.get(&g) {
-                Some(&existing)
-                    if existing != arg_ty
-                        && !try_coerce(&mut self.result.interner, arg_ty, existing).is_ok() =>
-                {
-                    self.report(TypeError::GenericConflict {
-                        param: self.display_type(param_ty).into(),
-                        first: self.display_type(existing).into(),
-                        second: self.display_type(arg_ty).into(),
-                        src: source.src(),
-                        span: source.span,
-                    });
-                }
+            (Type::GenericParam(g), _) if self.is_open(g) => {
+                let arg_ty = self.resolve_open(arg_ty);
 
-                Some(_) => {}
-                None => {
+                self.bind_open(g, arg_ty);
+
+                let replace = match bindings.get(&g) {
+                    None => true,
+                    Some(&existing) => {
+                        let existing = self.resolve_open(existing);
+
+                        self.type_mentions_open(existing)
+                            || matches!(self.result.interner.get(existing), Type::GenericParam(inner) if *inner == g)
+                    }
+                };
+
+                if replace {
                     bindings.insert(g, arg_ty);
                 }
-            },
+            }
+
+            (Type::GenericParam(g), _) => {
+                let arg_ty = self.resolve_open(arg_ty);
+
+                match bindings.get(&g).copied() {
+                    Some(existing) => {
+                        let existing = self.resolve_open(existing);
+
+                        if self.type_mentions_open(existing) {
+                            self.unify_open(existing, arg_ty);
+                            bindings.insert(g, self.resolve_open(existing));
+                        } else if existing != arg_ty
+                            && !try_coerce(&mut self.result.interner, arg_ty, existing).is_ok()
+                        {
+                            self.report(TypeError::GenericConflict {
+                                param: self.display_type(param_ty).into(),
+                                first: self.display_type(existing).into(),
+                                second: self.display_type(arg_ty).into(),
+                                src: source.src(),
+                                span: source.span,
+                            });
+                        }
+                    }
+
+                    None => {
+                        bindings.insert(g, arg_ty);
+                    }
+                }
+            }
 
             (Type::Pointer { inner: pinner, .. }, Type::Pointer { inner: ainner, .. })
             | (Type::ManyPointer { inner: pinner, .. }, Type::ManyPointer { inner: ainner, .. }) => {
@@ -12706,6 +13320,7 @@ mod tests {
     use zeen_resolve::{DefId, resolve};
 
     use crate::{TypeCheckResult, TypeChecker, TypeError};
+    use zeen_ast::types::BuiltinType;
     use zeen_types::TypeId;
 
     const CORE_OPS: &str = include_str!("../../../lib/core/ops.zn");
@@ -12799,7 +13414,7 @@ mod tests {
         );
         let program = parser.parse_program().expect("parser returned errors");
 
-        let (resolved_program, mut resolution_result) = resolve(
+        let (resolved_program, resolution_result) = resolve(
             Rc::clone(&filename),
             Arc::clone(&content),
             Path::new("test.zn"),
@@ -12813,7 +13428,7 @@ mod tests {
         let mut hir_lowering = HirLowering::new(&resolution_result, Rc::clone(&rodeo));
         let hir_module = hir_lowering.lower_module(resolved_program);
 
-        let mut typechecker = TypeChecker::new(&mut resolution_result, &context, Rc::clone(&rodeo));
+        let mut typechecker = TypeChecker::new(&resolution_result, &context, Rc::clone(&rodeo));
         typechecker.check_module(&hir_module);
         typechecker.finish()
     }
@@ -14878,6 +15493,23 @@ mod tests {
             .find(|&ty| matches!(result.interner.get(ty), Type::FatFn { erased: false, .. }))
     }
 
+    fn closure_sig_matches(result: &TypeCheckResult, param: BuiltinType, ret: BuiltinType) -> bool {
+        result
+            .def_types
+            .values()
+            .any(|&ty| match result.interner.get(ty) {
+                Type::Fn {
+                    params,
+                    ret: ret_ty,
+                } => {
+                    params.len() == 1
+                        && matches!(result.interner.get(params[0]), Type::Builtin(b) if *b == param)
+                        && matches!(result.interner.get(*ret_ty), Type::Builtin(b) if *b == ret)
+                }
+                _ => false,
+            })
+    }
+
     #[test]
     fn zero_capture_closure_types_as_fn() {
         let result = typecheck_full("fn main() { let c = |x: i32| -> i32 { return x + 1; }; }")
@@ -15104,6 +15736,69 @@ mod tests {
                 .iter()
                 .any(|err| matches!(err, TypeError::ClosureParamTypeNeeded { .. })),
             "expected TypeError::ClosureParamTypeNeeded, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn closure_param_inferred_from_literal_operand() {
+        let result = typecheck_full(
+            r#"
+            fn main() {
+                let f = |x| x * 2;
+                let y = f(3);
+            }
+            "#,
+        )
+        .expect("a literal operand must infer the closure parameter");
+
+        assert!(
+            closure_sig_matches(&result, BuiltinType::i32, BuiltinType::i32),
+            "expected `fn(i32) i32` for the closure, got: {:?}",
+            result
+                .def_types
+                .values()
+                .map(|&ty| result.interner.get(ty))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn closure_param_inferred_from_call_argument() {
+        let result = typecheck_full(
+            r#"
+            fn take(v: u8) u8 {
+                return v;
+            }
+
+            fn main() {
+                let f = |x| take(x);
+                let y = f(3);
+            }
+            "#,
+        )
+        .expect("an argument position must infer the closure parameter");
+
+        assert!(
+            closure_sig_matches(&result, BuiltinType::u8, BuiltinType::u8),
+            "expected `fn(u8) u8` for the closure"
+        );
+    }
+
+    #[test]
+    fn closure_param_expected_type_wins_over_body_hint() {
+        let result = typecheck_full(
+            r#"
+            fn main() {
+                let f: Fn(u8) u8 = |x| x * 2;
+                let y = f(3);
+            }
+            "#,
+        )
+        .expect("an expected closure type must win over the body hint");
+
+        assert!(
+            closure_sig_matches(&result, BuiltinType::u8, BuiltinType::u8),
+            "expected `Fn(u8) u8` for the closure"
         );
     }
 
@@ -18562,5 +19257,560 @@ mod tests {
             "#,
         )
         .expect("concrete implementation must be preferred over generic one");
+    }
+
+    #[test]
+    fn local_infers_type_from_later_annotation() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                let byte: u8 = value;
+                let other: u8 = value;
+            }
+            "#,
+        )
+        .expect("a later annotated use must infer the local type");
+    }
+
+    #[test]
+    fn local_infers_type_from_call_argument() {
+        typecheck_full(
+            r#"
+            fn take(v: u8) u8 {
+                return v;
+            }
+
+            fn main() {
+                let n = 5;
+                let out = take(n);
+            }
+            "#,
+        )
+        .expect("an argument position must infer the local type");
+    }
+
+    #[test]
+    fn local_infers_type_from_return_annotation() {
+        typecheck_full(
+            r#"
+            fn small() u8 {
+                let n = 1;
+                return n;
+            }
+
+            fn main() {
+                let byte = small();
+            }
+            "#,
+        )
+        .expect("a return position must infer the local type");
+    }
+
+    #[test]
+    fn local_keeps_its_own_type_over_literal_operand() {
+        typecheck_full(
+            r#"
+            fn tail(size: usize) usize {
+                let end = size - 1;
+                return end;
+            }
+
+            fn main() {
+                let value = tail(3);
+            }
+            "#,
+        )
+        .expect("a literal operand must not retype a local");
+    }
+
+    #[test]
+    fn local_annotation_hint_wins_over_literal_assignment() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                value = 2;
+                let byte: u8 = value;
+            }
+            "#,
+        )
+        .expect("an annotated use must win over a literal assignment");
+    }
+
+    #[test]
+    fn local_hinted_literal_is_range_checked() {
+        let errors = typecheck_full(
+            r#"
+            fn main() {
+                let value = 300;
+                let byte: u8 = value;
+            }
+            "#,
+        )
+        .expect_err("a hinted literal must respect the target range");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| matches!(error, TypeError::IntLiteralOutOfRange { .. })),
+            "expected an out of range diagnostic, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn local_without_hint_keeps_the_literal_default() {
+        let result = typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                let doubled = value * 2;
+            }
+            "#,
+        )
+        .expect("an unconstrained literal keeps its default");
+
+        assert!(
+            result
+                .def_types
+                .values()
+                .any(|&ty| matches!(result.interner.get(ty), Type::Builtin(BuiltinType::i32))),
+            "expected an i32 binding"
+        );
+    }
+
+    #[test]
+    fn local_infers_through_binary_expression() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                let wide: i64 = value + 2;
+                let other: i64 = value * 3;
+            }
+            "#,
+        )
+        .expect("an arithmetic annotation must reach its operands");
+    }
+
+    #[test]
+    fn local_infers_through_array_literal() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let items = {1, 2};
+                let packed: [2]u8 = items;
+            }
+            "#,
+        )
+        .expect("an array annotation must reach a literal array");
+    }
+
+    #[test]
+    fn local_infers_through_nested_array_literal() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let grid = {{1, 2}, {3, 4}};
+                let packed: [2][2]u8 = grid;
+            }
+            "#,
+        )
+        .expect("a nested array annotation must reach the inner arrays");
+    }
+
+    #[test]
+    fn local_infers_through_if_branches() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let value = 3;
+                let picked: u32 = if (true) { value } else { 4 };
+            }
+            "#,
+        )
+        .expect("an annotation must reach both if branches");
+    }
+
+    #[test]
+    fn local_infers_through_return_expression() {
+        typecheck_full(
+            r#"
+            fn small() u8 {
+                let value = 1;
+                return value + 1;
+            }
+
+            fn main() {
+                let byte = small();
+            }
+            "#,
+        )
+        .expect("a return annotation must reach the operands");
+    }
+
+    #[test]
+    fn array_hint_requires_matching_length() {
+        let errors = typecheck_full(
+            r#"
+            fn main() {
+                let items = {1, 2};
+                let packed: [3]u8 = items;
+            }
+            "#,
+        )
+        .expect_err("a length mismatch must not retype the array");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| matches!(error, TypeError::Mismatch { .. })),
+            "expected a mismatch diagnostic, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn closure_param_infers_from_annotated_operand() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let base: u8 = 3;
+                let shifted = |x| x + base;
+
+                let result = shifted(4);
+            }
+            "#,
+        )
+        .expect("an annotated operand must infer the closure parameter");
+    }
+
+    #[test]
+    fn closure_param_infers_from_fn_param_operand() {
+        typecheck_full(
+            r#"
+            fn scale(factor: u8) u8 {
+                let apply = |value| value * factor;
+
+                return apply(2);
+            }
+
+            fn main() {
+                let result = scale(4);
+            }
+            "#,
+        )
+        .expect("a typed function parameter must infer the closure parameter");
+    }
+
+    #[test]
+    fn closure_param_infers_from_annotated_comparison_operand() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let limit: i64 = 10;
+                let over = |value| value > limit;
+
+                let result = over(11);
+            }
+            "#,
+        )
+        .expect("a comparison operand must infer the closure parameter");
+    }
+
+    #[test]
+    fn local_infers_from_annotated_operand() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let base: u8 = 3;
+                let offset = 2;
+                let total = offset + base;
+            }
+            "#,
+        )
+        .expect("an annotated operand must infer a literal local");
+    }
+
+    const CELL_SOURCE: &str = r#"
+        struct Cell[T] {
+            ptr: *T,
+        }
+
+        implement[T] Cell[T] {
+            pub fn empty() Self {
+                return Self { .ptr = @as(*T, nullptr) };
+            }
+
+            pub fn store(*self, value: T) {
+                *self.ptr = value;
+            }
+
+            pub fn read(*const self) T {
+                return *self.ptr;
+            }
+        }
+    "#;
+
+    #[test]
+    fn local_generic_infers_from_method_argument() {
+        typecheck_full(&format!(
+            r#"
+            {CELL_SOURCE}
+
+            fn main() {{
+                let cell = Cell.empty();
+                cell.store(7);
+            }}
+            "#
+        ))
+        .expect("a later method argument must infer the generic local type");
+    }
+
+    #[test]
+    fn local_generic_infers_from_annotated_read() {
+        typecheck_full(&format!(
+            r#"
+            {CELL_SOURCE}
+
+            fn main() {{
+                let cell = Cell.empty();
+                let value: i32 = cell.read();
+            }}
+            "#
+        ))
+        .expect("an annotated read must infer the generic local type");
+    }
+
+    #[test]
+    fn local_generic_without_usage_reports_cannot_infer() {
+        let errors = typecheck_full(&format!(
+            r#"
+            {CELL_SOURCE}
+
+            fn main() {{
+                let cell = Cell.empty();
+            }}
+            "#
+        ))
+        .expect_err("an unused generic local without a hint must be rejected");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| matches!(error, TypeError::CannotInferGeneric { .. })),
+            "expected TypeError::CannotInferGeneric, got: {errors:?}"
+        );
+    }
+    #[test]
+    fn conflicting_annotations_report_ambiguity() {
+        let errors = typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                let byte: u8 = value;
+                let size: usize = value;
+            }
+            "#,
+        )
+        .expect_err("two different annotations must report ambiguity");
+
+        assert_eq!(
+            errors.len(),
+            1,
+            "expected a single diagnostic, got: {errors:?}"
+        );
+
+        assert!(
+            matches!(
+                &errors[0],
+                TypeError::AmbiguousInference { name, .. } if name.as_str() == "value"
+            ),
+            "expected TypeError::AmbiguousInference for `value`, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn conflicting_param_types_report_ambiguity() {
+        let errors = typecheck_full(
+            r#"
+            fn take_byte(value: u8) {}
+
+            fn take_size(value: usize) {}
+
+            fn main() {
+                let value = 1;
+                take_byte(value);
+                take_size(value);
+            }
+            "#,
+        )
+        .expect_err("different parameter types must report ambiguity");
+
+        assert!(
+            matches!(
+                errors.as_slice(),
+                [TypeError::AmbiguousInference { name, .. }] if name.as_str() == "value"
+            ),
+            "expected TypeError::AmbiguousInference for `value`, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn conflicting_closure_param_hints_report_ambiguity() {
+        let errors = typecheck_full(
+            r#"
+            fn main() {
+                let first: u8 = 1;
+                let second: usize = 2;
+                let pick = |x| x * first + x * second;
+                let result = pick(3);
+            }
+            "#,
+        )
+        .expect_err("different operand types must report ambiguity");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| matches!(error, TypeError::AmbiguousInference { .. })),
+            "expected TypeError::AmbiguousInference, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn matching_annotations_do_not_report_ambiguity() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                let first: u8 = value;
+                let second: u8 = value;
+            }
+            "#,
+        )
+        .expect("matching annotations must infer a single type");
+    }
+
+    #[test]
+    fn literal_hint_does_not_conflict_with_annotation() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                let byte: u8 = value;
+                let total = value + 2;
+            }
+            "#,
+        )
+        .expect("a literal hint must adapt to an annotation");
+    }
+
+    const SLOT_SOURCE: &str = r#"
+        struct Slot[T] {
+            value: T,
+        }
+
+        implement[T] Slot[T] {
+            pub fn empty() Self {
+                return Self { .value = @uninit() };
+            }
+
+            pub fn set(*self, value: T) {
+                self.value = value;
+            }
+
+            pub fn get(*const self) T {
+                return self.value;
+            }
+        }
+    "#;
+
+    #[test]
+    fn generic_locals_infer_independently() {
+        typecheck_full(&format!(
+            r#"
+            {SLOT_SOURCE}
+
+            fn main() {{
+                let first = Slot.empty();
+                let second = Slot.empty();
+
+                first.set(1);
+                second.set(2.5);
+            }}
+            "#
+        ))
+        .expect("each generic local must keep its own inferred type");
+    }
+
+    #[test]
+    fn generic_local_infers_through_generic_call() {
+        typecheck_full(&format!(
+            r#"
+            {SLOT_SOURCE}
+
+            fn id[T](value: T) T {{
+                return value;
+            }}
+
+            fn main() {{
+                let source = Slot.empty();
+                let copy = id(source);
+
+                copy.set(41);
+            }}
+            "#
+        ))
+        .expect("a generic call must keep the argument local open");
+    }
+
+    #[test]
+    fn generic_call_keeps_locals_independent() {
+        typecheck_full(&format!(
+            r#"
+            {SLOT_SOURCE}
+
+            fn id[T](value: T) T {{
+                return value;
+            }}
+
+            fn main() {{
+                let first = Slot.empty();
+                let second = Slot.empty();
+                let copy = id(first);
+
+                copy.set(41);
+                second.set(2.5);
+            }}
+            "#
+        ))
+        .expect("a generic call must not merge the inferred types of two locals");
+    }
+
+    #[test]
+    fn generic_local_does_not_leak_into_other_bodies() {
+        typecheck_full(&format!(
+            r#"
+            {SLOT_SOURCE}
+
+            fn fill[T](source: Slot[T]) Slot[T] {{
+                let target = Slot.empty();
+
+                target.set(source.get());
+
+                return target;
+            }}
+
+            fn main() {{
+                let source = Slot.empty();
+
+                source.set(41);
+
+                let copy = fill(source);
+                let value: i32 = copy.get();
+            }}
+            "#
+        ))
+        .expect("a generic local must not bind the generic params of another body");
     }
 }

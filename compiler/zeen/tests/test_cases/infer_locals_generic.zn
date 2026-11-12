@@ -1,0 +1,43 @@
+struct Slot[T] {
+  value: T,
+}
+
+implement[T] Slot[T] {
+  pub fn empty() Self {
+    return Self { .value = @uninit() };
+  }
+
+  pub fn set(*self, value: T) {
+    self.value = value;
+  }
+
+  pub fn get(*const self) T {
+    return self.value;
+  }
+}
+
+fn fill[T](source: Slot[T]) Slot[T] {
+  let target = Slot.empty();
+
+  target.set(source.get());
+
+  return target;
+}
+
+fn main() {
+  let first = Slot.empty();
+  let second = Slot.empty();
+
+  first.set(1);
+  second.set(2.5);
+
+  @println("{} {:.1}", first.get(), second.get());
+
+  let source = Slot.empty();
+
+  source.set(41);
+
+  const copy = fill(source);
+
+  @println("{}", copy.get());
+}

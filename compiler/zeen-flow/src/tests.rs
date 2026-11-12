@@ -73,7 +73,7 @@ fn flow_diagnostics(src: &str) -> Vec<FlowError> {
         .map_err(|errs| errs.iter().map(|e| e.to_string()).collect::<Vec<_>>())
         .expect("parse must succeed");
 
-    let (resolved_program, mut resolution_result) = zeen_resolve::resolve(
+    let (resolved_program, resolution_result) = zeen_resolve::resolve(
         Rc::clone(&filename),
         Arc::clone(&content),
         Path::new("/test.zn"),
@@ -89,7 +89,7 @@ fn flow_diagnostics(src: &str) -> Vec<FlowError> {
     let hir_module = hir_lowering.lower_module(resolved_program);
 
     let mut typechecker =
-        zeen_typecheck::TypeChecker::new(&mut resolution_result, &context, Rc::clone(&rodeo));
+        zeen_typecheck::TypeChecker::new(&resolution_result, &context, Rc::clone(&rodeo));
     typechecker.check_module(&hir_module);
 
     let mut typecheck = typechecker
