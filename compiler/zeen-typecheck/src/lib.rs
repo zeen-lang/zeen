@@ -54,6 +54,8 @@ pub mod result;
 pub const DEFAULT_INT_LITERAL: BuiltinType = BuiltinType::i32;
 pub const DEFAULT_FLOAT_LITERAL: BuiltinType = BuiltinType::f64;
 
+const INFER_PLACEHOLDER_BASE: u32 = 0xF200_0000;
+
 pub struct TypeChecker<'res> {
     resolution: &'res ResolutionResult,
     compilation_context: &'res CompilationContext,
@@ -78,6 +80,7 @@ pub struct TypeChecker<'res> {
     allow_defer: bool,
     defer_infer: bool,
     open_generics: HashSet<DefId>,
+    next_infer_placeholder: u32,
     infer_bindings: HashMap<DefId, TypeId>,
     deferred_locals: Vec<(DefId, TypeId)>,
     local_type_hints: HashMap<DefId, TypeId>,
@@ -263,6 +266,7 @@ impl<'res> TypeChecker<'res> {
             allow_defer: false,
             defer_infer: false,
             open_generics: HashSet::default(),
+            next_infer_placeholder: 0,
             infer_bindings: HashMap::default(),
             deferred_locals: Vec::new(),
             local_type_hints: HashMap::default(),
@@ -2835,14 +2839,17 @@ impl<'res> TypeChecker<'res> {
         }
     }
 
-    fn generic_placeholder(&mut self, generic: DefId) -> TypeId {
+    fn fresh_placeholder(&mut self) -> TypeId {
         if !self.defer_infer {
             return self.result.interner.error();
         }
 
-        self.open_generics.insert(generic);
+        let placeholder = DefId(INFER_PLACEHOLDER_BASE + self.next_infer_placeholder);
+        self.next_infer_placeholder += 1;
 
-        self.result.interner.intern(Type::GenericParam(generic))
+        self.open_generics.insert(placeholder);
+
+        self.result.interner.intern(Type::GenericParam(placeholder))
     }
 
     fn is_open(&self, generic: DefId) -> bool {
@@ -5428,7 +5435,7 @@ impl<'res> TypeChecker<'res> {
                     span: init_source.span,
                 });
 
-                bindings.insert(*g, self.generic_placeholder(*g));
+                bindings.insert(*g, self.fresh_placeholder());
             }
         }
 
@@ -6688,7 +6695,7 @@ impl<'res> TypeChecker<'res> {
                     span: source.span,
                 });
 
-                bindings.insert(*g, self.generic_placeholder(*g));
+                bindings.insert(*g, self.fresh_placeholder());
             }
         }
 
@@ -7678,7 +7685,7 @@ impl<'res> TypeChecker<'res> {
                     span: source.span,
                 });
 
-                bindings.insert(*g, self.generic_placeholder(*g));
+                bindings.insert(*g, self.fresh_placeholder());
             }
         }
 
@@ -7695,7 +7702,7 @@ impl<'res> TypeChecker<'res> {
                         span: source.span,
                     });
 
-                    bindings.insert(*g, self.generic_placeholder(*g));
+                    bindings.insert(*g, self.fresh_placeholder());
                 }
             }
         }
@@ -7919,7 +7926,7 @@ impl<'res> TypeChecker<'res> {
                             span: field_span,
                         });
 
-                        generic_args.push(self.generic_placeholder(*g));
+                        generic_args.push(self.fresh_placeholder());
                     }
                 }
             }
@@ -8124,7 +8131,7 @@ impl<'res> TypeChecker<'res> {
                         span: source.span,
                     });
 
-                    bindings.insert(*g, self.generic_placeholder(*g));
+                    bindings.insert(*g, self.fresh_placeholder());
                 }
             }
 
@@ -8405,7 +8412,7 @@ impl<'res> TypeChecker<'res> {
                     span: init_source.span,
                 });
 
-                bindings.insert(*g, self.generic_placeholder(*g));
+                bindings.insert(*g, self.fresh_placeholder());
             }
         }
 
@@ -8685,7 +8692,7 @@ impl<'res> TypeChecker<'res> {
                     span: source.span,
                 });
 
-                bindings.insert(*g, self.generic_placeholder(*g));
+                bindings.insert(*g, self.fresh_placeholder());
             }
         }
 
@@ -8740,7 +8747,7 @@ impl<'res> TypeChecker<'res> {
                     span: source.span,
                 });
 
-                bindings.insert(*g, self.generic_placeholder(*g));
+                bindings.insert(*g, self.fresh_placeholder());
             }
         }
 
