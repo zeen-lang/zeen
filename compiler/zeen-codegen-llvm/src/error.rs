@@ -4,23 +4,32 @@ use thiserror::Error;
 #[derive(Debug, Error, Diagnostic)]
 pub enum CodegenError {
     #[error("unsupported target triple `{triple}`: {detail}")]
-    #[diagnostic(code(zeen::codegen::unsupported_triple))]
+    #[diagnostic(
+        code(zeen::codegen::unsupported_triple),
+        url("https://zeen-lang.tech/diagnostics/#zeen-codegen-unsupported_triple")
+    )]
     UnsupportedTriple { triple: String, detail: String },
 
     #[error("LLVM failed to verify the generated module `{module}`")]
     #[diagnostic(
         code(zeen::codegen::verify_failed),
-        url("https://github.com/zeen-lang/zeen/issues/new"),
+        url("https://zeen-lang.tech/diagnostics/#zeen-codegen-verify_failed"),
         help("This is a compiler bug. Please report it with the full output.")
     )]
     ModuleVerificationFailed { module: String, detail: String },
 
     #[error("LLVM pass pipeline failed: {detail}")]
-    #[diagnostic(code(zeen::codegen::pass_pipeline_failed))]
+    #[diagnostic(
+        code(zeen::codegen::pass_pipeline_failed),
+        url("https://zeen-lang.tech/diagnostics/#zeen-codegen-pass_pipeline_failed")
+    )]
     PassPipelineFailed { detail: String },
 
     #[error("failed to write {kind} output to `{path}`: {detail}")]
-    #[diagnostic(code(zeen::codegen::emit_failed))]
+    #[diagnostic(
+        code(zeen::codegen::emit_failed),
+        url("https://zeen-lang.tech/diagnostics/#zeen-codegen-emit_failed")
+    )]
     EmitFailed {
         kind: &'static str,
         path: String,

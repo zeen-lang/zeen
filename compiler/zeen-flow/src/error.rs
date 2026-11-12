@@ -10,6 +10,7 @@ pub enum FlowError {
     #[diagnostic(
         severity(Error),
         code(zeen::dataflow::use_of_uninitialized),
+        url("https://zeen-lang.tech/diagnostics/#zeen-dataflow-use_of_uninitialized"),
         help("initialize `{name}` before using it")
     )]
     UseOfUninitialized {
@@ -25,6 +26,7 @@ pub enum FlowError {
     #[diagnostic(
         severity(Error),
         code(zeen::dataflow::use_after_move),
+        url("https://zeen-lang.tech/diagnostics/#zeen-dataflow-use_after_move"),
         help("value `{name}` was moved out, borrow or clone it instead")
     )]
     UseAfterMove {
@@ -40,6 +42,7 @@ pub enum FlowError {
     #[diagnostic(
         severity(Error),
         code(zeen::dataflow::move_out_of_drop),
+        url("https://zeen-lang.tech/diagnostics/#zeen-dataflow-move_out_of_drop"),
         help(
             "structs implementing `Drop` cannot be partially moved, drop would be called on a partial value"
         )
@@ -57,6 +60,7 @@ pub enum FlowError {
     #[diagnostic(
         severity(Error),
         code(zeen::dataflow::use_of_partially_moved),
+        url("https://zeen-lang.tech/diagnostics/#zeen-dataflow-use_of_partially_moved"),
         help("reinitialize all moved fields before using the struct as a whole")
     )]
     UseOfPartiallyMoved {
@@ -72,6 +76,7 @@ pub enum FlowError {
     #[diagnostic(
         severity(Error),
         code(zeen::dataflow::maybe_uninitialized_drop),
+        url("https://zeen-lang.tech/diagnostics/#zeen-dataflow-maybe_uninitialized_drop"),
         help("ensure every path initializes `{name}` before the scope ends")
     )]
     MaybeUninitializedDrop {
@@ -89,6 +94,7 @@ pub enum FlowError {
     #[diagnostic(
         severity(Error),
         code(zeen::dataflow::escaping_borrow),
+        url("https://zeen-lang.tech/diagnostics/#zeen-dataflow-escaping_borrow"),
         help(
             "the slice/pointer points into this function's stack frame; `{name}` is dead by the time the caller uses the value"
         )
@@ -106,6 +112,7 @@ pub enum FlowError {
     #[diagnostic(
         severity(Warning),
         code(zeen::dataflow::unused_variable),
+        url("https://zeen-lang.tech/diagnostics/#zeen-dataflow-unused_variable"),
         help("consider removing it, or prefixing the name with `_`")
     )]
     UnusedVariable {
@@ -121,6 +128,7 @@ pub enum FlowError {
     #[diagnostic(
         severity(Error),
         code(zeen::dataflow::aliased_drop),
+        url("https://zeen-lang.tech/diagnostics/#zeen-dataflow-aliased_drop"),
         help("clone the value, borrow it, or free the source storage first")
     )]
     AliasedDrop {
@@ -133,7 +141,11 @@ pub enum FlowError {
     },
 
     #[error("unused function `{name}`")]
-    #[diagnostic(severity(Warning), code(zeen::dataflow::unused_fn))]
+    #[diagnostic(
+        severity(Warning),
+        code(zeen::dataflow::unused_fn),
+        url("https://zeen-lang.tech/diagnostics/#zeen-dataflow-unused_fn")
+    )]
     UnusedFunction {
         name: SmolStr,
 
@@ -147,6 +159,7 @@ pub enum FlowError {
     #[diagnostic(
         severity(Warning),
         code(zeen::dataflow::unreachable_code),
+        url("https://zeen-lang.tech/diagnostics/#zeen-dataflow-unreachable_code"),
         help("statements here can never run, execution reached a terminator before them")
     )]
     UnreachableCode {
@@ -160,6 +173,7 @@ pub enum FlowError {
     #[diagnostic(
         severity(Warning),
         code(zeen::dataflow::unused_const),
+        url("https://zeen-lang.tech/diagnostics/#zeen-dataflow-unused_const"),
         help("consider removing it, or marking it `pub`")
     )]
     UnusedConst {
@@ -175,6 +189,7 @@ pub enum FlowError {
     #[diagnostic(
         severity(Warning),
         code(zeen::dataflow::unused_mut),
+        url("https://zeen-lang.tech/diagnostics/#zeen-dataflow-unused_mut"),
         help("declare it with `const` instead of `let`")
     )]
     UnusedMut {

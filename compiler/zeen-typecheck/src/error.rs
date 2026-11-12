@@ -12,6 +12,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::int_literal_out_of_range),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-int_literal_out_of_range"),
         help("annotate the value or use a type it can fit into")
     )]
     IntLiteralOutOfRange {
@@ -25,7 +26,11 @@ pub enum TypeError {
     },
 
     #[error("`{name}` requires an enum type, found `{ty_name}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::macro_arg_not_enum))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::macro_arg_not_enum),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-macro_arg_not_enum")
+    )]
     MacroArgNotEnum {
         name: SmolStr,
         ty_name: SmolStr,
@@ -37,7 +42,11 @@ pub enum TypeError {
     },
 
     #[error("expected type `{expected}`, but found `{found}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::mismatch))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-mismatch")
+    )]
     Mismatch {
         expected: SmolStr,
         found: SmolStr,
@@ -52,6 +61,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::main_not_found),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-main_not_found"),
         help("add function declaration with signature: `fn main() any {{ ... }}`")
     )]
     MainNotFound {
@@ -63,6 +73,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::main_signature_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-main_signature_mismatch"),
         help("consider using right signature: `fn main() any {{ ... }}`")
     )]
     MainSignatureMismatch {
@@ -76,6 +87,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::nested_fn_pub),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-nested_fn_pub"),
         help("remove the `pub` modifier: nested functions are only visible from their parent")
     )]
     NestedFnPub {
@@ -89,6 +101,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::invalid_va_args),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-invalid_va_args"),
         help("variadic args must be last argument: `fn foo(arg: type, ...)`")
     )]
     InvalidVaArgs {
@@ -99,7 +112,11 @@ pub enum TypeError {
     },
 
     #[error("variadic args usage on non-extern functions")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::non_extern_va_args))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::non_extern_va_args),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-non_extern_va_args")
+    )]
     NonExternVaArgs {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -108,7 +125,11 @@ pub enum TypeError {
     },
 
     #[error("unknown field in '{struct_name}': `{field}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::unknown_field))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::unknown_field),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-unknown_field")
+    )]
     UnknownField {
         struct_name: SmolStr,
         field: SmolStr,
@@ -123,6 +144,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::duplicate_field),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-duplicate_field"),
         help("keep only one `.field = value` entry")
     )]
     DuplicateField {
@@ -135,7 +157,11 @@ pub enum TypeError {
     },
 
     #[error("missing fields in '{struct_name}': {fields}")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::missing_fields))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::missing_fields),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-missing_fields")
+    )]
     MissingFields {
         struct_name: SmolStr,
         fields: SmolStr,
@@ -150,6 +176,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::anonymous_init_needs_context),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-anonymous_init_needs_context"),
         help("annotate the type, for example `let x: Point = .{{ .a = 1 }};`")
     )]
     AnonymousInitNeedsContext {
@@ -163,6 +190,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::struct_init_not_a_type),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-struct_init_not_a_type"),
         help("use `Type {{ ... }}` or `Type#[Args] {{ ... }}`")
     )]
     StructInitNotAType {
@@ -173,7 +201,11 @@ pub enum TypeError {
     },
 
     #[error("`{object}` has no method `{name}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::unknown_method))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::unknown_method),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-unknown_method")
+    )]
     UnknownMethod {
         object: SmolStr,
         name: SmolStr,
@@ -188,6 +220,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::non_ascii_char),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-non_ascii_char"),
         help("`char` holds a single byte, use a string literal for text")
     )]
     NonAsciiChar {
@@ -198,7 +231,11 @@ pub enum TypeError {
     },
 
     #[error("type `{ty}` is not callable")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::not_callable))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::not_callable),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-not_callable")
+    )]
     NotCallable {
         ty: SmolStr,
 
@@ -212,6 +249,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::closure_param_type_needed),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-closure_param_type_needed"),
         help("annotate the parameter or store the closure in a typed binding")
     )]
     ClosureParamTypeNeeded {
@@ -225,6 +263,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::closure_return_type_needed),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-closure_return_type_needed"),
         help("add `-> Type` before the body or store the closure in a typed binding")
     )]
     ClosureReturnTypeNeeded {
@@ -235,7 +274,11 @@ pub enum TypeError {
     },
 
     #[error("closure takes {found} parameters, but {expected} are expected")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::closure_param_count_mismatch))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::closure_param_count_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-closure_param_count_mismatch")
+    )]
     ClosureParamCountMismatch {
         expected: usize,
         found: usize,
@@ -246,7 +289,11 @@ pub enum TypeError {
     },
 
     #[error("closure body returns {found}, but {expected} is expected")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::closure_body_type_mismatch))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::closure_body_type_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-closure_body_type_mismatch")
+    )]
     ClosureBodyTypeMismatch {
         expected: SmolStr,
         found: SmolStr,
@@ -257,7 +304,11 @@ pub enum TypeError {
     },
 
     #[error("expected {expected} args, but found {found}")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::arg_count_mismatch))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::arg_count_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-arg_count_mismatch")
+    )]
     ArgCountMismatch {
         expected: usize,
         found: usize,
@@ -269,7 +320,11 @@ pub enum TypeError {
     },
 
     #[error("invalid type cast: `{from}` -> `{to}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::arg_count_mismatch))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::arg_count_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-arg_count_mismatch")
+    )]
     InvalidCast {
         from: SmolStr,
         to: SmolStr,
@@ -284,6 +339,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::copy_with_drop),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-copy_with_drop"),
         help("`Copy` types own no resources to release; pick one: `Copy` or `Drop`")
     )]
     CopyWithDrop {
@@ -299,6 +355,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::duplicate_method),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-duplicate_method"),
         help("overloads of one name must differ in bounds or in the block's type arguments")
     )]
     DuplicateMethod {
@@ -315,6 +372,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::duplicate_impl),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-duplicate_impl"),
         help("an implementation for this exact instantiation already exists")
     )]
     DuplicateImpl {
@@ -331,6 +389,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::core_interface_impl),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-core_interface_impl"),
         help("the compiler provides this interface for builtin types natively")
     )]
     CoreInterfaceImplForBuiltin {
@@ -347,6 +406,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::static_method_on_instance),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-static_method_on_instance"),
         help("use `Type.method(...)` to call a static method")
     )]
     StaticMethodOnInstance {
@@ -359,7 +419,11 @@ pub enum TypeError {
     },
 
     #[error("cannot infer `{generic_name}` generic type")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::cannot_infer_generic))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::cannot_infer_generic),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-cannot_infer_generic")
+    )]
     CannotInferGeneric {
         generic_name: SmolStr,
 
@@ -374,6 +438,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::ambiguous_inference),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-ambiguous_inference"),
         help("annotate `{name}` with an explicit type")
     )]
     AmbiguousInference {
@@ -388,7 +453,11 @@ pub enum TypeError {
     },
 
     #[error("binary '{op}' is not supported between: `{lhs_type}` and `{rhs_type}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::not_supported_binary))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::not_supported_binary),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-not_supported_binary")
+    )]
     BinaryNotSupported {
         op: BinaryOp,
         lhs_type: SmolStr,
@@ -401,7 +470,11 @@ pub enum TypeError {
     },
 
     #[error("unary '{op}' is not supported for: `{child_type}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::not_supported_unary))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::not_supported_unary),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-not_supported_unary")
+    )]
     UnaryNotSupported {
         op: UnaryOp,
         child_type: SmolStr,
@@ -413,7 +486,11 @@ pub enum TypeError {
     },
 
     #[error("usage of `break` outside loop")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::break_outside_loop))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::break_outside_loop),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-break_outside_loop")
+    )]
     BreakOutsideLoop {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -422,7 +499,11 @@ pub enum TypeError {
     },
 
     #[error("usage of `continue` outside loop")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::continue_outside_loop))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::continue_outside_loop),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-continue_outside_loop")
+    )]
     ContinueOutsideLoop {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -431,7 +512,11 @@ pub enum TypeError {
     },
 
     #[error("unknown loop label `{label}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::unknown_loop_label))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::unknown_loop_label),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-unknown_loop_label")
+    )]
     UnknownLoopLabel {
         label: SmolStr,
 
@@ -442,7 +527,11 @@ pub enum TypeError {
     },
 
     #[error("duplicate loop label `{label}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::duplicate_loop_label))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::duplicate_loop_label),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-duplicate_loop_label")
+    )]
     DuplicateLoopLabel {
         label: SmolStr,
 
@@ -453,7 +542,11 @@ pub enum TypeError {
     },
 
     #[error("type `{child_type}` is not indexable")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::not_indexable))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::not_indexable),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-not_indexable")
+    )]
     NotIndexable {
         child_type: SmolStr,
 
@@ -464,7 +557,11 @@ pub enum TypeError {
     },
 
     #[error("type `{child_type}` is not iterable")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::not_iterable))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::not_iterable),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-not_iterable")
+    )]
     NotIterable {
         child_type: SmolStr,
 
@@ -475,7 +572,11 @@ pub enum TypeError {
     },
 
     #[error("array length must be constant")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::array_length_not_const))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::array_length_not_const),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-array_length_not_const")
+    )]
     ArrayLengthNotConst {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -484,7 +585,11 @@ pub enum TypeError {
     },
 
     #[error("empty arrays are not allowed")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::empty_array))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::empty_array),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-empty_array")
+    )]
     EmptyArrayError {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -493,7 +598,11 @@ pub enum TypeError {
     },
 
     #[error("array length overflows the supported range")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::array_length_overflow))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::array_length_overflow),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-array_length_overflow")
+    )]
     ArrayLengthOverflow {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -502,7 +611,11 @@ pub enum TypeError {
     },
 
     #[error("repeat array init requires a Copy element type")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::repeat_init_not_copy))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::repeat_init_not_copy),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-repeat_init_not_copy")
+    )]
     RepeatInitNotCopy {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -514,6 +627,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::closure_generic_capture),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-closure_generic_capture"),
         help("closures are not generic yet; move the closure out of the generic context")
     )]
     ClosureGenericCapture {
@@ -527,6 +641,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::closure_coercion),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-closure_coercion"),
         help(
             "a bare fn pointer carries no environment; keep the value in its `Fn`/`FnOnce` \
               type, or use the closure without captures"
@@ -546,6 +661,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::fat_annotation_needs_init),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-fat_annotation_needs_init"),
         help(
             "closure values store a concrete closure type, so the variable must be \
               initialized to know which closure it holds"
@@ -562,6 +678,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::fat_return_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-fat_return_mismatch"),
         help("closure return types are inferred from the body and must agree")
     )]
     FatReturnMismatch {
@@ -572,7 +689,11 @@ pub enum TypeError {
     },
 
     #[error("attempt to assign to const")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::assign_to_const))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::assign_to_const),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-assign_to_const")
+    )]
     AssignToConst {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -584,6 +705,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::dangling_defid),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-dangling_defid"),
         help("please report this on: https://github.com/zeen-lang/zeen/issues")
     )]
     DanglingDefId {
@@ -599,6 +721,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::interface_not_available),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-interface_not_available"),
         help("try to import 'ops' module from standard library: `use std.ops`")
     )]
     InterfaceNotAvailable {
@@ -611,7 +734,11 @@ pub enum TypeError {
     },
 
     #[error("unknown macro found")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::unknown_macro))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::unknown_macro),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-unknown_macro")
+    )]
     UnknownMacro {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -623,6 +750,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::void_macro_removed),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-void_macro_removed"),
         help("write `.{{ }}` for a void value or an empty struct initialization")
     )]
     VoidMacroRemoved {
@@ -636,6 +764,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::macro_not_implemented),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-macro_not_implemented"),
         help("this macro will be available once the std library provides a string writer")
     )]
     MacroNotImplemented {
@@ -648,7 +777,11 @@ pub enum TypeError {
     },
 
     #[error("type `{ty_name}` has no implementation for `{name}` interface")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::interface_not_implemented))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::interface_not_implemented),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-interface_not_implemented")
+    )]
     InterfaceNotImplemented {
         name: SmolStr,
         ty_name: SmolStr,
@@ -663,6 +796,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::interface_signature_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-interface_signature_mismatch"),
         help("expected signature: `{signature}`")
     )]
     InterfaceMethodSignatureMismatch {
@@ -677,7 +811,11 @@ pub enum TypeError {
     },
 
     #[error("method `{method}` in interface `{interface}` is missing")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::interface_method_missing))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::interface_method_missing),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-interface_method_missing")
+    )]
     InterfaceMethodMissing {
         interface: SmolStr,
         method: SmolStr,
@@ -692,6 +830,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::impl_slot_mixed),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-impl_slot_mixed"),
         help(
             "a slot must be either a bare generic parameter (`Box[T]`) or a fully concrete type (`Box[i32]`)"
         )
@@ -704,7 +843,11 @@ pub enum TypeError {
     },
 
     #[error("operator interface `{operator}` is not supported on provided generic")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::generic_op_not_supported))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::generic_op_not_supported),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-generic_op_not_supported")
+    )]
     OperatorNotSupportedOnGeneric {
         operator: SmolStr,
 
@@ -715,7 +858,11 @@ pub enum TypeError {
     },
 
     #[error("type `{name}` expected {expected} generic types, but found {found}")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::generic_count_mismatch))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::generic_count_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-generic_count_mismatch")
+    )]
     GenericArgCountMismatch {
         name: SmolStr,
         expected: usize,
@@ -728,7 +875,11 @@ pub enum TypeError {
     },
 
     #[error("generic `{generic}` missing interface bound: `{bound}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::generic_missing_bound))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::generic_missing_bound),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-generic_missing_bound")
+    )]
     GenericMissingBound {
         generic: SmolStr,
         bound: SmolStr,
@@ -740,7 +891,11 @@ pub enum TypeError {
     },
 
     #[error("generic `{generic}` with bound `{bound}` not satisfied with type: `{ty}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::generic_bound_not_satisfied))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::generic_bound_not_satisfied),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-generic_bound_not_satisfied")
+    )]
     GenericBoundNotSatisfied {
         generic: SmolStr,
         bound: SmolStr,
@@ -753,7 +908,11 @@ pub enum TypeError {
     },
 
     #[error("generic conflict for `{param}`: expected `{first}`, but found `{second}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::generic_conflict))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::generic_conflict),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-generic_conflict")
+    )]
     GenericConflict {
         param: SmolStr,
         first: SmolStr,
@@ -769,6 +928,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::move_through_ptr),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-move_through_ptr"),
         help("try to dereference value from pointer: *EXPR")
     )]
     CannotMoveThroughPointer {
@@ -782,6 +942,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::unsized_pointer_slice),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-unsized_pointer_slice"),
         help("provide an explicit end bound: `ptr[0..n]` (or `ptr[..n]`)")
     )]
     UnsizedPointerSlice {
@@ -797,6 +958,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::implicit_array_to_slice),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-implicit_array_to_slice"),
         help("take a full-range slice to build a slice: `arr[..]` (or `[1, 2, 3][..]`)")
     )]
     ImplicitArrayToSlice {
@@ -810,7 +972,11 @@ pub enum TypeError {
     },
 
     #[error("implement on non-struct type found")]
-    #[diagnostic(severity(Error), code(zeen::typecheck::implement_non_struct))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typecheck::implement_non_struct),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-implement_non_struct")
+    )]
     ImplementNonStruct {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -819,7 +985,11 @@ pub enum TypeError {
     },
 
     #[error("`{object}` has no associated function `{name}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::unknown_associated_fn))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::unknown_associated_fn),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-unknown_associated_fn")
+    )]
     UnknownAssociatedFn {
         object: SmolStr,
         name: SmolStr,
@@ -834,6 +1004,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::associated_fn_as_value),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-associated_fn_as_value"),
         help("call it as `{object}.{name}()`")
     )]
     AssociatedFnAsValue {
@@ -847,7 +1018,11 @@ pub enum TypeError {
     },
 
     #[error("private item is not accessible: `{name}`")]
-    #[diagnostic(severity(Error), code(zeen::typecheck::private_item))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typecheck::private_item),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-private_item")
+    )]
     PrivateItemNotAccessible {
         name: SmolStr,
 
@@ -858,7 +1033,11 @@ pub enum TypeError {
     },
 
     #[error("associated call on instance method found")]
-    #[diagnostic(severity(Error), code(zeen::typecheck::associated_call_on_method))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typecheck::associated_call_on_method),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-associated_call_on_method")
+    )]
     AssociatedCallOnInstaneMethod {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -867,7 +1046,11 @@ pub enum TypeError {
     },
 
     #[error("unknown '{variant}' variant for `{name}` enum")]
-    #[diagnostic(severity(Error), code(zeen::typecheck::unknown_enum_variant))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typecheck::unknown_enum_variant),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-unknown_enum_variant")
+    )]
     UnknownEnumVariant {
         name: SmolStr,
         variant: SmolStr,
@@ -879,7 +1062,11 @@ pub enum TypeError {
     },
 
     #[error("cannot extract value from empty variant `{variant}` of `{name}`")]
-    #[diagnostic(severity(Error), code(zeen::typecheck::enum_extract_empty))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typecheck::enum_extract_empty),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-enum_extract_empty")
+    )]
     EnumExtractEmpty {
         name: SmolStr,
         variant: SmolStr,
@@ -894,6 +1081,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typecheck::enum_extract_from_drop),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-enum_extract_from_drop"),
         help("dropping the partial value would bypass the implementation's `drop`")
     )]
     EnumExtractFromDrop {
@@ -909,6 +1097,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typecheck::enum_call_on_empty),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-enum_call_on_empty"),
         help("construct empty variants with `{name}.{variant}`")
     )]
     EnumCallOnEmpty {
@@ -925,6 +1114,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typecheck::enum_call_on_struct),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-enum_call_on_struct"),
         help("construct struct variants with `{name}.{variant} {{ .field = value }}`")
     )]
     EnumCallOnStruct {
@@ -941,6 +1131,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typecheck::enum_init_on_non_struct),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-enum_init_on_non_struct"),
         help("construct single-value variants with `{name}.{variant}(value)`")
     )]
     EnumInitOnNonStruct {
@@ -957,6 +1148,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typecheck::enum_not_comparable),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-enum_not_comparable"),
         help("only enums with no value-carrying variants support `==`/`!=`")
     )]
     EnumNotComparable {
@@ -972,6 +1164,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typecheck::enum_as_int_forbidden),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-enum_as_int_forbidden"),
         help("use `@enumTag(expr)` to read the variant tag")
     )]
     EnumAsIntForbidden {
@@ -987,6 +1180,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typecheck::enum_from_int_forbidden),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-enum_from_int_forbidden"),
         help("construct variants directly: `{name}.variant(value)` or `{name}.variant {{ ... }}`")
     )]
     EnumFromIntForbidden {
@@ -1002,6 +1196,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typecheck::enum_variant_requires_value),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-enum_variant_requires_value"),
         help(
             "construct single-value variants with `{name}.{variant}(value)` and struct variants with `{name}.{variant} {{ .field = value }}`"
         )
@@ -1017,7 +1212,11 @@ pub enum TypeError {
     },
 
     #[error("`@enumTag` expects an enum value, got `{ty}`")]
-    #[diagnostic(severity(Error), code(zeen::typecheck::enum_tag_non_enum))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typecheck::enum_tag_non_enum),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-enum_tag_non_enum")
+    )]
     EnumTagOnNonEnum {
         ty: SmolStr,
 
@@ -1031,6 +1230,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typecheck::infinite_recursive_type),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typecheck-infinite_recursive_type"),
         help("consider using wrapping, like pointers: `*{ty}`")
     )]
     InfiniteRecursiveType {
@@ -1043,7 +1243,11 @@ pub enum TypeError {
     },
 
     #[error("expected format string as argument")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::expected_format_str))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::expected_format_str),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-expected_format_str")
+    )]
     ExpectedFormatString {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -1052,7 +1256,11 @@ pub enum TypeError {
     },
 
     #[error("{message}")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::format_parse_error))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::format_parse_error),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-format_parse_error")
+    )]
     FormatParseError {
         message: SmolStr,
 
@@ -1063,7 +1271,11 @@ pub enum TypeError {
     },
 
     #[error("format string provides {placeholders} placeholders, but found {args}")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::format_parse_error))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::format_parse_error),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-format_parse_error")
+    )]
     FormatArgCountMismatch {
         placeholders: usize,
         args: usize,
@@ -1075,7 +1287,11 @@ pub enum TypeError {
     },
 
     #[error("format requires integer type, but found `{found}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::format_parse_error))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::format_parse_error),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-format_parse_error")
+    )]
     FormatRequiresInteger {
         found: SmolStr,
 
@@ -1086,7 +1302,11 @@ pub enum TypeError {
     },
 
     #[error("format requires float type, but found `{found}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::format_parse_error))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::format_parse_error),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-format_parse_error")
+    )]
     FormatRequiresFloat {
         found: SmolStr,
 
@@ -1099,6 +1319,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::type_name_as_value),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-type_name_as_value"),
         help("a type name has no value: use it as a type, or call a static method on it")
     )]
     TypeNameAsValue {
@@ -1114,6 +1335,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::switch_unsupported_type),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-switch_unsupported_type"),
         help("switch supports integers, `bool`, `char` and strings")
     )]
     SwitchOnUnsupportedType {
@@ -1126,7 +1348,11 @@ pub enum TypeError {
     },
 
     #[error("switch pattern `{found}` does not match type `{expected}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::switch_pattern_mismatch))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::switch_pattern_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-switch_pattern_mismatch")
+    )]
     SwitchPatternMismatch {
         expected: SmolStr,
         found: SmolStr,
@@ -1141,6 +1367,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::switch_float_pattern),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-switch_float_pattern"),
         help("compare floats with `if` and `==` instead")
     )]
     SwitchFloatPattern {
@@ -1154,6 +1381,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::switch_non_exhaustive),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-switch_non_exhaustive"),
         help("add a wildcard arm `_ => ...`")
     )]
     SwitchNonExhaustive {
@@ -1164,7 +1392,11 @@ pub enum TypeError {
     },
 
     #[error("unreachable switch arm")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::switch_unreachable_arm))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::switch_unreachable_arm),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-switch_unreachable_arm")
+    )]
     SwitchUnreachableArm {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -1173,7 +1405,11 @@ pub enum TypeError {
     },
 
     #[error("or-pattern bindings must share one name, found `{found}` after `{expected}`")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::switch_or_binding_mismatch))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::switch_or_binding_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-switch_or_binding_mismatch")
+    )]
     SwitchOrBindingMismatch {
         expected: SmolStr,
         found: SmolStr,
@@ -1188,6 +1424,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::switch_payload_required),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-switch_payload_required"),
         help("match it as `.{variant}(binding)`")
     )]
     SwitchPayloadRequired {
@@ -1204,6 +1441,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::switch_binding_unexpected),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-switch_binding_unexpected"),
         help("match it as `.{variant}` without a binding")
     )]
     SwitchBindingUnexpected {
@@ -1220,6 +1458,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::try_requires_option_or_result),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-try_requires_option_or_result"),
         help("apply `?` to an owned `Option` or `Result` value")
     )]
     TryRequiresOptionOrResult {
@@ -1235,6 +1474,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::try_return_type_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-try_return_type_mismatch"),
         help(
             "the function must return the same enum, and `Result` error types must match exactly"
         )
@@ -1252,6 +1492,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::unknown_associated_type),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-unknown_associated_type"),
         help("add the interface that declares it as a bound")
     )]
     UnknownAssociatedType {
@@ -1267,6 +1508,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::missing_associated_type),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-missing_associated_type"),
         help("add `alias {name} = Type;` to the implement block")
     )]
     MissingAssociatedType {
@@ -1283,6 +1525,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::ambiguous_associated_type),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-ambiguous_associated_type"),
         help("the type has several implementations that declare this associated type")
     )]
     AmbiguousAssociatedType {
@@ -1296,7 +1539,11 @@ pub enum TypeError {
     },
 
     #[error("associated type `{name}` is declared twice in one implement block")]
-    #[diagnostic(severity(Error), code(zeen::typechecker::duplicate_associated_type))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::duplicate_associated_type),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-duplicate_associated_type")
+    )]
     DuplicateAssociatedType {
         name: SmolStr,
 
@@ -1310,6 +1557,7 @@ pub enum TypeError {
     #[diagnostic(
         severity(Error),
         code(zeen::typechecker::associated_type_cycle),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-associated_type_cycle"),
         help("give one of the aliases a concrete type")
     )]
     AssociatedTypeCycle {
@@ -1324,7 +1572,10 @@ pub enum TypeError {
     #[error("associated type `{name}` is bound to `{ty}`, which does not implement `{bound}`")]
     #[diagnostic(
         severity(Error),
-        code(zeen::typechecker::associated_type_bound_not_satisfied)
+        code(zeen::typechecker::associated_type_bound_not_satisfied),
+        url(
+            "https://zeen-lang.tech/diagnostics/#zeen-typechecker-associated_type_bound_not_satisfied"
+        )
     )]
     AssociatedTypeBoundNotSatisfied {
         name: SmolStr,

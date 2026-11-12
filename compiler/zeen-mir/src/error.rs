@@ -7,7 +7,11 @@ use thiserror::Error;
 #[derive(Debug, Error, Diagnostic, Clone)]
 pub enum MirError {
     #[error("generic parameter is not a value")]
-    #[diagnostic(severity(Error), code(zeen::mir::generic_param_not_a_value))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::mir::generic_param_not_a_value),
+        url("https://zeen-lang.tech/diagnostics/#zeen-mir-generic_param_not_a_value")
+    )]
     GenericParamNotValue {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -19,6 +23,7 @@ pub enum MirError {
     #[diagnostic(
         severity(Error),
         code(zeen::mir::discard_drop_payload),
+        url("https://zeen-lang.tech/diagnostics/#zeen-mir-discard_drop_payload"),
         help(
             "`_` moves the payload out and frees the container; bind it by reference instead: `&_`"
         )
@@ -34,6 +39,7 @@ pub enum MirError {
     #[diagnostic(
         severity(Error),
         code(zeen::mir::runtime_fat_coercion),
+        url("https://zeen-lang.tech/diagnostics/#zeen-mir-runtime_fat_coercion"),
         help("coerce a closure literal directly instead of storing it in a variable first")
     )]
     RuntimeFatCoercion {
@@ -50,6 +56,7 @@ pub enum MirWarning {
     #[diagnostic(
         severity(Warning),
         code(zeen::mir::unused_expression_result),
+        url("https://zeen-lang.tech/diagnostics/#zeen-mir-unused_expression_result"),
         help("consider using the value, or discarding it explicitly: `let _ = ...;`")
     )]
     UnusedExpressionResult {

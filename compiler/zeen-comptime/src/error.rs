@@ -6,7 +6,11 @@ use thiserror::Error;
 #[derive(Debug, Error, Diagnostic, Clone)]
 pub enum Error {
     #[error("{message}")]
-    #[diagnostic(severity(Error), code(zeen::comptime::panic))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::comptime::panic),
+        url("https://zeen-lang.tech/diagnostics/#zeen-comptime-panic")
+    )]
     Panic {
         message: SmolStr,
 
@@ -20,7 +24,11 @@ pub enum Error {
     },
 
     #[error("{name}")]
-    #[diagnostic(severity(Error), code(zeen::comptime::unresolved_ident))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::comptime::unresolved_ident),
+        url("https://zeen-lang.tech/diagnostics/#zeen-comptime-unresolved_ident")
+    )]
     UnresolvedIdent {
         name: SmolStr,
 
@@ -31,7 +39,11 @@ pub enum Error {
     },
 
     #[error("{message}")]
-    #[diagnostic(severity(Error), code(zeen::comptime::type_mismatch))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::comptime::type_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-comptime-type_mismatch")
+    )]
     TypeMismatch {
         message: SmolStr,
 
@@ -42,7 +54,11 @@ pub enum Error {
     },
 
     #[error("{message}")]
-    #[diagnostic(severity(Error), code(zeen::comptime::limit_exceeded))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::comptime::limit_exceeded),
+        url("https://zeen-lang.tech/diagnostics/#zeen-comptime-limit_exceeded")
+    )]
     LimitExceeded {
         message: SmolStr,
 
@@ -53,7 +69,11 @@ pub enum Error {
     },
 
     #[error("{message}")]
-    #[diagnostic(severity(Error), code(zeen::comptime::runtime_only))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::comptime::runtime_only),
+        url("https://zeen-lang.tech/diagnostics/#zeen-comptime-runtime_only")
+    )]
     RuntimeOnly {
         message: SmolStr,
 
@@ -64,7 +84,11 @@ pub enum Error {
     },
 
     #[error("{message}")]
-    #[diagnostic(severity(Error), code(zeen::comptime::runtime_type))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::comptime::runtime_type),
+        url("https://zeen-lang.tech/diagnostics/#zeen-comptime-runtime_type")
+    )]
     RuntimeType {
         message: SmolStr,
 
@@ -75,7 +99,11 @@ pub enum Error {
     },
 
     #[error("{message}")]
-    #[diagnostic(severity(Error), code(zeen::comptime::splice_outside_quote))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::comptime::splice_outside_quote),
+        url("https://zeen-lang.tech/diagnostics/#zeen-comptime-splice_outside_quote")
+    )]
     SpliceOutsideQuote {
         message: SmolStr,
 
@@ -86,7 +114,11 @@ pub enum Error {
     },
 
     #[error("{message}")]
-    #[diagnostic(severity(Error), code(zeen::comptime::format_parse_error))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::comptime::format_parse_error),
+        url("https://zeen-lang.tech/diagnostics/#zeen-comptime-format_parse_error")
+    )]
     FormatParseError {
         message: SmolStr,
 
@@ -97,7 +129,11 @@ pub enum Error {
     },
 
     #[error("{message}")]
-    #[diagnostic(severity(Error), code(zeen::comptime::duplicate_definition))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::comptime::duplicate_definition),
+        url("https://zeen-lang.tech/diagnostics/#zeen-comptime-duplicate_definition")
+    )]
     DuplicateDefinition {
         message: SmolStr,
 
@@ -108,7 +144,11 @@ pub enum Error {
     },
 
     #[error("{message}")]
-    #[diagnostic(severity(Error), code(zeen::comptime::unsupported))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::comptime::unsupported),
+        url("https://zeen-lang.tech/diagnostics/#zeen-comptime-unsupported")
+    )]
     Unsupported {
         message: SmolStr,
 

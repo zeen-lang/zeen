@@ -17,7 +17,11 @@ pub enum ResolveError {
 
     // --> Include Resolver Errors
     #[error("module is not found: `{path}`")]
-    #[diagnostic(severity(Error), code(zeen::resolver::include_error))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::resolver::include_error),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-include_error")
+    )]
     FileNotFound {
         path: SmolStr,
 
@@ -28,7 +32,11 @@ pub enum ResolveError {
     },
 
     #[error("io error: `{message}`")]
-    #[diagnostic(severity(Error), code(zeen::resolver::include_error))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::resolver::include_error),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-include_error")
+    )]
     IoError {
         message: SmolStr,
 
@@ -39,7 +47,11 @@ pub enum ResolveError {
     },
 
     #[error("duplicate of `{name}` declaration")]
-    #[diagnostic(severity(Error), code(zeen::resolver::duplicate_definition))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::resolver::duplicate_definition),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-duplicate_definition")
+    )]
     DuplicateDefinition {
         name: SmolStr,
 
@@ -51,6 +63,7 @@ pub enum ResolveError {
     #[diagnostic(
         severity(Error),
         code(zeen::resolver::core_reserved),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-core_reserved"),
         help("see compiler's core libraries at: https://zeen-lang.tech/library/core/ops")
     )]
     CoreReserved {
@@ -66,6 +79,7 @@ pub enum ResolveError {
     #[diagnostic(
         severity(Error),
         code(zeen::resolver::std_not_configured),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-std_not_configured"),
         help(
             "pass `--std <path>` or set `ZEEN_STD` to the std library root, or install it to `~/.zeen/std` (see https://github.com/zeen-lang/zeen)"
         )
@@ -78,7 +92,11 @@ pub enum ResolveError {
     },
 
     #[error("extern link error: {message}")]
-    #[diagnostic(severity(Error), code(zeen::resolver::extern_link_error))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::resolver::extern_link_error),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-extern_link_error")
+    )]
     LinkError {
         message: SmolStr,
 
@@ -90,7 +108,11 @@ pub enum ResolveError {
 
     // --> Name Resolver Error
     #[error("unresolved identifier: {name}")]
-    #[diagnostic(severity(Error), code(zeen::resolver::unresolved_ident))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::resolver::unresolved_ident),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-unresolved_ident")
+    )]
     UnresolvedIdent {
         name: SmolStr,
 
@@ -101,7 +123,11 @@ pub enum ResolveError {
     },
 
     #[error("unresolved type: {name}")]
-    #[diagnostic(severity(Error), code(zeen::resolver::unresolved_type))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::resolver::unresolved_type),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-unresolved_type")
+    )]
     UnresolvedType {
         name: SmolStr,
 
@@ -112,7 +138,11 @@ pub enum ResolveError {
     },
 
     #[error("unresolved `self/Self` type")]
-    #[diagnostic(severity(Error), code(zeen::resolver::unresolved_self))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::resolver::unresolved_self),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-unresolved_self")
+    )]
     UnresolvedSelf {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -124,6 +154,7 @@ pub enum ResolveError {
     #[diagnostic(
         severity(Error),
         code(zeen::resolver::disabled_feature),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-disabled_feature"),
         help("visit for more information: https://github.com/zeen-lang/zeen")
     )]
     DisabledFeature {
@@ -136,7 +167,11 @@ pub enum ResolveError {
     },
 
     #[error("usage of compiler-reserved interface name: `{name}`")]
-    #[diagnostic(severity(Error), code(zeen::resolver::reserved_interface))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::resolver::reserved_interface),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-reserved_interface")
+    )]
     ReservedInterface {
         name: SmolStr,
 
@@ -147,7 +182,11 @@ pub enum ResolveError {
     },
 
     #[error("private item is not accessible here: `{name}`")]
-    #[diagnostic(severity(Error), code(zeen::resolver::private_item))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::resolver::private_item),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-private_item")
+    )]
     PrivateItemNotAccessible {
         name: SmolStr,
 
@@ -161,6 +200,7 @@ pub enum ResolveError {
     #[diagnostic(
         severity(Error),
         code(zeen::resolver::ambiguous_import),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-ambiguous_import"),
         help("import only one of the modules, or move one of the items")
     )]
     AmbiguousImport {
@@ -176,6 +216,7 @@ pub enum ResolveError {
     #[diagnostic(
         severity(Error),
         code(zeen::resolver::nested_fn_capture),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-nested_fn_capture"),
         help("nested functions cannot close over the enclosing function's variables")
     )]
     NestedFnCapture {
@@ -191,6 +232,7 @@ pub enum ResolveError {
     #[diagnostic(
         severity(Error),
         code(zeen::resolver::global_var_cycle),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-global_var_cycle"),
         help("global variable initializers cannot depend on each other in a cycle")
     )]
     GlobalVarCycle {
@@ -206,6 +248,7 @@ pub enum ResolveError {
     #[diagnostic(
         severity(Error),
         code(zeen::resolver::non_literal_const_pattern),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-non_literal_const_pattern"),
         help("match a computed constant through a guard instead: `x if (x == name)`")
     )]
     NonLiteralConstPattern {

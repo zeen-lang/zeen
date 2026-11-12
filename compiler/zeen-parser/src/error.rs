@@ -7,7 +7,11 @@ use thiserror::Error;
 #[derive(Debug, Error, Diagnostic, Clone)]
 pub enum ParserError {
     #[error("unknown token found")]
-    #[diagnostic(severity(Error), code(zeen::parser::unknown_token))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::parser::unknown_token),
+        url("https://zeen-lang.tech/diagnostics/#zeen-parser-unknown_token")
+    )]
     UnknownToken {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -16,7 +20,11 @@ pub enum ParserError {
     },
 
     #[error("unterminated block comment")]
-    #[diagnostic(severity(Error), code(zeen::parser::unterminated_block_comment))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::parser::unterminated_block_comment),
+        url("https://zeen-lang.tech/diagnostics/#zeen-parser-unterminated_block_comment")
+    )]
     UnterminatedBlockComment {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -25,7 +33,11 @@ pub enum ParserError {
     },
 
     #[error("unknown expression found")]
-    #[diagnostic(severity(Error), code(zeen::parser::unknown_expression))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::parser::unknown_expression),
+        url("https://zeen-lang.tech/diagnostics/#zeen-parser-unknown_expression")
+    )]
     UnknownExpression {
         token_kind: SmolStr,
 
@@ -36,7 +48,11 @@ pub enum ParserError {
     },
 
     #[error("unknown top-level declaration found")]
-    #[diagnostic(severity(Error), code(zeen::parser::unknown_expression))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::parser::unknown_expression),
+        url("https://zeen-lang.tech/diagnostics/#zeen-parser-unknown_expression")
+    )]
     UnknownDeclaration {
         token_kind: SmolStr,
 
@@ -47,7 +63,11 @@ pub enum ParserError {
     },
 
     #[error("expected `{expected}` token")]
-    #[diagnostic(severity(Error), code(zeen::parser::expected_token))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::parser::expected_token),
+        url("https://zeen-lang.tech/diagnostics/#zeen-parser-expected_token")
+    )]
     ExpectedToken {
         expected: SmolStr,
 
@@ -58,7 +78,11 @@ pub enum ParserError {
     },
 
     #[error("expected `{expected}`, but reached end of file")]
-    #[diagnostic(severity(Error), code(zeen::parser::unexpected_eof))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::parser::unexpected_eof),
+        url("https://zeen-lang.tech/diagnostics/#zeen-parser-unexpected_eof")
+    )]
     UnexpectedEof {
         expected: SmolStr,
 
@@ -69,7 +93,11 @@ pub enum ParserError {
     },
 
     #[error("{message}")]
-    #[diagnostic(severity(Error), code(zeen::parser::invalid_literal))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::parser::invalid_literal),
+        url("https://zeen-lang.tech/diagnostics/#zeen-parser-invalid_literal")
+    )]
     InvalidLiteral {
         message: SmolStr,
         label: SmolStr,
@@ -81,7 +109,11 @@ pub enum ParserError {
     },
 
     #[error("invalid character escape")]
-    #[diagnostic(severity(Error), code(zeen::parser::invalid_character_escape))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::parser::invalid_character_escape),
+        url("https://zeen-lang.tech/diagnostics/#zeen-parser-invalid_character_escape")
+    )]
     InvalidCharacterEscape {
         #[source_code]
         src: NamedSource<Arc<String>>,
@@ -90,7 +122,11 @@ pub enum ParserError {
     },
 
     #[error("syntax error: {label}")]
-    #[diagnostic(severity(Error), code(zeen::parser::syntax_error))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::parser::syntax_error),
+        url("https://zeen-lang.tech/diagnostics/#zeen-parser-syntax_error")
+    )]
     SyntaxError {
         label: SmolStr,
 
@@ -104,7 +140,11 @@ pub enum ParserError {
     },
 
     #[error("unknown data type: {label}")]
-    #[diagnostic(severity(Error), code(zeen::parser::unknown_type))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::parser::unknown_type),
+        url("https://zeen-lang.tech/diagnostics/#zeen-parser-unknown_type")
+    )]
     UnknownType {
         label: SmolStr,
 
@@ -118,7 +158,11 @@ pub enum ParserError {
     },
 
     #[error("not supported: {label}")]
-    #[diagnostic(severity(Error), code(zeen::parser::unsupported_action))]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::parser::unsupported_action),
+        url("https://zeen-lang.tech/diagnostics/#zeen-parser-unsupported_action")
+    )]
     UnsupportedAction {
         label: SmolStr,
 
@@ -132,6 +176,7 @@ pub enum ParserError {
     #[diagnostic(
         severity(Error),
         code(zeen::parser::fn_closure_removed),
+        url("https://zeen-lang.tech/diagnostics/#zeen-parser-fn_closure_removed"),
         help("write `|params| body` instead")
     )]
     FnClosureRemoved {
