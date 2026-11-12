@@ -595,10 +595,10 @@ pub enum TypeError {
         span: SourceSpan,
     },
 
-    #[error("interface `{name}` is not avaible here")]
+    #[error("interface `{name}` is not available here")]
     #[diagnostic(
         severity(Error),
-        code(zeen::typechecker::interface_not_avaible),
+        code(zeen::typechecker::interface_not_available),
         help("try to import 'ops' module from standard library: `use std.ops`")
     )]
     InterfaceNotAvailable {
