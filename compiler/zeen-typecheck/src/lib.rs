@@ -19765,6 +19765,29 @@ mod tests {
     }
 
     #[test]
+    fn generic_call_keeps_locals_independent() {
+        typecheck_full(&format!(
+            r#"
+            {SLOT_SOURCE}
+
+            fn id[T](value: T) T {{
+                return value;
+            }}
+
+            fn main() {{
+                let first = Slot.empty();
+                let second = Slot.empty();
+                let copy = id(first);
+
+                copy.set(41);
+                second.set(2.5);
+            }}
+            "#
+        ))
+        .expect("a generic call must not merge the inferred types of two locals");
+    }
+
+    #[test]
     fn generic_local_does_not_leak_into_other_bodies() {
         typecheck_full(&format!(
             r#"
