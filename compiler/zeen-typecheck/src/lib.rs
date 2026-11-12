@@ -19594,4 +19594,107 @@ mod tests {
             "expected TypeError::CannotInferGeneric, got: {errors:?}"
         );
     }
+    #[test]
+    fn conflicting_annotations_report_ambiguity() {
+        let errors = typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                let byte: u8 = value;
+                let size: usize = value;
+            }
+            "#,
+        )
+        .expect_err("two different annotations must report ambiguity");
+
+        assert_eq!(
+            errors.len(),
+            1,
+            "expected a single diagnostic, got: {errors:?}"
+        );
+
+        assert!(
+            matches!(
+                &errors[0],
+                TypeError::AmbiguousInference { name, .. } if name.as_str() == "value"
+            ),
+            "expected TypeError::AmbiguousInference for `value`, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn conflicting_param_types_report_ambiguity() {
+        let errors = typecheck_full(
+            r#"
+            fn take_byte(value: u8) {}
+
+            fn take_size(value: usize) {}
+
+            fn main() {
+                let value = 1;
+                take_byte(value);
+                take_size(value);
+            }
+            "#,
+        )
+        .expect_err("different parameter types must report ambiguity");
+
+        assert!(
+            matches!(
+                errors.as_slice(),
+                [TypeError::AmbiguousInference { name, .. }] if name.as_str() == "value"
+            ),
+            "expected TypeError::AmbiguousInference for `value`, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn conflicting_closure_param_hints_report_ambiguity() {
+        let errors = typecheck_full(
+            r#"
+            fn main() {
+                let first: u8 = 1;
+                let second: usize = 2;
+                let pick = |x| x * first + x * second;
+                let result = pick(3);
+            }
+            "#,
+        )
+        .expect_err("different operand types must report ambiguity");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| matches!(error, TypeError::AmbiguousInference { .. })),
+            "expected TypeError::AmbiguousInference, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn matching_annotations_do_not_report_ambiguity() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                let first: u8 = value;
+                let second: u8 = value;
+            }
+            "#,
+        )
+        .expect("matching annotations must infer a single type");
+    }
+
+    #[test]
+    fn literal_hint_does_not_conflict_with_annotation() {
+        typecheck_full(
+            r#"
+            fn main() {
+                let value = 1;
+                let byte: u8 = value;
+                let total = value + 2;
+            }
+            "#,
+        )
+        .expect("a literal hint must adapt to an annotation");
+    }
 }
