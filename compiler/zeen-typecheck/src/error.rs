@@ -322,7 +322,7 @@ pub enum TypeError {
     #[error("invalid type cast: `{from}` -> `{to}`")]
     #[diagnostic(
         severity(Error),
-        code(zeen::typechecker::arg_count_mismatch),
+        code(zeen::typechecker::invalid_cast),
         url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-arg_count_mismatch")
     )]
     InvalidCast {
