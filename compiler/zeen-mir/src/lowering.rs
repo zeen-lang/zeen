@@ -176,6 +176,8 @@ pub struct MirLowering<'ctx> {
     fat_pointer_adapter_cache: HashMap<TypeId, MirFunctionId>,
     fat_drop_cache: HashMap<TypeId, MirFunctionId>,
 
+    expr_type_overrides: HashMap<HirId, TypeId>,
+
     enum_drop_cache: HashMap<TypeId, MirFunctionId>,
     fat_free_cache: HashMap<TypeId, MirFunctionId>,
     env_drop_cache: HashMap<TypeId, MirFunctionId>,
@@ -397,6 +399,7 @@ impl<'ctx> MirLowering<'ctx> {
             fat_extern_adapter_cache: HashMap::default(),
             fat_pointer_adapter_cache: HashMap::default(),
             fat_drop_cache: HashMap::default(),
+            expr_type_overrides: HashMap::default(),
             enum_drop_cache: HashMap::default(),
             fat_free_cache: HashMap::default(),
             env_drop_cache: HashMap::default(),
@@ -1760,6 +1763,10 @@ impl<'ctx> MirLowering<'ctx> {
     }
 
     fn expr_type(&mut self, fb: &FnBuilder, expr: &HirExpr) -> TypeId {
+        if let Some(ty) = self.expr_type_overrides.get(&expr.id).copied() {
+            return self.substitute_fn_type(fb, ty);
+        }
+
         if let HirExprKind::VarRef { def: def_id, .. } = &expr.kind
             && let Some((_, bound_ty)) = fb.fat_bindings.iter().find(|(d, _)| d == def_id)
         {
@@ -3601,6 +3608,114 @@ impl<'ctx> MirLowering<'ctx> {
     }
 
     fn lower_expr_to_operand(
+        &mut self,
+        fb: &mut FnBuilder,
+        expr: &HirExpr,
+        block: BlockId,
+    ) -> (BlockId, Operand) {
+        let Some(array_ty) = self
+            .typecheck
+            .array_to_slice_coercions
+            .get(&expr.id)
+            .copied()
+        else {
+            return self.lower_expr_to_operand_inner(fb, expr, block);
+        };
+
+        let array_ty = self.substitute_fn_type(fb, array_ty);
+        let slice_ty = self.expr_type(fb, expr);
+
+        self.expr_type_overrides.insert(expr.id, array_ty);
+        let (block, operand) = self.lower_expr_to_operand_inner(fb, expr, block);
+        self.expr_type_overrides.remove(&expr.id);
+
+        let array_place = match operand {
+            Operand::Copy(place, _) | Operand::Move(place, _) => place,
+            Operand::Constant(value, _) => {
+                let temp = fb.new_temp(array_ty);
+                fb.push_stmt(
+                    block,
+                    MirStatement::Assign {
+                        place: Place::from_local(temp),
+                        rvalue: Rvalue::Use(Operand::Constant(value, Some(expr.source.clone()))),
+                        source: Some(expr.source.clone()),
+                    },
+                );
+                Place::from_local(temp)
+            }
+        };
+
+        self.lower_array_to_slice(fb, block, array_place, array_ty, slice_ty, &expr.source)
+    }
+
+    fn lower_array_to_slice(
+        &mut self,
+        fb: &mut FnBuilder,
+        block: BlockId,
+        array_place: Place,
+        array_ty: TypeId,
+        slice_ty: TypeId,
+        source: &Source,
+    ) -> (BlockId, Operand) {
+        let (element, len) = match self.typecheck.interner.get(array_ty).clone() {
+            Type::Array {
+                element,
+                len: Some(len),
+            } => (element, len),
+            _ => unreachable!("array to slice coercion requires a sized array"),
+        };
+
+        let usize_ty = self.typecheck.interner.builtin(BuiltinType::usize);
+
+        let zero = self.const_to_local(fb, block, ConstValue::Int(0), usize_ty, source);
+
+        let ptr_ty = self.typecheck.interner.intern(Type::ManyPointer {
+            inner: element,
+            is_const: false,
+        });
+        let ptr_temp = fb.new_temp(ptr_ty);
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(ptr_temp),
+                rvalue: Rvalue::Ref {
+                    place: array_place.index(zero),
+                    is_const: false,
+                },
+                source: Some(source.clone()),
+            },
+        );
+
+        let len_temp =
+            self.const_to_local(fb, block, ConstValue::Int(len as i128), usize_ty, source);
+
+        let slice_temp = fb.new_temp(slice_ty);
+        fb.push_stmt(
+            block,
+            MirStatement::Assign {
+                place: Place::from_local(slice_temp),
+                rvalue: Rvalue::Aggregate {
+                    kind: AggregateKind::Slice,
+                    operands: vec![
+                        Operand::Move(Place::from_local(ptr_temp), None),
+                        Operand::Move(Place::from_local(len_temp), None),
+                    ],
+                },
+                source: Some(source.clone()),
+            },
+        );
+
+        (
+            block,
+            self.place_to_operand(
+                Place::from_local(slice_temp),
+                slice_ty,
+                Some(source.clone()),
+            ),
+        )
+    }
+
+    fn lower_expr_to_operand_inner(
         &mut self,
         fb: &mut FnBuilder,
         expr: &HirExpr,

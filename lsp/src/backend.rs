@@ -52,6 +52,23 @@ enum CompletionBranch {
     Plain,
 }
 
+fn plain_completion(
+    text: &str,
+    analysis: &analysis::Analysis,
+    offset: usize,
+    paths: completion::ResolvePaths<'_>,
+) -> Vec<CompletionItem> {
+    if completion::implement_body_before(text, offset) {
+        let items = completion::implement_complete(text, analysis, offset);
+
+        if !items.is_empty() {
+            return items;
+        }
+    }
+
+    completion::complete(text, analysis, offset, paths)
+}
+
 async fn run_and_capture(
     mut command: tokio::process::Command,
     binary: std::path::PathBuf,
@@ -352,7 +369,7 @@ impl Backend {
                 CompletionBranch::Call(trigger) => {
                     completion::call_complete(text, cached, trigger, paths)
                 }
-                CompletionBranch::Plain => completion::complete(text, cached, offset, paths),
+                CompletionBranch::Plain => plain_completion(text, cached, offset, paths),
             };
         }
 
@@ -426,7 +443,7 @@ impl Backend {
             CompletionBranch::Call(trigger) => {
                 completion::call_complete(text, &output.analysis, trigger, paths)
             }
-            CompletionBranch::Plain => completion::complete(text, &output.analysis, offset, paths),
+            CompletionBranch::Plain => plain_completion(text, &output.analysis, offset, paths),
         }
     }
 

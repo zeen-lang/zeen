@@ -1,6 +1,6 @@
 // @zeen-core
 
-interface FromIterator {
+pub interface FromIterator {
   alias Item;
 
   pub fn empty() Self;
@@ -9,7 +9,7 @@ interface FromIterator {
 }
 
 /// Main Iterator interface
-interface Iterator {
+pub interface Iterator {
   alias Item;
 
   pub fn next(*self) Option[Item];
@@ -224,20 +224,20 @@ implement[I: Iterator] Iterator : SkipIter[I] {
 }
 
 /// Returns struct that implements `Iterator` with pointer access
-interface PtrIterator {
+pub interface PtrIterator {
   alias Iter: Iterator;
 
   pub fn iter(*const self) Iter;
 }
 
-interface MutPtrIterator {
+pub interface MutPtrIterator {
   alias Iter: Iterator;
 
   pub fn iter_mut(*self) Iter;
 }
 
 /// Converter from ownership `self` to struct with `Iterator` implementation
-interface OwnedIterator {
+pub interface OwnedIterator {
   alias Iter: Iterator;
 
   pub fn into_iter(self) Iter;

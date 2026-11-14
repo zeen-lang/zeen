@@ -1320,9 +1320,16 @@ fn apply_borrow_stmt(state: &mut BorrowState, stmt: &MirStatement) {
             write(state, roots);
         }
 
+        Rvalue::Cast { operand, .. } => match operand {
+            Operand::Copy(p, _) | Operand::Move(p, _) => {
+                let roots = state.get(&p.local).cloned().unwrap_or_default();
+                write(state, roots);
+            }
+            Operand::Constant(_, _) => write(state, HashSet::default()),
+        },
+
         Rvalue::BinaryOp { .. }
         | Rvalue::UnaryOp { .. }
-        | Rvalue::Cast { .. }
         | Rvalue::Discriminant(_)
         | Rvalue::SizeOf(_)
         | Rvalue::AlignOf(_) => write(state, HashSet::default()),

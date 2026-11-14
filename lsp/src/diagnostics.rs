@@ -277,7 +277,7 @@ fn check_full(
         warnings: Vec::new(),
     };
 
-    let (resolved_program, mut resolution_result) = match zeen_resolve::resolve(
+    let (resolved_program, resolution_result) = match zeen_resolve::resolve(
         Rc::clone(&filename),
         Arc::clone(&content),
         entry_path,
@@ -362,7 +362,7 @@ fn check_full(
     analysis::merge_syntax_fallback(&mut analysis, syntax_fallback);
 
     let mut typechecker =
-        zeen_typecheck::TypeChecker::new(&mut resolution_result, &context, Rc::clone(&interner));
+        zeen_typecheck::TypeChecker::new(&resolution_result, &context, Rc::clone(&interner));
 
     typechecker.check_module(&hir_module);
 
