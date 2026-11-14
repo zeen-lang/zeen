@@ -2138,7 +2138,74 @@ fn repair_impl(text: &str, offset: usize, extra_closes: usize, semi: bool) -> Op
     Some(repaired)
 }
 
+fn repair_incomplete_alias(text: &str, offset: usize) -> Option<String> {
+    let prefix = alias_decl_prefix(text, offset)?;
+
+    if !implement_body_before(text, offset) {
+        return None;
+    }
+
+    let offset = offset.min(text.len());
+    let line_end = text[offset..]
+        .find('\n')
+        .map(|index| offset + index)
+        .unwrap_or(text.len());
+
+    if !text[offset..line_end].trim().is_empty() {
+        return None;
+    }
+
+    let placeholder = if prefix.is_empty() {
+        "__zeen_complete = i32;"
+    } else {
+        " = i32;"
+    };
+
+    let mut repaired = String::with_capacity(text.len() + placeholder.len() + 8);
+    repaired.push_str(&text[..offset]);
+    repaired.push_str(placeholder);
+    repaired.push_str(&text[offset..]);
+    close_open_braces(&mut repaired);
+
+    Some(repaired)
+}
+
+fn close_open_braces(text: &mut String) {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut cursor = 0;
+
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'"' => cursor = skip_string(bytes, cursor),
+            b'/' if bytes.get(cursor + 1) == Some(&b'/') => cursor = skip_line(bytes, cursor),
+            b'/' if bytes.get(cursor + 1) == Some(&b'*') => {
+                cursor = skip_block_comment(bytes, cursor)
+            }
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+
+        cursor += 1;
+    }
+
+    for _ in 0..depth {
+        text.push('}');
+    }
+}
+
+pub fn implement_body_before(text: &str, offset: usize) -> bool {
+    scan_frames(text, offset)
+        .last()
+        .is_some_and(|frame| matches!(frame.kind, FrameKind::Implement(_)))
+}
+
 pub fn repair_for_plain(text: &str, offset: usize, semi: bool) -> Option<String> {
+    if let Some(repaired) = repair_incomplete_alias(text, offset) {
+        return Some(repaired);
+    }
+
     let offset = offset.min(text.len());
     let bytes = text.as_bytes();
     let mut stack: Vec<u8> = Vec::new();
@@ -4378,5 +4445,82 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn repaired_analysis(text: &str, offset: usize) -> crate::analysis::Analysis {
+        let uri: tower_lsp_server::ls_types::Uri =
+            "file:///tmp/zeen-lsp-probe.zn".parse().unwrap();
+        let repaired = repair_for_plain(text, offset, false).expect("alias line must be repairable");
+
+        assert!(crate::diagnostics::parses(&repaired), "{repaired:?}");
+
+        crate::diagnostics::check_completion(&uri, &repaired, &[]).analysis
+    }
+
+    #[test]
+    fn implement_keyword_suggests_core_iterator_interfaces() {
+        let text = "struct P {\n    pub x: i32,\n}\n\nimplement ";
+        let analysis = loose_analysis(text);
+        let items = complete(text, &analysis, text.len(), ResolvePaths::default());
+        let names = labels(&items);
+
+        for name in [
+            "Iterator",
+            "FromIterator",
+            "PtrIterator",
+            "MutPtrIterator",
+            "OwnedIterator",
+        ] {
+            assert!(names.contains(&name), "{name} missing: {names:?}");
+        }
+    }
+
+    #[test]
+    fn implement_body_before_detects_implement_blocks() {
+        let text = "struct P {\n    pub x: i32,\n}\n\nimplement Iterator : P {\n    \n}\n";
+        let inside = text.find("implement Iterator : P {").unwrap() + "implement Iterator : P {".len();
+        let outside = text.find("struct P").unwrap();
+
+        assert!(implement_body_before(text, inside));
+        assert!(!implement_body_before(text, outside));
+    }
+
+    #[test]
+    fn implement_block_alias_completion_repairs_incomplete_line() {
+        let text = "struct P {\n    pub x: i32,\n}\n\nimplement Iterator : P {\n    alias \n}\n";
+        let offset = text.find("alias ").unwrap() + "alias ".len();
+        let analysis = repaired_analysis(text, offset);
+        let items = implement_complete(text, &analysis, offset);
+        let names = labels(&items);
+
+        assert_eq!(names, vec!["Item"]);
+
+        let item = &items[0];
+        assert_eq!(item.insert_text.as_deref(), Some("Item = $0;"));
+        assert_eq!(item.kind, Some(CompletionItemKind::TYPE_PARAMETER));
+    }
+
+    #[test]
+    fn implement_block_alias_completion_filters_typed_prefix() {
+        let text = "struct P {\n    pub x: i32,\n}\n\nimplement Iterator : P {\n    alias It\n}\n";
+        let offset = text.find("alias It").unwrap() + "alias It".len();
+        let analysis = repaired_analysis(text, offset);
+        let items = implement_complete(text, &analysis, offset);
+        let names = labels(&items);
+
+        assert_eq!(names, vec!["Item"]);
+    }
+
+    #[test]
+    fn implement_block_alias_repair_completes_declaration() {
+        let text = "struct P {\n    pub x: i32,\n}\n\nimplement Iterator : P {\n    alias \n}\n";
+        let offset = text.find("alias ").unwrap() + "alias ".len();
+        let repaired = repair_for_plain(text, offset, false).unwrap();
+
+        assert!(
+            repaired.contains("__zeen_complete = i32;"),
+            "{repaired:?}"
+        );
+        assert!(crate::diagnostics::parses(&repaired), "{repaired:?}");
     }
 }
