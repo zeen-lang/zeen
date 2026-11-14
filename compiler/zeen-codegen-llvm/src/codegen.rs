@@ -17,8 +17,8 @@ use inkwell::{
         StructType,
     },
     values::{
-        BasicMetadataValueEnum, BasicValueEnum, FunctionValue, GlobalValue, IntValue, PointerValue,
-        ValueKind,
+        BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, GlobalValue, IntValue,
+        PointerValue, ValueKind,
     },
 };
 use lasso::{Rodeo, Spur};
@@ -615,12 +615,24 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             let func = &self.program.functions[&id];
             let name = self.function_symbol_name(id, func);
 
+            let array_abi = self.fn_uses_array_abi(id);
             let param_types: Vec<BasicMetadataTypeEnum<'ctx>> = func
                 .params
                 .iter()
-                .map(|&local| self.map_basic_type(func.local(local).ty).into())
+                .map(|&local| {
+                    let ty = func.local(local).ty;
+                    if array_abi {
+                        self.abi_param_type(ty).into()
+                    } else {
+                        self.map_basic_type(ty).into()
+                    }
+                })
                 .collect();
-            let ret = self.map_ret_type(func.ret_ty);
+            let ret = if array_abi {
+                self.abi_ret_type(func.ret_ty)
+            } else {
+                self.map_ret_type(func.ret_ty)
+            };
             let fn_type = self.make_fn_type(ret, &param_types, false);
 
             let function = self.module.add_function(&name, fn_type, None);
@@ -665,7 +677,12 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                 continue;
             };
             let ptr = self.locals[&param_local];
-            self.builder.build_store(ptr, arg).unwrap();
+            let ty = func.local(param_local).ty;
+            if self.array_abi_type(ty).is_some() {
+                self.abi_store_value(ptr, arg, ty);
+            } else {
+                self.builder.build_store(ptr, arg).unwrap();
+            }
         }
 
         for idx in 1..func.blocks.len() {
@@ -824,6 +841,106 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             Type::Void | Type::Never => self.context.void_type().into(),
             _ => self.map_type(ty),
         }
+    }
+
+    fn fn_uses_array_abi(&self, id: MirFunctionId) -> bool {
+        !self.program.extern_exports.contains_key(&id)
+    }
+
+    fn array_abi_type(&self, ty: TypeId) -> Option<AnyTypeEnum<'ctx>> {
+        let Type::Array { element, len } = self.typecheck.interner.get(ty) else {
+            return None;
+        };
+        let len = (*len)?;
+        if len == 0 {
+            return None;
+        }
+
+        let element_ty = match self.typecheck.interner.get(*element) {
+            Type::Builtin(b) if builtin_is_integer(*b) || builtin_is_float(*b) => {
+                self.map_basic_type(*element)
+            }
+            _ => return None,
+        };
+
+        if self.target_data.get_abi_size(&self.map_type(ty)) > 64 {
+            return None;
+        }
+
+        let vector = match element_ty {
+            BasicTypeEnum::IntType(t) => t.vec_type(len as u32),
+            BasicTypeEnum::FloatType(t) => t.vec_type(len as u32),
+            _ => return None,
+        };
+
+        Some(vector.into())
+    }
+
+    fn abi_param_type(&self, ty: TypeId) -> BasicTypeEnum<'ctx> {
+        match self.array_abi_type(ty) {
+            Some(abi) => self.basic_from_any(abi),
+            None => self.map_basic_type(ty),
+        }
+    }
+
+    fn abi_ret_type(&self, ty: TypeId) -> AnyTypeEnum<'ctx> {
+        match self.array_abi_type(ty) {
+            Some(abi) => abi,
+            None => self.map_ret_type(ty),
+        }
+    }
+
+    fn array_abi_align(&self, ty: TypeId) -> u32 {
+        self.target_data.get_abi_alignment(&self.map_type(ty))
+    }
+
+    fn abi_load_value(
+        &mut self,
+        abi: BasicTypeEnum<'ctx>,
+        ptr: PointerValue<'ctx>,
+        ty: TypeId,
+    ) -> BasicValueEnum<'ctx> {
+        let value = self.builder.build_load(abi, ptr, "").unwrap();
+        if let Some(inst) = value.as_instruction_value() {
+            inst.set_alignment(self.array_abi_align(ty)).unwrap();
+        }
+        value
+    }
+
+    fn abi_store_value(
+        &mut self,
+        ptr: PointerValue<'ctx>,
+        value: BasicValueEnum<'ctx>,
+        ty: TypeId,
+    ) {
+        let inst = self.builder.build_store(ptr, value).unwrap();
+        inst.set_alignment(self.array_abi_align(ty)).unwrap();
+    }
+
+    fn operand_abi_value(
+        &mut self,
+        operand: &Operand,
+        ty: TypeId,
+        func: &MirFunction,
+    ) -> BasicValueEnum<'ctx> {
+        let Some(abi) = self.array_abi_type(ty) else {
+            return self.operand_value(operand, Some(ty), func);
+        };
+        let abi = self.basic_from_any(abi);
+
+        if let Operand::Copy(place, _) | Operand::Move(place, _) = operand {
+            let ptr = self.place_ptr(place, func);
+            return self.abi_load_value(abi, ptr, ty);
+        }
+
+        let value = self.operand_value(operand, Some(ty), func);
+        if value.get_type() == abi {
+            return value;
+        }
+
+        let slot = self.entry_alloca(self.map_basic_type(ty), "abi.slot");
+        self.abi_store_value(slot, value, ty);
+        self.abi_load_value(abi, slot, ty)
     }
 
     fn c_abi_coerce_type(&self, ty: TypeId) -> Option<AnyTypeEnum<'ctx>> {
@@ -1103,6 +1220,12 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                 if self.is_void_ty(place_ty) {
                     return;
                 }
+                if let Rvalue::BinaryOp { op, lhs, rhs } = rvalue
+                    && self.is_array_arith(*op, place_ty)
+                {
+                    self.emit_array_binary(*op, lhs, rhs, place_ty, place, func);
+                    return;
+                }
                 let value = self.rvalue_value(rvalue, place_ty, func);
                 let value = self.coerce_float_to_slot(value, place_ty);
                 self.store_place(place, value, func);
@@ -1262,6 +1385,230 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             Operand::Copy(place, _) | Operand::Move(place, _) => Some(self.place_type(place, func)),
             Operand::Constant(_, _) => None,
         }
+    }
+
+    fn is_array_arith(&self, op: BinaryOp, ty: TypeId) -> bool {
+        matches!(
+            op,
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod
+        ) && matches!(
+            self.typecheck.interner.get(ty),
+            Type::Array { len: Some(_), .. }
+        )
+    }
+
+    fn array_operand_ptr(
+        &self,
+        operand: &Operand,
+        func: &MirFunction,
+    ) -> Option<PointerValue<'ctx>> {
+        let place = match operand {
+            Operand::Copy(place, _) | Operand::Move(place, _) => place,
+            Operand::Constant(_, _) => return None,
+        };
+
+        let ty = self.place_type(place, func);
+        match self.typecheck.interner.get(ty).clone() {
+            Type::Array { .. } => Some(self.place_ptr(place, func)),
+            Type::Pointer { inner, .. } | Type::ManyPointer { inner, .. }
+                if matches!(self.typecheck.interner.get(inner), Type::Array { .. }) =>
+            {
+                Some(self.load_place(place, func).into_pointer_value())
+            }
+            _ => None,
+        }
+    }
+
+    fn array_element_ptr(
+        &self,
+        base: PointerValue<'ctx>,
+        array_ty: BasicTypeEnum<'ctx>,
+        index: IntValue<'ctx>,
+    ) -> PointerValue<'ctx> {
+        let usize_ty = self.context.ptr_sized_int_type(&self.target_data, None);
+        unsafe {
+            self.builder
+                .build_in_bounds_gep(array_ty, base, &[usize_ty.const_zero(), index], "")
+                .unwrap()
+        }
+    }
+
+    fn emit_array_binary(
+        &mut self,
+        op: BinaryOp,
+        lhs: &Operand,
+        rhs: &Operand,
+        array_ty: TypeId,
+        dest: &Place,
+        func: &MirFunction,
+    ) {
+        let Type::Array { element, len } = self.typecheck.interner.get(array_ty).clone() else {
+            unreachable!("array arithmetic on a non-array type");
+        };
+        let len = len.unwrap_or(0);
+
+        let dest_ptr = self.place_ptr(dest, func);
+        let lhs_ptr = self.array_operand_ptr(lhs, func);
+        let rhs_ptr = self.array_operand_ptr(rhs, func);
+        let lhs_scalar = lhs_ptr
+            .is_none()
+            .then(|| self.operand_value(lhs, Some(element), func));
+        let rhs_scalar = rhs_ptr
+            .is_none()
+            .then(|| self.operand_value(rhs, Some(element), func));
+
+        let usize_ty = self.context.ptr_sized_int_type(&self.target_data, None);
+        let array_llvm_ty = self.map_basic_type(array_ty);
+        let elem_llvm_ty = self.map_basic_type(element);
+        let len_value = usize_ty.const_int(len, false);
+
+        let current = self.builder.get_insert_block().unwrap();
+        let function = current.get_parent().unwrap();
+        let head = self.context.append_basic_block(function, "array.op.head");
+        let body = self.context.append_basic_block(function, "array.op.body");
+        let done = self.context.append_basic_block(function, "array.op.done");
+        self.builder.build_unconditional_branch(head).unwrap();
+
+        self.builder.position_at_end(head);
+        let index = self.builder.build_phi(usize_ty, "array.op.index").unwrap();
+        let in_range = self
+            .builder
+            .build_int_compare(
+                IntPredicate::ULT,
+                index.as_basic_value().into_int_value(),
+                len_value,
+                "",
+            )
+            .unwrap();
+        self.builder
+            .build_conditional_branch(in_range, body, done)
+            .unwrap();
+
+        self.builder.position_at_end(body);
+        let idx = index.as_basic_value().into_int_value();
+        let lhs_value = match lhs_ptr {
+            Some(ptr) => {
+                let elem_ptr = self.array_element_ptr(ptr, array_llvm_ty, idx);
+                self.builder.build_load(elem_llvm_ty, elem_ptr, "").unwrap()
+            }
+            None => lhs_scalar.unwrap(),
+        };
+        let rhs_value = match rhs_ptr {
+            Some(ptr) => {
+                let elem_ptr = self.array_element_ptr(ptr, array_llvm_ty, idx);
+                self.builder.build_load(elem_llvm_ty, elem_ptr, "").unwrap()
+            }
+            None => rhs_scalar.unwrap(),
+        };
+
+        let value = self.array_element_binary(op, lhs_value, rhs_value, element);
+        let dest_elem = self.array_element_ptr(dest_ptr, array_llvm_ty, idx);
+        self.builder.build_store(dest_elem, value).unwrap();
+
+        let next = self
+            .builder
+            .build_int_add(idx, usize_ty.const_int(1, false), "")
+            .unwrap();
+        let back = self.builder.get_insert_block().unwrap();
+        self.builder.build_unconditional_branch(head).unwrap();
+        index.add_incoming(&[(&usize_ty.const_zero(), current), (&next, back)]);
+
+        self.builder.position_at_end(done);
+    }
+
+    fn array_element_binary(
+        &mut self,
+        op: BinaryOp,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+        element: TypeId,
+    ) -> BasicValueEnum<'ctx> {
+        let is_float = matches!(
+            self.typecheck.interner.get(element),
+            Type::Builtin(BuiltinType::f32 | BuiltinType::f64)
+        );
+
+        if is_float {
+            let l = lhs.into_float_value();
+            let r = rhs.into_float_value();
+            let b = &self.builder;
+            return match op {
+                BinaryOp::Add => b.build_float_add(l, r, "").unwrap().into(),
+                BinaryOp::Sub => b.build_float_sub(l, r, "").unwrap().into(),
+                BinaryOp::Mul => b.build_float_mul(l, r, "").unwrap().into(),
+                BinaryOp::Div => b.build_float_div(l, r, "").unwrap().into(),
+                BinaryOp::Mod => b.build_float_rem(l, r, "").unwrap().into(),
+                _ => unreachable!("unsupported array arithmetic op {op:?}"),
+            };
+        }
+
+        let l = lhs.into_int_value();
+        let r = rhs.into_int_value();
+
+        if matches!(op, BinaryOp::Div | BinaryOp::Mod)
+            && self.options.mode == CompilationMode::Debug
+        {
+            let zero = l.get_type().const_zero();
+            let is_zero = self
+                .builder
+                .build_int_compare(IntPredicate::EQ, r, zero, "")
+                .unwrap();
+            let current = self.builder.get_insert_block().unwrap();
+            let function = current.get_parent().unwrap();
+            let fail = self.context.append_basic_block(function, "array.op.div0");
+            let ok = self.context.append_basic_block(function, "array.op.divok");
+            self.builder
+                .build_conditional_branch(is_zero, fail, ok)
+                .unwrap();
+
+            self.builder.position_at_end(fail);
+            self.emit_array_div_zero_panic();
+
+            self.builder.position_at_end(ok);
+        }
+
+        let signed = self.is_signed(element);
+        let b = &self.builder;
+        match op {
+            BinaryOp::Add => b.build_int_add(l, r, "").unwrap().into(),
+            BinaryOp::Sub => b.build_int_sub(l, r, "").unwrap().into(),
+            BinaryOp::Mul => b.build_int_mul(l, r, "").unwrap().into(),
+            BinaryOp::Div => if signed {
+                b.build_int_signed_div(l, r, "").unwrap()
+            } else {
+                b.build_int_unsigned_div(l, r, "").unwrap()
+            }
+            .into(),
+            BinaryOp::Mod => if signed {
+                b.build_int_signed_rem(l, r, "").unwrap()
+            } else {
+                b.build_int_unsigned_rem(l, r, "").unwrap()
+            }
+            .into(),
+            _ => unreachable!("unsupported array arithmetic op {op:?}"),
+        }
+    }
+
+    fn emit_array_div_zero_panic(&mut self) {
+        let printf = self.get_or_declare_runtime_fn(
+            "printf",
+            self.context.i32_type().into(),
+            &[self.context.ptr_type(AddressSpace::default()).into()],
+            true,
+        );
+        let message = self.get_str_global("attempt to divide by zero\n");
+        self.builder
+            .build_call(printf, &[message.as_pointer_value().into()], "")
+            .unwrap();
+
+        let panic_stack = self.get_or_declare_runtime_fn(
+            "zeen.panic_stack",
+            self.context.void_type().into(),
+            &[],
+            false,
+        );
+        self.builder.build_call(panic_stack, &[], "").unwrap();
+        self.builder.build_unreachable().unwrap();
     }
 
     fn const_value(
@@ -2613,7 +2960,11 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                     let value = self.cast_op(operand, func.ret_ty, func);
                     self.builder.build_return(Some(&value)).unwrap();
                 } else {
-                    let value = self.operand_value(operand, Some(func.ret_ty), func);
+                    let value = if self.fn_uses_array_abi(fn_id) {
+                        self.operand_abi_value(operand, func.ret_ty, func)
+                    } else {
+                        self.operand_value(operand, Some(func.ret_ty), func)
+                    };
                     self.builder.build_return(Some(&value)).unwrap();
                 }
             }
@@ -2667,6 +3018,10 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         };
 
         let is_extern = matches!(target, CallTarget::Extern(_));
+        let callee_array_abi = match target {
+            CallTarget::Direct(id) => self.fn_uses_array_abi(*id),
+            _ => true,
+        };
         let is_variadic_extern = match target {
             CallTarget::Extern(idx) => self.program.extern_fns[*idx].is_variadic,
             _ => false,
@@ -2682,7 +3037,11 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                     if needs_cast {
                         return self.cast_op(arg, *param_ty, func).into();
                     }
-                    let value = self.operand_value(arg, Some(*param_ty), func);
+                    let value = if is_extern || !callee_array_abi {
+                        self.operand_value(arg, Some(*param_ty), func)
+                    } else {
+                        self.operand_abi_value(arg, *param_ty, func)
+                    };
                     if is_extern && let Some(struct_ty) = self.c_abi_param_byval(*param_ty) {
                         let slot = self.entry_alloca(struct_ty.into(), "abi.arg.byval");
                         self.builder.build_store(slot, value).unwrap();
@@ -2775,12 +3134,12 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                                 .operand_type(arg, func)
                                 .or_else(|| declared_params.get(i).copied())
                                 .expect("indirect call argument type");
-                            self.map_basic_type(arg_ty).into()
+                            self.abi_param_type(arg_ty).into()
                         })
                         .collect();
 
                     let ret_ty = func.local(destination.local).ty;
-                    self.make_fn_type(self.map_ret_type(ret_ty), &arg_types, false)
+                    self.make_fn_type(self.abi_ret_type(ret_ty), &arg_types, false)
                 };
 
                 self.builder
@@ -3001,9 +3360,9 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             Type::Fn { params, ret } => {
                 let params: Vec<BasicMetadataTypeEnum<'ctx>> = params
                     .iter()
-                    .map(|&p| self.map_basic_type(p).into())
+                    .map(|&p| self.abi_param_type(p).into())
                     .collect();
-                self.make_fn_type(self.map_ret_type(ret), &params, false)
+                self.make_fn_type(self.abi_ret_type(ret), &params, false)
             }
             _ => unreachable!("indirect call through a non-fn value"),
         }
@@ -4162,7 +4521,11 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
 
     fn store_place(&mut self, place: &Place, value: BasicValueEnum<'ctx>, func: &MirFunction) {
         let ptr = self.place_ptr(place, func);
-        self.builder.build_store(ptr, value).unwrap();
+        let ty = self.place_type(place, func);
+        let inst = self.builder.build_store(ptr, value).unwrap();
+        if self.array_abi_type(ty).is_some() {
+            inst.set_alignment(self.array_abi_align(ty)).unwrap();
+        }
     }
 
     fn coerce_float_to_slot(

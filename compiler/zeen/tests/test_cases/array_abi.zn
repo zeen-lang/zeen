@@ -1,0 +1,60 @@
+struct Pair {
+  pub a: i32,
+  pub b: i32,
+}
+
+fn add_vec4(x: [4]f32, y: [4]f32) [4]f32 {
+  return x + y;
+}
+
+fn mul_int8(x: [8]i32, y: [8]i32) [8]i32 {
+  return x * y;
+}
+
+fn scale3(x: [3]i32) [3]i32 {
+  return x * 5;
+}
+
+fn blend2(x: [2]f64) [2]f64 {
+  return x * 1.5;
+}
+
+fn edge_sum(x: [32]i32) i32 {
+  return x[0] + x[31];
+}
+
+fn pair_sum(xs: [2]Pair) i32 {
+  return xs[0].a + xs[1].b;
+}
+
+fn apply(f: fn([4]f32, [4]f32) [4]f32, x: [4]f32, y: [4]f32) [4]f32 {
+  return f(x, y);
+}
+
+fn main() {
+  const f: [4]f32 = {1.0, 2.0, 3.0, 4.0};
+  const g: [4]f32 = {0.5, 1.5, 2.5, 3.5};
+
+  @println("vec4: {:?}", add_vec4(f, g));
+  @println("literal: {:?}", add_vec4({1.0, 1.0, 1.0, 1.0}, g));
+
+  const i: [8]i32 = {1, 2, 3, 4, 5, 6, 7, 8};
+  const j: [8]i32 = {2, 2, 2, 2, 3, 3, 3, 3};
+
+  @println("int8: {:?}", mul_int8(i, j));
+  @println("odd3: {:?}", scale3({1, 2, 3}));
+  @println("f64: {:?}", blend2({1.0, 3.0}));
+
+  const wide: [32]i32 = {7; 32};
+  @println("wide: {}", edge_sum(wide));
+
+  const pairs: [2]Pair = {.{ .a = 1, .b = 2 }, .{ .a = 3, .b = 4 }};
+  @println("pairs: {}", pair_sum(pairs));
+
+  const direct: fn([4]f32, [4]f32) [4]f32 = add_vec4;
+  @println("fn ptr: {:?}", direct(f, g));
+  @println("apply: {:?}", apply(add_vec4, f, g));
+
+  const nested: [2][4]f32 = {f, g};
+  @println("nested: {:?}", add_vec4(nested[0], nested[1]));
+}
