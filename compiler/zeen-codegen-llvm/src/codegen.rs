@@ -17,8 +17,8 @@ use inkwell::{
         StructType,
     },
     values::{
-        BasicMetadataValueEnum, BasicValueEnum, FunctionValue, GlobalValue, IntValue, PointerValue,
-        ValueKind,
+        BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, GlobalValue, IntValue,
+        PointerValue, ValueKind,
     },
 };
 use lasso::{Rodeo, Spur};
@@ -615,12 +615,24 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             let func = &self.program.functions[&id];
             let name = self.function_symbol_name(id, func);
 
+            let array_abi = self.fn_uses_array_abi(id);
             let param_types: Vec<BasicMetadataTypeEnum<'ctx>> = func
                 .params
                 .iter()
-                .map(|&local| self.map_basic_type(func.local(local).ty).into())
+                .map(|&local| {
+                    let ty = func.local(local).ty;
+                    if array_abi {
+                        self.abi_param_type(ty).into()
+                    } else {
+                        self.map_basic_type(ty).into()
+                    }
+                })
                 .collect();
-            let ret = self.map_ret_type(func.ret_ty);
+            let ret = if array_abi {
+                self.abi_ret_type(func.ret_ty)
+            } else {
+                self.map_ret_type(func.ret_ty)
+            };
             let fn_type = self.make_fn_type(ret, &param_types, false);
 
             let function = self.module.add_function(&name, fn_type, None);
@@ -665,7 +677,12 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                 continue;
             };
             let ptr = self.locals[&param_local];
-            self.builder.build_store(ptr, arg).unwrap();
+            let ty = func.local(param_local).ty;
+            if self.array_abi_type(ty).is_some() {
+                self.abi_store_value(ptr, arg, ty);
+            } else {
+                self.builder.build_store(ptr, arg).unwrap();
+            }
         }
 
         for idx in 1..func.blocks.len() {
@@ -824,6 +841,106 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             Type::Void | Type::Never => self.context.void_type().into(),
             _ => self.map_type(ty),
         }
+    }
+
+    fn fn_uses_array_abi(&self, id: MirFunctionId) -> bool {
+        !self.program.extern_exports.contains_key(&id)
+    }
+
+    fn array_abi_type(&self, ty: TypeId) -> Option<AnyTypeEnum<'ctx>> {
+        let Type::Array { element, len } = self.typecheck.interner.get(ty) else {
+            return None;
+        };
+        let len = (*len)?;
+        if len == 0 {
+            return None;
+        }
+
+        let element_ty = match self.typecheck.interner.get(*element) {
+            Type::Builtin(b) if builtin_is_integer(*b) || builtin_is_float(*b) => {
+                self.map_basic_type(*element)
+            }
+            _ => return None,
+        };
+
+        if self.target_data.get_abi_size(&self.map_type(ty)) > 64 {
+            return None;
+        }
+
+        let vector = match element_ty {
+            BasicTypeEnum::IntType(t) => t.vec_type(len as u32),
+            BasicTypeEnum::FloatType(t) => t.vec_type(len as u32),
+            _ => return None,
+        };
+
+        Some(vector.into())
+    }
+
+    fn abi_param_type(&self, ty: TypeId) -> BasicTypeEnum<'ctx> {
+        match self.array_abi_type(ty) {
+            Some(abi) => self.basic_from_any(abi),
+            None => self.map_basic_type(ty),
+        }
+    }
+
+    fn abi_ret_type(&self, ty: TypeId) -> AnyTypeEnum<'ctx> {
+        match self.array_abi_type(ty) {
+            Some(abi) => abi,
+            None => self.map_ret_type(ty),
+        }
+    }
+
+    fn array_abi_align(&self, ty: TypeId) -> u32 {
+        self.target_data.get_abi_alignment(&self.map_type(ty))
+    }
+
+    fn abi_load_value(
+        &mut self,
+        abi: BasicTypeEnum<'ctx>,
+        ptr: PointerValue<'ctx>,
+        ty: TypeId,
+    ) -> BasicValueEnum<'ctx> {
+        let value = self.builder.build_load(abi, ptr, "").unwrap();
+        if let Some(inst) = value.as_instruction_value() {
+            inst.set_alignment(self.array_abi_align(ty)).unwrap();
+        }
+        value
+    }
+
+    fn abi_store_value(
+        &mut self,
+        ptr: PointerValue<'ctx>,
+        value: BasicValueEnum<'ctx>,
+        ty: TypeId,
+    ) {
+        let inst = self.builder.build_store(ptr, value).unwrap();
+        inst.set_alignment(self.array_abi_align(ty)).unwrap();
+    }
+
+    fn operand_abi_value(
+        &mut self,
+        operand: &Operand,
+        ty: TypeId,
+        func: &MirFunction,
+    ) -> BasicValueEnum<'ctx> {
+        let Some(abi) = self.array_abi_type(ty) else {
+            return self.operand_value(operand, Some(ty), func);
+        };
+        let abi = self.basic_from_any(abi);
+
+        if let Operand::Copy(place, _) | Operand::Move(place, _) = operand {
+            let ptr = self.place_ptr(place, func);
+            return self.abi_load_value(abi, ptr, ty);
+        }
+
+        let value = self.operand_value(operand, Some(ty), func);
+        if value.get_type() == abi {
+            return value;
+        }
+
+        let slot = self.entry_alloca(self.map_basic_type(ty), "abi.slot");
+        self.abi_store_value(slot, value, ty);
+        self.abi_load_value(abi, slot, ty)
     }
 
     fn c_abi_coerce_type(&self, ty: TypeId) -> Option<AnyTypeEnum<'ctx>> {
@@ -2843,7 +2960,11 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                     let value = self.cast_op(operand, func.ret_ty, func);
                     self.builder.build_return(Some(&value)).unwrap();
                 } else {
-                    let value = self.operand_value(operand, Some(func.ret_ty), func);
+                    let value = if self.fn_uses_array_abi(fn_id) {
+                        self.operand_abi_value(operand, func.ret_ty, func)
+                    } else {
+                        self.operand_value(operand, Some(func.ret_ty), func)
+                    };
                     self.builder.build_return(Some(&value)).unwrap();
                 }
             }
@@ -2897,6 +3018,10 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         };
 
         let is_extern = matches!(target, CallTarget::Extern(_));
+        let callee_array_abi = match target {
+            CallTarget::Direct(id) => self.fn_uses_array_abi(*id),
+            _ => true,
+        };
         let is_variadic_extern = match target {
             CallTarget::Extern(idx) => self.program.extern_fns[*idx].is_variadic,
             _ => false,
@@ -2912,7 +3037,11 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                     if needs_cast {
                         return self.cast_op(arg, *param_ty, func).into();
                     }
-                    let value = self.operand_value(arg, Some(*param_ty), func);
+                    let value = if is_extern || !callee_array_abi {
+                        self.operand_value(arg, Some(*param_ty), func)
+                    } else {
+                        self.operand_abi_value(arg, *param_ty, func)
+                    };
                     if is_extern && let Some(struct_ty) = self.c_abi_param_byval(*param_ty) {
                         let slot = self.entry_alloca(struct_ty.into(), "abi.arg.byval");
                         self.builder.build_store(slot, value).unwrap();
@@ -3005,12 +3134,12 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                                 .operand_type(arg, func)
                                 .or_else(|| declared_params.get(i).copied())
                                 .expect("indirect call argument type");
-                            self.map_basic_type(arg_ty).into()
+                            self.abi_param_type(arg_ty).into()
                         })
                         .collect();
 
                     let ret_ty = func.local(destination.local).ty;
-                    self.make_fn_type(self.map_ret_type(ret_ty), &arg_types, false)
+                    self.make_fn_type(self.abi_ret_type(ret_ty), &arg_types, false)
                 };
 
                 self.builder
@@ -3231,9 +3360,9 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             Type::Fn { params, ret } => {
                 let params: Vec<BasicMetadataTypeEnum<'ctx>> = params
                     .iter()
-                    .map(|&p| self.map_basic_type(p).into())
+                    .map(|&p| self.abi_param_type(p).into())
                     .collect();
-                self.make_fn_type(self.map_ret_type(ret), &params, false)
+                self.make_fn_type(self.abi_ret_type(ret), &params, false)
             }
             _ => unreachable!("indirect call through a non-fn value"),
         }
@@ -4392,7 +4521,11 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
 
     fn store_place(&mut self, place: &Place, value: BasicValueEnum<'ctx>, func: &MirFunction) {
         let ptr = self.place_ptr(place, func);
-        self.builder.build_store(ptr, value).unwrap();
+        let ty = self.place_type(place, func);
+        let inst = self.builder.build_store(ptr, value).unwrap();
+        if self.array_abi_type(ty).is_some() {
+            inst.set_alignment(self.array_abi_align(ty)).unwrap();
+        }
     }
 
     fn coerce_float_to_slot(
