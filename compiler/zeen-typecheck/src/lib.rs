@@ -10822,6 +10822,7 @@ impl<'res> TypeChecker<'res> {
     ) -> Option<DefId> {
         let type_generics = self.type_member_generics(struct_def);
         let mut best: Option<(u8, bool, DefId)> = None;
+        let previous_speculating = self.speculating;
 
         self.speculating = true;
 
@@ -10899,7 +10900,7 @@ impl<'res> TypeChecker<'res> {
             }
         }
 
-        self.speculating = false;
+        self.speculating = previous_speculating;
 
         best.map(|(_, _, method)| method)
     }
@@ -11286,6 +11287,7 @@ impl<'res> TypeChecker<'res> {
         let self_ty = self.method_self_type(struct_def, struct_args);
 
         let mut best: Option<CandidateRank> = None;
+        let previous_speculating = self.speculating;
 
         self.speculating = true;
 
@@ -11386,7 +11388,7 @@ impl<'res> TypeChecker<'res> {
             }
         }
 
-        self.speculating = false;
+        self.speculating = previous_speculating;
 
         best.map(|(_, _, _, _, _, method, entry)| (method, entry))
     }
@@ -14521,6 +14523,37 @@ mod tests {
         );
 
         assert!(result.is_ok(), "static method called via type should work");
+    }
+
+    #[test]
+    fn nested_static_calls_pick_fitting_specialized_block() {
+        let result = typecheck(
+            r#"
+            struct Calc[T] {}
+
+            implement Calc[f64] {
+                pub fn twice(x: f64) f64 {
+                    return x * 2.0;
+                }
+            }
+
+            implement Calc[f32] {
+                pub fn twice(x: f32) f32 {
+                    return x * 2.0;
+                }
+            }
+
+            fn main() {
+                let x: f64 = 2.0;
+                let y = Calc.twice(Calc.twice(x));
+            }
+            "#,
+        );
+
+        assert!(
+            result.is_ok(),
+            "nested static calls must pick the f64 block: {result:?}"
+        );
     }
 
     #[test]
