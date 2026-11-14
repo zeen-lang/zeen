@@ -12538,19 +12538,112 @@ impl<'res> TypeChecker<'res> {
             return;
         }
 
-        let pinned = match self.result.interner.get(operand_ty) {
-            Type::IntLiteral if matches!(self.result.interner.get(other_ty), Type::Builtin(b) if coerce::builtin_is_integer(*b)) => {
-                true
-            }
-            Type::FloatLiteral if matches!(self.result.interner.get(other_ty), Type::Builtin(b) if coerce::builtin_is_float(*b)) => {
-                true
-            }
-            _ => false,
+        let other = self.result.interner.get(other_ty).clone();
+        let array_element = match &other {
+            Type::Array {
+                element,
+                len: Some(_),
+            } => Some(*element),
+            _ => None,
         };
 
-        if pinned {
-            self.check_expr(operand, other_ty, false);
+        let target = match self.result.interner.get(operand_ty) {
+            Type::IntLiteral => match &other {
+                Type::Builtin(b) if coerce::builtin_is_integer(*b) => Some(other_ty),
+                _ => array_element.filter(|e| {
+                    matches!(self.result.interner.get(*e), Type::Builtin(b) if coerce::builtin_is_integer(*b))
+                }),
+            },
+            Type::FloatLiteral => match &other {
+                Type::Builtin(b) if coerce::builtin_is_float(*b) => Some(other_ty),
+                _ => array_element.filter(|e| {
+                    matches!(self.result.interner.get(*e), Type::Builtin(b) if coerce::builtin_is_float(*b))
+                }),
+            },
+            _ => None,
+        };
+
+        if let Some(target) = target {
+            self.check_expr(operand, target, false);
         }
+    }
+
+    fn array_like_type(&self, ty: TypeId) -> Option<TypeId> {
+        match self.result.interner.get(ty) {
+            Type::Array { len: Some(_), .. } => Some(ty),
+            Type::Pointer { inner, .. } | Type::ManyPointer { inner, .. } => {
+                match self.result.interner.get(*inner) {
+                    Type::Array { len: Some(_), .. } => Some(*inner),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn numeric_array_element(&self, array_ty: TypeId) -> bool {
+        match self.result.interner.get(array_ty) {
+            Type::Array { element, .. } => match self.result.interner.get(*element) {
+                Type::Builtin(b) => coerce::builtin_is_integer(*b) || coerce::builtin_is_float(*b),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn array_element_type(&self, array_ty: TypeId) -> Option<TypeId> {
+        match self.result.interner.get(array_ty) {
+            Type::Array { element, .. } => Some(*element),
+            _ => None,
+        }
+    }
+
+    fn array_pair_operand(&self, lhs: TypeId, rhs: TypeId, op: BinaryOp) -> Option<TypeId> {
+        if !matches!(
+            op,
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod
+        ) {
+            return None;
+        }
+
+        let lhs_array = self.array_like_type(lhs)?;
+        let rhs_array = self.array_like_type(rhs)?;
+
+        if lhs_array != rhs_array || !self.numeric_array_element(lhs_array) {
+            return None;
+        }
+
+        Some(lhs_array)
+    }
+
+    fn array_broadcast_operand(&self, lhs: TypeId, rhs: TypeId, op: BinaryOp) -> Option<TypeId> {
+        if !matches!(
+            op,
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod
+        ) {
+            return None;
+        }
+
+        let array_ty = self.array_like_type(lhs)?;
+        if !self.numeric_array_element(array_ty) {
+            return None;
+        }
+
+        let element = self.array_element_type(array_ty)?;
+        let matches_element = rhs == element
+            || match self.result.interner.get(rhs) {
+                Type::IntLiteral => matches!(
+                    self.result.interner.get(element),
+                    Type::Builtin(b) if coerce::builtin_is_integer(*b)
+                ),
+                Type::FloatLiteral => matches!(
+                    self.result.interner.get(element),
+                    Type::Builtin(b) if coerce::builtin_is_float(*b)
+                ),
+                _ => false,
+            };
+
+        matches_element.then_some(array_ty)
     }
 
     fn check_binary_op_builtin(
@@ -12562,9 +12655,17 @@ impl<'res> TypeChecker<'res> {
     ) -> TypeId {
         use BinaryOp::*;
 
+        if let Some(result_ty) = self.array_pair_operand(lhs, rhs, op) {
+            return result_ty;
+        }
+
         if matches!(op, Add | Sub)
             && let Some(result_ty) = self.pointer_arith_operand(op, lhs, rhs)
         {
+            return result_ty;
+        }
+
+        if let Some(result_ty) = self.array_broadcast_operand(lhs, rhs, op) {
             return result_ty;
         }
 

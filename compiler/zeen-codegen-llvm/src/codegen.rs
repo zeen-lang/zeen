@@ -1103,6 +1103,12 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                 if self.is_void_ty(place_ty) {
                     return;
                 }
+                if let Rvalue::BinaryOp { op, lhs, rhs } = rvalue
+                    && self.is_array_arith(*op, place_ty)
+                {
+                    self.emit_array_binary(*op, lhs, rhs, place_ty, place, func);
+                    return;
+                }
                 let value = self.rvalue_value(rvalue, place_ty, func);
                 let value = self.coerce_float_to_slot(value, place_ty);
                 self.store_place(place, value, func);
@@ -1262,6 +1268,230 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             Operand::Copy(place, _) | Operand::Move(place, _) => Some(self.place_type(place, func)),
             Operand::Constant(_, _) => None,
         }
+    }
+
+    fn is_array_arith(&self, op: BinaryOp, ty: TypeId) -> bool {
+        matches!(
+            op,
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod
+        ) && matches!(
+            self.typecheck.interner.get(ty),
+            Type::Array { len: Some(_), .. }
+        )
+    }
+
+    fn array_operand_ptr(
+        &self,
+        operand: &Operand,
+        func: &MirFunction,
+    ) -> Option<PointerValue<'ctx>> {
+        let place = match operand {
+            Operand::Copy(place, _) | Operand::Move(place, _) => place,
+            Operand::Constant(_, _) => return None,
+        };
+
+        let ty = self.place_type(place, func);
+        match self.typecheck.interner.get(ty).clone() {
+            Type::Array { .. } => Some(self.place_ptr(place, func)),
+            Type::Pointer { inner, .. } | Type::ManyPointer { inner, .. }
+                if matches!(self.typecheck.interner.get(inner), Type::Array { .. }) =>
+            {
+                Some(self.load_place(place, func).into_pointer_value())
+            }
+            _ => None,
+        }
+    }
+
+    fn array_element_ptr(
+        &self,
+        base: PointerValue<'ctx>,
+        array_ty: BasicTypeEnum<'ctx>,
+        index: IntValue<'ctx>,
+    ) -> PointerValue<'ctx> {
+        let usize_ty = self.context.ptr_sized_int_type(&self.target_data, None);
+        unsafe {
+            self.builder
+                .build_in_bounds_gep(array_ty, base, &[usize_ty.const_zero(), index], "")
+                .unwrap()
+        }
+    }
+
+    fn emit_array_binary(
+        &mut self,
+        op: BinaryOp,
+        lhs: &Operand,
+        rhs: &Operand,
+        array_ty: TypeId,
+        dest: &Place,
+        func: &MirFunction,
+    ) {
+        let Type::Array { element, len } = self.typecheck.interner.get(array_ty).clone() else {
+            unreachable!("array arithmetic on a non-array type");
+        };
+        let len = len.unwrap_or(0);
+
+        let dest_ptr = self.place_ptr(dest, func);
+        let lhs_ptr = self.array_operand_ptr(lhs, func);
+        let rhs_ptr = self.array_operand_ptr(rhs, func);
+        let lhs_scalar = lhs_ptr
+            .is_none()
+            .then(|| self.operand_value(lhs, Some(element), func));
+        let rhs_scalar = rhs_ptr
+            .is_none()
+            .then(|| self.operand_value(rhs, Some(element), func));
+
+        let usize_ty = self.context.ptr_sized_int_type(&self.target_data, None);
+        let array_llvm_ty = self.map_basic_type(array_ty);
+        let elem_llvm_ty = self.map_basic_type(element);
+        let len_value = usize_ty.const_int(len, false);
+
+        let current = self.builder.get_insert_block().unwrap();
+        let function = current.get_parent().unwrap();
+        let head = self.context.append_basic_block(function, "array.op.head");
+        let body = self.context.append_basic_block(function, "array.op.body");
+        let done = self.context.append_basic_block(function, "array.op.done");
+        self.builder.build_unconditional_branch(head).unwrap();
+
+        self.builder.position_at_end(head);
+        let index = self.builder.build_phi(usize_ty, "array.op.index").unwrap();
+        let in_range = self
+            .builder
+            .build_int_compare(
+                IntPredicate::ULT,
+                index.as_basic_value().into_int_value(),
+                len_value,
+                "",
+            )
+            .unwrap();
+        self.builder
+            .build_conditional_branch(in_range, body, done)
+            .unwrap();
+
+        self.builder.position_at_end(body);
+        let idx = index.as_basic_value().into_int_value();
+        let lhs_value = match lhs_ptr {
+            Some(ptr) => {
+                let elem_ptr = self.array_element_ptr(ptr, array_llvm_ty, idx);
+                self.builder.build_load(elem_llvm_ty, elem_ptr, "").unwrap()
+            }
+            None => lhs_scalar.unwrap(),
+        };
+        let rhs_value = match rhs_ptr {
+            Some(ptr) => {
+                let elem_ptr = self.array_element_ptr(ptr, array_llvm_ty, idx);
+                self.builder.build_load(elem_llvm_ty, elem_ptr, "").unwrap()
+            }
+            None => rhs_scalar.unwrap(),
+        };
+
+        let value = self.array_element_binary(op, lhs_value, rhs_value, element);
+        let dest_elem = self.array_element_ptr(dest_ptr, array_llvm_ty, idx);
+        self.builder.build_store(dest_elem, value).unwrap();
+
+        let next = self
+            .builder
+            .build_int_add(idx, usize_ty.const_int(1, false), "")
+            .unwrap();
+        let back = self.builder.get_insert_block().unwrap();
+        self.builder.build_unconditional_branch(head).unwrap();
+        index.add_incoming(&[(&usize_ty.const_zero(), current), (&next, back)]);
+
+        self.builder.position_at_end(done);
+    }
+
+    fn array_element_binary(
+        &mut self,
+        op: BinaryOp,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+        element: TypeId,
+    ) -> BasicValueEnum<'ctx> {
+        let is_float = matches!(
+            self.typecheck.interner.get(element),
+            Type::Builtin(BuiltinType::f32 | BuiltinType::f64)
+        );
+
+        if is_float {
+            let l = lhs.into_float_value();
+            let r = rhs.into_float_value();
+            let b = &self.builder;
+            return match op {
+                BinaryOp::Add => b.build_float_add(l, r, "").unwrap().into(),
+                BinaryOp::Sub => b.build_float_sub(l, r, "").unwrap().into(),
+                BinaryOp::Mul => b.build_float_mul(l, r, "").unwrap().into(),
+                BinaryOp::Div => b.build_float_div(l, r, "").unwrap().into(),
+                BinaryOp::Mod => b.build_float_rem(l, r, "").unwrap().into(),
+                _ => unreachable!("unsupported array arithmetic op {op:?}"),
+            };
+        }
+
+        let l = lhs.into_int_value();
+        let r = rhs.into_int_value();
+
+        if matches!(op, BinaryOp::Div | BinaryOp::Mod)
+            && self.options.mode == CompilationMode::Debug
+        {
+            let zero = l.get_type().const_zero();
+            let is_zero = self
+                .builder
+                .build_int_compare(IntPredicate::EQ, r, zero, "")
+                .unwrap();
+            let current = self.builder.get_insert_block().unwrap();
+            let function = current.get_parent().unwrap();
+            let fail = self.context.append_basic_block(function, "array.op.div0");
+            let ok = self.context.append_basic_block(function, "array.op.divok");
+            self.builder
+                .build_conditional_branch(is_zero, fail, ok)
+                .unwrap();
+
+            self.builder.position_at_end(fail);
+            self.emit_array_div_zero_panic();
+
+            self.builder.position_at_end(ok);
+        }
+
+        let signed = self.is_signed(element);
+        let b = &self.builder;
+        match op {
+            BinaryOp::Add => b.build_int_add(l, r, "").unwrap().into(),
+            BinaryOp::Sub => b.build_int_sub(l, r, "").unwrap().into(),
+            BinaryOp::Mul => b.build_int_mul(l, r, "").unwrap().into(),
+            BinaryOp::Div => if signed {
+                b.build_int_signed_div(l, r, "").unwrap()
+            } else {
+                b.build_int_unsigned_div(l, r, "").unwrap()
+            }
+            .into(),
+            BinaryOp::Mod => if signed {
+                b.build_int_signed_rem(l, r, "").unwrap()
+            } else {
+                b.build_int_unsigned_rem(l, r, "").unwrap()
+            }
+            .into(),
+            _ => unreachable!("unsupported array arithmetic op {op:?}"),
+        }
+    }
+
+    fn emit_array_div_zero_panic(&mut self) {
+        let printf = self.get_or_declare_runtime_fn(
+            "printf",
+            self.context.i32_type().into(),
+            &[self.context.ptr_type(AddressSpace::default()).into()],
+            true,
+        );
+        let message = self.get_str_global("attempt to divide by zero\n");
+        self.builder
+            .build_call(printf, &[message.as_pointer_value().into()], "")
+            .unwrap();
+
+        let panic_stack = self.get_or_declare_runtime_fn(
+            "zeen.panic_stack",
+            self.context.void_type().into(),
+            &[],
+            false,
+        );
+        self.builder.build_call(panic_stack, &[], "").unwrap();
+        self.builder.build_unreachable().unwrap();
     }
 
     fn const_value(

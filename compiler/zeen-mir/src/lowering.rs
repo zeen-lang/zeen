@@ -2236,6 +2236,16 @@ impl<'ctx> MirLowering<'ctx> {
         )
     }
 
+    fn is_array_like_ty(&self, ty: TypeId) -> bool {
+        match self.typecheck.interner.get(ty) {
+            Type::Array { .. } => true,
+            Type::Pointer { inner, .. } | Type::ManyPointer { inner, .. } => {
+                matches!(self.typecheck.interner.get(*inner), Type::Array { .. })
+            }
+            _ => false,
+        }
+    }
+
     fn mir_type_is_copy(&self, ty: TypeId) -> bool {
         match self.typecheck.interner.get(ty).clone() {
             Type::Builtin(_)
@@ -7061,16 +7071,18 @@ impl<'ctx> MirLowering<'ctx> {
     ) -> (BlockId, Operand) {
         let is_float_div = self.is_float_ty(rhs_ty);
 
-        let (block, rhs_op) = if matches!(op, BinaryOp::Div | BinaryOp::Mod) && !is_float_div {
-            let rhs_local = self.operand_to_local(fb, rhs_op, rhs_ty, block);
-            let block = self.lower_div_zero_check(fb, block, rhs_local, rhs_ty, source.clone());
-            (
-                block,
-                Operand::Copy(Place::from_local(rhs_local), source.clone()),
-            )
-        } else {
-            (block, rhs_op)
-        };
+        let rhs_is_array = self.is_array_like_ty(rhs_ty);
+        let (block, rhs_op) =
+            if matches!(op, BinaryOp::Div | BinaryOp::Mod) && !is_float_div && !rhs_is_array {
+                let rhs_local = self.operand_to_local(fb, rhs_op, rhs_ty, block);
+                let block = self.lower_div_zero_check(fb, block, rhs_local, rhs_ty, source.clone());
+                (
+                    block,
+                    Operand::Copy(Place::from_local(rhs_local), source.clone()),
+                )
+            } else {
+                (block, rhs_op)
+            };
 
         let temp = fb.new_temp(result_ty);
 
