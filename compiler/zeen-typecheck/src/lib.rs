@@ -4616,6 +4616,8 @@ impl<'res> TypeChecker<'res> {
                         src: source.src(),
                         span: source.span,
                     });
+                } else {
+                    self.record_slice_coercion(&args[1], value_ty, target_ty);
                 }
 
                 target_ty
