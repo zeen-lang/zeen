@@ -15154,6 +15154,29 @@ mod tests {
     }
 
     #[test]
+    fn as_array_to_slice_records_coercion() {
+        let result = typecheck(
+            r#"
+            fn main() {
+              let arr: [3]i32 = {1, 2, 3};
+              let s = @as([]const i32, arr);
+            }
+            "#,
+        );
+
+        assert!(
+            result.is_ok(),
+            "@as must accept an array: {:?}",
+            result.err()
+        );
+
+        assert!(
+            !result.unwrap().array_to_slice_coercions.is_empty(),
+            "@as from an array to a slice must record a slice coercion"
+        );
+    }
+
+    #[test]
     fn implicit_array_to_slice_coerces() {
         let result = typecheck(
             r#"
