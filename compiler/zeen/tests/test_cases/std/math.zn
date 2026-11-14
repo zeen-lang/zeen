@@ -1,0 +1,86 @@
+use std.math;
+
+fn main() {
+  @println("{:.4}", PI);
+  @println("{:.4}", TAU);
+  @println("{:.4}", E);
+  @println("{:.4}", SQRT_2);
+  @println("{:.4}", LN_2);
+  @println("{:.4}", LN_10);
+
+  @println("{}", Math.min(3, 2));
+  @println("{:.4}", Math.max(3.0, 2.0));
+  @println("{}", Math.clamp(5, 1, 3));
+  @println("{:.4}", Math.clamp(0.5, 0.0, 1.0));
+  @println("{}", Math.abs(0 - 7));
+  @println("{:.4}", Math.abs(0.0 - 7.5));
+
+  @println("{:.4}", Math.sqrt(36.0));
+  @println("{:.4}", Math.sqrt(@as(f32, 36.0)));
+  @println("{:.4}", Math.cbrt(27.0));
+  @println("{:.4}", Math.hypot(3.0, 4.0));
+  @println("{:.4}", Math.pow(2.0, 10.0));
+  @println("{:.4}", Math.powi(2.0, 10));
+  @println("{:.4}", Math.exp(0.0));
+  @println("{:.4}", Math.exp2(3.0));
+  @println("{:.4}", Math.exp_m1(0.0));
+  @println("{:.4}", Math.ln(E));
+  @println("{:.4}", Math.ln_1p(0.0));
+  @println("{:.4}", Math.log2(8.0));
+  @println("{:.4}", Math.log10(1000.0));
+  @println("{:.4}", Math.log(8.0, 2.0));
+  @println("{:.4}", Math.rem(7.0, 2.0));
+  @println("{:.4}", Math.rem(@as(f32, 7.0), 2.0));
+
+  @println("{:.4}", Math.sin(0.0));
+  @println("{:.4}", Math.cos(0.0));
+  @println("{:.4}", Math.tan(0.0));
+  @println("{:.4}", Math.asin(0.0));
+  @println("{:.4}", Math.acos(1.0));
+  @println("{:.4}", Math.atan(0.0));
+  @println("{:.4}", Math.atan2(1.0, 1.0));
+  @println("{:.4}", Math.sinh(0.0));
+  @println("{:.4}", Math.cosh(0.0));
+  @println("{:.4}", Math.tanh(0.0));
+  @println("{:.4}", Math.asinh(0.0));
+  @println("{:.4}", Math.acosh(1.0));
+  @println("{:.4}", Math.atanh(0.0));
+
+  @println("{:.4}", Math.floor(2.7));
+  @println("{:.4}", Math.ceil(2.1));
+  @println("{:.4}", Math.round(2.5));
+  @println("{:.4}", Math.trunc(0.0 - 2.7));
+  @println("{:.4}", Math.fract(2.25));
+  @println("{:.4}", Math.recip(4.0));
+  @println("{:.4}", Math.signum(0.0 - 3.0));
+  @println("{:.4}", Math.copysign(3.0, 0.0 - 1.0));
+  @println("{:.4}", Math.mul_add(2.0, 3.0, 1.0));
+  @println("{:.4}", Math.lerp(1.0, 3.0, 0.5));
+  @println("{:.4}", Math.to_degrees(PI));
+  @println("{:.4}", Math.to_radians(180.0));
+
+  @println("{}", Math.is_nan(Math.sqrt(0.0 - 1.0)));
+  @println("{}", Math.is_inf(Math.recip(0.0)));
+  @println("{}", Math.is_finite(1.0));
+  @println("{}", Math.is_sign_positive(1.0));
+  @println("{}", Math.is_sign_negative(0.0 - 1.0));
+
+  @println("{}", Math.pow(2, 10));
+  @println("{}", Math.pow(@as(i64, 3), 4));
+  @println("{}", Math.pow(@as(u32, 5), 3));
+  @println("{}", Math.pow(@as(u64, 2), 20));
+  @println("{}", Math.gcd(12, 18));
+  @println("{}", Math.gcd(@as(i64, 0 - 12), 18));
+  @println("{}", Math.gcd(@as(u32, 12), 18));
+  @println("{}", Math.gcd(@as(u64, 12), 18));
+  @println("{}", Math.lcm(4, 6));
+  @println("{}", Math.lcm(@as(i64, 4), 6));
+  @println("{}", Math.lcm(@as(u32, 4), 6));
+  @println("{}", Math.lcm(@as(u64, 4), 6));
+  @println("{}", Math.signum(0 - 7));
+  @println("{}", Math.signum(@as(i64, 0 - 3)));
+  @println("{}", Math.signum(@as(u32, 0)));
+  @println("{}", Math.signum(@as(u64, 5)));
+
+  @println("{:.4}", Math.sin(Math.sqrt(4.0)));
+}
