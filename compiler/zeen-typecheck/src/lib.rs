@@ -3970,7 +3970,13 @@ impl<'res> TypeChecker<'res> {
                             .unify_string_literal_branches(then_block, else_b, then_ty, else_ty)
                         {
                             Some(unified) => unified,
-                            None => self.unify_branches(then_ty, else_ty, expr.source.clone()),
+                            None => {
+                                let merged =
+                                    self.unify_branches(then_ty, else_ty, expr.source.clone());
+                                self.record_stmt_slice_coercion(then_block, then_ty, merged);
+                                self.record_stmt_slice_coercion(else_b, else_ty, merged);
+                                merged
+                            }
                         }
                     }
                     None => self.result.interner.void(),
@@ -5592,7 +5598,13 @@ impl<'res> TypeChecker<'res> {
                             .unify_string_literal_branches(then_block, else_b, then_ty, else_ty)
                         {
                             Some(unified) => unified,
-                            None => self.unify_branches(then_ty, else_ty, expr.source.clone()),
+                            None => {
+                                let merged =
+                                    self.unify_branches(then_ty, else_ty, expr.source.clone());
+                                self.record_stmt_slice_coercion(then_block, then_ty, merged);
+                                self.record_stmt_slice_coercion(else_b, else_ty, merged);
+                                merged
+                            }
                         }
                     }
                     None => self.result.interner.void(),
@@ -5709,6 +5721,29 @@ impl<'res> TypeChecker<'res> {
         self.coerce_or_error(actual, expected, expr, allow_const_remove)
     }
 
+    fn record_slice_coercion(&mut self, expr: &HirExpr, from: TypeId, to: TypeId) {
+        if matches!(&expr.kind, HirExprKind::Literal(Literal::String(_))) {
+            return;
+        }
+
+        if !matches!(self.result.interner.get(from), Type::Array { .. })
+            || !matches!(self.result.interner.get(to), Type::Slice { .. })
+        {
+            return;
+        }
+
+        self.result.array_to_slice_coercions.insert(expr.id, from);
+        self.result.record_expr_type(expr.id, to);
+    }
+
+    fn record_stmt_slice_coercion(&mut self, stmt: &HirStmt, from: TypeId, to: TypeId) {
+        let HirStmtKind::Expr(expr) = &stmt.kind else {
+            return;
+        };
+
+        self.record_slice_coercion(expr, from, to);
+    }
+
     fn coerce_or_error(
         &mut self,
         actual: TypeId,
@@ -5765,18 +5800,9 @@ impl<'res> TypeChecker<'res> {
             }
 
             CoerceResult::ArrayToSlice => {
-                if matches!(&expr.kind, HirExprKind::Literal(Literal::String(_))) {
-                    self.result.record_expr_type(id, expected);
-                    expected
-                } else {
-                    self.report(TypeError::ImplicitArrayToSlice {
-                        expected: self.display_type(expected).into(),
-                        found: self.display_type(actual).into(),
-                        src: source.src(),
-                        span: source.span,
-                    });
-                    actual
-                }
+                self.record_slice_coercion(expr, actual, expected);
+                self.result.record_expr_type(id, expected);
+                expected
             }
 
             CoerceResult::RemoveConst => {
@@ -6315,7 +6341,11 @@ impl<'res> TypeChecker<'res> {
         if let Some(merged) = self.unify_string_literal_exprs(prev_body, body, prev_ty, body_ty) {
             return merged;
         }
-        self.unify_branches(prev_ty, body_ty, source.clone())
+
+        let merged = self.unify_branches(prev_ty, body_ty, source.clone());
+        self.record_slice_coercion(prev_body, prev_ty, merged);
+        self.record_slice_coercion(body, body_ty, merged);
+        merged
     }
 
     fn unify_branches(&mut self, a: TypeId, b: TypeId, source: Source) -> TypeId {
@@ -9039,16 +9069,9 @@ impl<'res> TypeChecker<'res> {
             }
 
             match try_coerce(&mut self.result.interner, arg_ty, substituted) {
-                CoerceResult::ArrayToSlice
-                    if !matches!(&arg.kind, HirExprKind::Literal(Literal::String(_))) =>
-                {
-                    self.bind_unresolved_generics(param_ty, bindings);
-                    self.report(TypeError::ImplicitArrayToSlice {
-                        expected: self.display_type(substituted).into(),
-                        found: self.display_type(arg_ty).into(),
-                        src: arg.source.src(),
-                        span: arg.source.span,
-                    });
+                CoerceResult::ArrayToSlice => {
+                    self.record_slice_coercion(arg, arg_ty, substituted);
+                    self.result.record_expr_type(arg.id, substituted);
                 }
                 result if !result.is_ok() => {
                     self.bind_unresolved_generics(param_ty, bindings);
@@ -15084,8 +15107,8 @@ mod tests {
     }
 
     #[test]
-    fn generic_array_to_slice_is_rejected() {
-        let errors = typecheck(
+    fn generic_array_to_slice_coerces() {
+        let result = typecheck(
             r#"
             fn take[T](s: []const T) usize {
               return s.len;
@@ -15095,14 +15118,12 @@ mod tests {
               @println("{}", take({1, 2, 3}));
             }
             "#,
-        )
-        .expect_err("implicit array to slice coercion through a generic must be rejected");
+        );
 
         assert!(
-            errors
-                .iter()
-                .any(|err| matches!(err, TypeError::ImplicitArrayToSlice { .. })),
-            "expected TypeError::ImplicitArrayToSlice, got: {errors:?}"
+            result.is_ok(),
+            "an array must coerce to a slice through a generic argument: {:?}",
+            result.err()
         );
     }
 
@@ -15131,8 +15152,8 @@ mod tests {
     }
 
     #[test]
-    fn implicit_array_to_slice_is_rejected() {
-        let errors = typecheck(
+    fn implicit_array_to_slice_coerces() {
+        let result = typecheck(
             r#"
             struct Foo {}
 
@@ -15149,14 +15170,12 @@ mod tests {
               a.write({1, 2, 3});
             }
             "#,
-        )
-        .expect_err("implicit array to slice coercion must be rejected");
+        );
 
         assert!(
-            errors
-                .iter()
-                .any(|err| matches!(err, TypeError::ImplicitArrayToSlice { .. })),
-            "expected TypeError::ImplicitArrayToSlice, got: {errors:?}"
+            result.is_ok(),
+            "an array argument must coerce to a slice argument: {:?}",
+            result.err()
         );
     }
 
