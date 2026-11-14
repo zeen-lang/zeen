@@ -1,0 +1,30 @@
+struct Box[T] {}
+
+implement[T] Box[T] {
+  pub fn show(x: T) T {
+    return x;
+  }
+
+  pub fn reveal(*const self, x: T) T {
+    return x;
+  }
+}
+
+implement Box[f64] {
+  pub fn show(x: i32) i32 {
+    return x * 10;
+  }
+
+  pub fn reveal(*const self, x: i32) i32 {
+    return x * 10;
+  }
+}
+
+fn main() {
+  const b: Box[f64] = .{};
+
+  @println("assoc i32: {}", Box.show(2));
+  @println("assoc f64: {}", Box.show(1.5));
+  @println("instance i32: {}", b.reveal(2));
+  @println("instance f64: {}", b.reveal(1.5));
+}
