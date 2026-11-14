@@ -173,6 +173,36 @@ fn returning_struct_with_local_slice_field_is_rejected() {
 }
 
 #[test]
+fn returning_as_slice_of_local_is_rejected() {
+    let errors = flow_errors(
+        "fn make() []const i32 { \
+             let a: [4]i32 = {1, 2, 3, 4}; \
+             let s = @as([]const i32, a); \
+             return s; \
+         } \
+         fn main() { let s = make(); @println(\"{}\", s[0]); }",
+    );
+
+    assert!(
+        has_escaping_borrow(&errors),
+        "expected escaping-borrow error, got {errors:?}"
+    );
+}
+
+#[test]
+fn returning_as_slice_of_param_is_allowed() {
+    let errors = flow_errors(
+        "fn pass(a: []const i32) []const i32 { let s = @as([]const i32, a); return s; } \
+         fn main() { let a: [2]i32 = {1, 2}; @println(\"{}\", pass(a[..])[0]); }",
+    );
+
+    assert!(
+        !has_escaping_borrow(&errors),
+        "unexpected escaping-borrow error, got {errors:?}"
+    );
+}
+
+#[test]
 fn returning_string_literal_slice_is_allowed() {
     let errors = flow_errors(
         "fn greet() []const char { \"hello\" } \
