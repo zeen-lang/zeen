@@ -1,5 +1,10 @@
 [package]
 name = "std"
+description = "Zeen standard library package"
+authors = ["mealet <workjason34@gmail.com>"]
+repository = "https://github.com/zeen-lang/zeen"
+license = "Apache-2.0"
+
 version = "0.6.0"
 zeen = "0.6.0"
 type = "lib/static"
