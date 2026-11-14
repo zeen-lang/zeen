@@ -1,0 +1,4 @@
+assoc i32: 20
+assoc f64: 1.500000
+instance i32: 20
+instance f64: 1.500000

@@ -185,7 +185,28 @@ struct MethodSignatureEntry {
     span: SourceSpan,
 }
 
-type CandidateRank = (u8, bool, bool, bool, usize, DefId, Option<ImplEntry>);
+struct CandidateRank {
+    args_misfit: bool,
+    rank: u8,
+    ret_misfit: bool,
+    generic_iface_args: bool,
+    index: usize,
+    method: DefId,
+    entry: Option<ImplEntry>,
+}
+
+impl CandidateRank {
+    fn key(&self) -> (bool, bool, u8, bool, bool, usize) {
+        (
+            self.rank == 4,
+            self.args_misfit,
+            self.rank,
+            self.ret_misfit,
+            self.generic_iface_args,
+            self.index,
+        )
+    }
+}
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum MethodOwnerKey {
@@ -10893,9 +10914,9 @@ impl<'res> TypeChecker<'res> {
                 try_coerce(&mut self.result.interner, arg_ty, param_ty).is_ok()
             });
 
-            if best
-                .is_none_or(|(best_rank, best_fit, _)| (rank, !args_fit) < (best_rank, !best_fit))
-            {
+            if best.is_none_or(|(best_rank, best_fit, _)| {
+                (rank == 4, !args_fit, rank) < (best_rank == 4, !best_fit, best_rank)
+            }) {
                 best = Some((rank, args_fit, candidate));
             }
         }
@@ -11370,27 +11391,27 @@ impl<'res> TypeChecker<'res> {
                     .any(|arg| matches!(self.result.interner.get(*arg), Type::GenericParam(_)))
             });
 
-            let key = (rank, !args_fit, !ret_fit, generic_iface_args, index);
+            let candidate = CandidateRank {
+                args_misfit: !args_fit,
+                rank,
+                ret_misfit: !ret_fit,
+                generic_iface_args,
+                index,
+                method,
+                entry,
+            };
 
             if best
                 .as_ref()
-                .is_none_or(|current| key < (current.0, current.1, current.2, current.3, current.4))
+                .is_none_or(|current| candidate.key() < current.key())
             {
-                best = Some((
-                    rank,
-                    !args_fit,
-                    !ret_fit,
-                    generic_iface_args,
-                    index,
-                    method,
-                    entry,
-                ));
+                best = Some(candidate);
             }
         }
 
         self.speculating = previous_speculating;
 
-        best.map(|(_, _, _, _, _, method, entry)| (method, entry))
+        best.map(|candidate| (candidate.method, candidate.entry))
     }
 
     fn impl_generic_slot(entry: &ImplEntry, generic: DefId) -> String {
