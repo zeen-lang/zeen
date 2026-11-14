@@ -15,6 +15,7 @@ pub struct TypeCheckResult {
     pub interner: TypeInterner,
 
     pub expr_types: HashMap<HirId, TypeId>,
+    pub array_to_slice_coercions: HashMap<HirId, TypeId>,
     pub def_types: HashMap<DefId, TypeId>,
     pub call_resolutions: HashMap<HirId, CallResolution>,
     pub fn_item_monos: HashMap<HirId, Vec<TypeId>>,
