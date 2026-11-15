@@ -621,6 +621,10 @@ fn compile(args: cli::Args) {
 
             linker.with_link_libs(&args.link);
             linker.with_link_dirs(&args.link_dir);
+            linker.with_options(zeen_linker::LinkOptions {
+                strip: args.strip,
+                small: args.small,
+            });
 
             let object_file = tempfile::Builder::new()
                 .prefix("zeen-")

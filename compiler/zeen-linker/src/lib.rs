@@ -89,11 +89,12 @@ impl Toolchain {
         output: &Path,
         link_dirs: &[PathBuf],
         link_libs: &[String],
+        flags: &[String],
     ) -> Command {
         match self {
             Toolchain::Command { program, args } => {
                 let mut command = Command::new(program);
-                command.args(objects).args(extra).args(args);
+                command.args(objects).args(extra).args(args).args(flags);
 
                 for dir in link_dirs {
                     command.arg(format!("-L{}", dir.display()));
@@ -111,7 +112,7 @@ impl Toolchain {
                 args,
             } => {
                 let mut command = Command::new(program);
-                command.args(objects).args(extra).args(args);
+                command.args(objects).args(extra).args(args).args(flags);
 
                 for dir in link_dirs {
                     command.arg(format!("-L{}", dir.display()));
@@ -163,12 +164,34 @@ impl Toolchain {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LinkOptions {
+    pub strip: bool,
+    pub small: bool,
+}
+
+fn link_flags(target: &Target, msvc: bool, options: LinkOptions) -> Vec<String> {
+    if msvc {
+        return Vec::new();
+    }
+
+    let mut flags = Vec::new();
+    if options.strip {
+        flags.push("-s".to_owned());
+    }
+    if options.small && target.is_elf() {
+        flags.push("-Wl,-z,noseparate-code".to_owned());
+    }
+    flags
+}
+
 #[derive(Debug)]
 pub struct ObjectLinker {
     target: Target,
     toolchain: Toolchain,
     link_libs: Vec<String>,
     link_dirs: Vec<PathBuf>,
+    options: LinkOptions,
 }
 
 impl ObjectLinker {
@@ -181,7 +204,12 @@ impl ObjectLinker {
             toolchain,
             link_libs: Vec::new(),
             link_dirs: Vec::new(),
+            options: LinkOptions::default(),
         })
+    }
+
+    pub fn with_options(&mut self, options: LinkOptions) {
+        self.options = options;
     }
 
     pub fn with_link_libs(&mut self, libs: &[String]) {
@@ -253,10 +281,20 @@ impl ObjectLinker {
     ) -> Result<PathBuf, String> {
         let output = Self::apply_extension(&self.target, output);
 
+        let msvc = matches!(self.toolchain, Toolchain::Msvc { .. });
+        let flags = link_flags(&self.target, msvc, self.options);
+
         let name = self.toolchain.display_name();
         let result = self
             .toolchain
-            .build_command(objects, extra, &output, &self.link_dirs, &self.link_libs)
+            .build_command(
+                objects,
+                extra,
+                &output,
+                &self.link_dirs,
+                &self.link_libs,
+                &flags,
+            )
             .output()
             .map_err(|err| format!("failed to spawn linker `{name}`: {err}"))?;
 
@@ -274,7 +312,14 @@ impl ObjectLinker {
             && let Some(toolchain) = self.toolchain.with_late_arg("-latomic")
         {
             let retry = toolchain
-                .build_command(objects, extra, &output, &self.link_dirs, &self.link_libs)
+                .build_command(
+                    objects,
+                    extra,
+                    &output,
+                    &self.link_dirs,
+                    &self.link_libs,
+                    &flags,
+                )
                 .output();
             if retry.map(|output| output.status.success()).unwrap_or(false) {
                 return Ok(output);
@@ -828,6 +873,50 @@ mod tests {
     }
 
     #[test]
+    fn no_link_flags_by_default() {
+        let target = Target::parse("x86_64-unknown-linux-gnu");
+        assert!(link_flags(&target, false, LinkOptions::default()).is_empty());
+    }
+
+    #[test]
+    fn strip_adds_the_strip_flag() {
+        let target = Target::parse("x86_64-unknown-linux-gnu");
+        let options = LinkOptions {
+            strip: true,
+            small: false,
+        };
+        assert_eq!(link_flags(&target, false, options), vec!["-s".to_owned()]);
+    }
+
+    #[test]
+    fn small_adds_the_layout_flag_only_on_elf() {
+        let options = LinkOptions {
+            strip: false,
+            small: true,
+        };
+        let linux = Target::parse("x86_64-unknown-linux-gnu");
+        let darwin = Target::parse("aarch64-apple-darwin");
+        let wasm = Target::parse("wasm32-unknown-unknown");
+
+        assert_eq!(
+            link_flags(&linux, false, options),
+            vec!["-Wl,-z,noseparate-code".to_owned()]
+        );
+        assert!(link_flags(&darwin, false, options).is_empty());
+        assert!(link_flags(&wasm, false, options).is_empty());
+    }
+
+    #[test]
+    fn msvc_gets_no_link_flags() {
+        let target = Target::parse("x86_64-pc-windows-msvc");
+        let options = LinkOptions {
+            strip: true,
+            small: true,
+        };
+        assert!(link_flags(&target, true, options).is_empty());
+    }
+
+    #[test]
     #[cfg(not(target_os = "windows"))]
     fn msvc_target_rejected_off_windows() {
         let error = ObjectLinker::detect("x86_64-pc-windows-msvc").unwrap_err();
@@ -872,6 +961,7 @@ mod tests {
             Path::new("out"),
             &[PathBuf::from("/opt/raylib/lib")],
             &["raylib".to_owned()],
+            &[],
         );
         let args = command_args(&command);
         assert!(args.contains(&"-L/opt/raylib/lib".to_owned()));
@@ -887,6 +977,7 @@ mod tests {
             Path::new("out"),
             &[PathBuf::from("/opt/raylib/lib")],
             &["raylib".to_owned()],
+            &[],
         );
         let args = command_args(&command);
         assert!(args.contains(&"-L/opt/raylib/lib".to_owned()));
@@ -906,6 +997,7 @@ mod tests {
             Path::new("out.exe"),
             &[PathBuf::from("C:/raylib/lib")],
             &["raylib".to_owned()],
+            &[],
         );
         let args = command_args(&command);
         assert!(args.contains(&"/LIBPATH:C:/libs".to_owned()));
@@ -922,6 +1014,7 @@ mod tests {
             Path::new("out.exe"),
             &[],
             &["raylib".to_owned(), "winmm".to_owned()],
+            &[],
         );
         let args = command_args(&command);
         let position = |needle: &str| {
