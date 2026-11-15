@@ -69,11 +69,14 @@ fn main_wrapper_calls_zeen_main_and_returns_value() {
 
     let ir = compile(&fx, CompilationMode::Debug);
 
-    assert!(ir.contains("define i32 @zeen_main()"), "{ir}");
+    assert!(ir.contains("define internal i32 @zeen_main()"), "{ir}");
     assert!(ir.contains("define i32 @main(i32"), "{ir}");
     assert!(ir.contains("call i32 @zeen_main()"), "{ir}");
-    assert!(ir.contains("@__zeen_argc = global i32 0"), "{ir}");
-    assert!(ir.contains("@__zeen_argv = global ptr null"), "{ir}");
+    assert!(ir.contains("@__zeen_argc = internal global i32 0"), "{ir}");
+    assert!(
+        ir.contains("@__zeen_argv = internal global ptr null"),
+        "{ir}"
+    );
 }
 
 #[test]
@@ -88,7 +91,7 @@ fn main_wrapper_void_returns_zero() {
 
     let ir = compile(&fx, CompilationMode::Debug);
 
-    assert!(ir.contains("define void @zeen_main()"), "{ir}");
+    assert!(ir.contains("define internal void @zeen_main()"), "{ir}");
     assert!(ir.contains("ret i32 0"), "{ir}");
 }
 
@@ -106,7 +109,7 @@ fn main_wrapper_sign_extends_smaller_returns() {
 
     let ir = compile(&fx, CompilationMode::Debug);
 
-    assert!(ir.contains("define i8 @zeen_main()"), "{ir}");
+    assert!(ir.contains("define internal i8 @zeen_main()"), "{ir}");
     assert!(ir.contains("sext i8"), "{ir}");
 }
 
@@ -126,9 +129,41 @@ fn no_main_produces_no_wrapper() {
 
     let ir = compile(&fx, CompilationMode::Debug);
 
-    assert!(ir.contains("define i32 @add("), "{ir}");
+    assert!(ir.contains("define internal i32 @add("), "{ir}");
     assert!(ir.contains("add i32"), "{ir}");
     assert!(!ir.contains("define i32 @main"), "{ir}");
+}
+
+#[test]
+fn extern_export_keeps_external_linkage() {
+    let mut fx = Fixture::new();
+    let i32 = fx.i32();
+
+    let exported_def = fx.def("exported", DefKind::Function);
+    let mut exported = fx.fn_builder("exported", exported_def, i32);
+    let exported_ret = exported.temp(i32);
+    exported.entry("bb0");
+    exported.assign(place(exported_ret), use_const(const_int(1)));
+    exported.ret(copy_of(exported_ret));
+    let exported_id = exported.finish();
+
+    let hidden_def = fx.def("hidden", DefKind::Function);
+    let mut hidden = fx.fn_builder("hidden", hidden_def, i32);
+    let hidden_ret = hidden.temp(i32);
+    hidden.entry("bb0");
+    hidden.assign(place(hidden_ret), use_const(const_int(2)));
+    hidden.ret(copy_of(hidden_ret));
+    hidden.finish();
+
+    fx.program
+        .extern_exports
+        .insert(exported_id, "exported".to_string());
+
+    let ir = compile(&fx, CompilationMode::Debug);
+
+    assert!(ir.contains("define i32 @exported()"), "{ir}");
+    assert!(!ir.contains("define internal i32 @exported()"), "{ir}");
+    assert!(ir.contains("define internal i32 @hidden()"), "{ir}");
 }
 
 #[test]
@@ -171,7 +206,7 @@ fn indirect_call_through_fn_local_with_fn_constant() {
 
     let ir = compile(&fx, CompilationMode::Debug);
 
-    assert!(ir.contains("define i32 @foo()"), "{ir}");
+    assert!(ir.contains("define internal i32 @foo()"), "{ir}");
     assert!(ir.contains("call i32 %"), "{ir}");
 }
 
@@ -230,7 +265,7 @@ fn fn_to_pointer_and_back_to_fn_cast_round_trip() {
 
     let ir = compile(&fx, CompilationMode::Debug);
 
-    assert!(ir.contains("define i32 @foo()"), "{ir}");
+    assert!(ir.contains("define internal i32 @foo()"), "{ir}");
     assert!(ir.contains("call i32 %"), "{ir}");
     assert!(
         !ir.contains("cast from"),
@@ -292,7 +327,18 @@ fn panic_release_prints_location_without_stack() {
     );
     f.set_current("bb1");
     f.panic("boom", vec![], dest);
-    f.finish();
+    let boom_id = f.finish();
+
+    let main_def = fx.def("main", DefKind::Function);
+    let mut main = fx.fn_builder("main", main_def, void);
+    let call_dest = main.temp(void);
+    main.entry("bb0");
+    main.block("bb1");
+    main.set_current("bb0");
+    main.call(CallTarget::Direct(boom_id), vec![], call_dest, Some("bb1"));
+    main.set_current("bb1");
+    main.ret_void();
+    main.finish();
 
     let ir = compile(&fx, CompilationMode::Release);
 
@@ -1425,8 +1471,9 @@ fn release_mode_runs_optimization_passes() {
 
     let ir = compile(&fx, CompilationMode::Release);
 
-    assert!(ir.contains("@zeen_main()"), "{ir}");
+    assert!(!ir.contains("@zeen_main()"), "{ir}");
     assert!(ir.contains("@main(i32"), "{ir}");
+    assert!(ir.contains("ret i32 21"), "{ir}");
 }
 
 #[test]
