@@ -5,10 +5,10 @@ use inkwell::context::Context;
 use zeen_ast::expressions::BinaryOp;
 use zeen_driver::CompilationMode;
 use zeen_mir::{
-    AggregateKind, CallTarget, ConstValue, EnumLayout, EnumVariantLayout, Operand, Rvalue,
-    StructFieldLayout, StructLayout,
+    AggregateKind, CallTarget, ConstValue, EnumLayout, EnumVariantLayout, MirGlobalVar, Operand,
+    Rvalue, StructFieldLayout, StructLayout,
 };
-use zeen_resolve::DefKind;
+use zeen_resolve::{DefId, DefKind};
 use zeen_typecheck::format_str::{FormatChunk, FormatSpec};
 use zeen_types::Type;
 
@@ -72,11 +72,41 @@ fn main_wrapper_calls_zeen_main_and_returns_value() {
     assert!(ir.contains("define internal i32 @zeen_main()"), "{ir}");
     assert!(ir.contains("define i32 @main(i32"), "{ir}");
     assert!(ir.contains("call i32 @zeen_main()"), "{ir}");
-    assert!(ir.contains("@__zeen_argc = internal global i32 0"), "{ir}");
-    assert!(
-        ir.contains("@__zeen_argv = internal global ptr null"),
-        "{ir}"
-    );
+    assert!(!ir.contains("@__zeen_argc"), "{ir}");
+    assert!(!ir.contains("@__zeen_argv"), "{ir}");
+}
+
+#[test]
+fn main_wrapper_stores_args_when_program_declares_them() {
+    let mut fx = Fixture::new();
+    main_returns_i32(&mut fx, 0);
+    let i32 = fx.i32();
+    let char = fx.char();
+    let argv_ty = fx.ty(Type::ManyPointer {
+        inner: char,
+        is_const: false,
+    });
+    fx.program.global_vars.push(MirGlobalVar {
+        def_id: DefId(900),
+        symbol_name: "__zeen_argc".to_string(),
+        ty: i32,
+        is_const: false,
+        is_pub: false,
+        is_extern: true,
+    });
+    fx.program.global_vars.push(MirGlobalVar {
+        def_id: DefId(901),
+        symbol_name: "__zeen_argv".to_string(),
+        ty: argv_ty,
+        is_const: false,
+        is_pub: false,
+        is_extern: true,
+    });
+
+    let ir = compile(&fx, CompilationMode::Debug);
+
+    assert!(ir.contains("store i32 %0, ptr @__zeen_argc"), "{ir}");
+    assert!(ir.contains("store ptr %1, ptr @__zeen_argv"), "{ir}");
 }
 
 #[test]

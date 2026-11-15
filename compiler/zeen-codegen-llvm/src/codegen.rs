@@ -729,22 +729,16 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         let entry = self.context.append_basic_block(main, "entry");
         self.builder.position_at_end(entry);
 
-        let argc_global = match self.module.get_global("__zeen_argc") {
-            Some(existing) => existing,
-            None => self.module.add_global(i32_ty, None, "__zeen_argc"),
-        };
-        argc_global.set_linkage(inkwell::module::Linkage::Internal);
-        argc_global.set_initializer(&i32_ty.const_zero());
-        let argv_global = match self.module.get_global("__zeen_argv") {
-            Some(existing) => existing,
-            None => self.module.add_global(ptr_ty, None, "__zeen_argv"),
-        };
-        argv_global.set_linkage(inkwell::module::Linkage::Internal);
-        argv_global.set_initializer(&ptr_ty.const_null());
-
-        if let Some(argc) = main.get_nth_param(0)
+        if let (Some(argc_global), Some(argv_global)) = (
+            self.module.get_global("__zeen_argc"),
+            self.module.get_global("__zeen_argv"),
+        ) && let Some(argc) = main.get_nth_param(0)
             && let Some(argv) = main.get_nth_param(1)
         {
+            argc_global.set_initializer(&i32_ty.const_zero());
+            argv_global.set_initializer(&ptr_ty.const_null());
+            argc_global.set_linkage(inkwell::module::Linkage::Internal);
+            argv_global.set_linkage(inkwell::module::Linkage::Internal);
             self.builder
                 .build_store(argc_global.as_pointer_value(), argc)
                 .unwrap();
