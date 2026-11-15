@@ -624,7 +624,7 @@ fn compile(args: cli::Args) {
             linker.with_link_libs(&args.link);
             linker.with_link_dirs(&args.link_dir);
             linker.with_options(zeen_linker::LinkOptions {
-                strip: args.strip,
+                strip: matches!(args.mode, CompilationMode::Release),
                 small: args.small,
                 gc_sections: matches!(args.mode, CompilationMode::Debug),
             });

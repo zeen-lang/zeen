@@ -84,9 +84,6 @@ pub struct Args {
     )]
     pub link_dir: Vec<PathBuf>,
 
-    #[arg(long = "strip", action, help = "Strip symbols from the linked binary")]
-    pub strip: bool,
-
     #[arg(
         long = "small",
         action,
