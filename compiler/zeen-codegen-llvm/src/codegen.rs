@@ -469,6 +469,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             if gv.is_extern {
                 global.set_linkage(inkwell::module::Linkage::External);
             } else {
+                global.set_linkage(inkwell::module::Linkage::Internal);
                 global.set_constant(false);
                 match llvm_ty {
                     BasicTypeEnum::IntType(t) => {
@@ -636,6 +637,12 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             let fn_type = self.make_fn_type(ret, &param_types, false);
 
             let function = self.module.add_function(&name, fn_type, None);
+            if self.options.mode == CompilationMode::Debug {
+                function.set_section(Some(&format!(".text.{}", name)));
+            }
+            if !self.fn_is_exported(id, func) {
+                function.set_linkage(inkwell::module::Linkage::Internal);
+            }
             self.functions.insert(id, function);
         }
     }
@@ -725,20 +732,16 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         let entry = self.context.append_basic_block(main, "entry");
         self.builder.position_at_end(entry);
 
-        let argc_global = match self.module.get_global("__zeen_argc") {
-            Some(existing) => existing,
-            None => self.module.add_global(i32_ty, None, "__zeen_argc"),
-        };
-        argc_global.set_initializer(&i32_ty.const_zero());
-        let argv_global = match self.module.get_global("__zeen_argv") {
-            Some(existing) => existing,
-            None => self.module.add_global(ptr_ty, None, "__zeen_argv"),
-        };
-        argv_global.set_initializer(&ptr_ty.const_null());
-
-        if let Some(argc) = main.get_nth_param(0)
+        if let (Some(argc_global), Some(argv_global)) = (
+            self.module.get_global("__zeen_argc"),
+            self.module.get_global("__zeen_argv"),
+        ) && let Some(argc) = main.get_nth_param(0)
             && let Some(argv) = main.get_nth_param(1)
         {
+            argc_global.set_initializer(&i32_ty.const_zero());
+            argv_global.set_initializer(&ptr_ty.const_null());
+            argc_global.set_linkage(inkwell::module::Linkage::Internal);
+            argv_global.set_linkage(inkwell::module::Linkage::Internal);
             self.builder
                 .build_store(argc_global.as_pointer_value(), argc)
                 .unwrap();
@@ -4791,6 +4794,27 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
 
     fn resolve_spur(&self, spur: Spur) -> String {
         self.rodeo.borrow().resolve(&spur).to_string()
+    }
+
+    fn fn_is_exported(&self, id: MirFunctionId, func: &MirFunction) -> bool {
+        if self.program.extern_exports.contains_key(&id) {
+            return true;
+        }
+        if !zeen_driver::Target::parse(&self.target_triple).is_wasm() {
+            return false;
+        }
+        let def = func.source_def;
+        let is_pub = self
+            .resolution
+            .defs
+            .get(&def)
+            .is_some_and(|info| info.is_pub);
+        is_pub
+            && self
+                .resolution
+                .def_modules
+                .get(&def)
+                .is_some_and(|module| *module == self.resolution.root_module)
     }
 
     fn function_symbol_name(&self, id: MirFunctionId, func: &MirFunction) -> String {

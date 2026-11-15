@@ -69,6 +69,13 @@ impl Target {
         self.arch == "wasm32" || self.arch == "wasm64"
     }
 
+    pub fn is_elf(&self) -> bool {
+        matches!(
+            self.os.as_str(),
+            "linux" | "android" | "freebsd" | "netbsd" | "openbsd" | "dragonfly"
+        )
+    }
+
     fn derive_family(os: &str, arch: &str) -> String {
         match os {
             "linux" | "macos" | "darwin" | "freebsd" | "openbsd" | "netbsd" | "dragonfly"

@@ -84,6 +84,13 @@ pub struct Args {
     )]
     pub link_dir: Vec<PathBuf>,
 
+    #[arg(
+        long = "small",
+        action,
+        help = "Prefer a smaller binary layout (no separate code segments on ELF)"
+    )]
+    pub small: bool,
+
     /// `--pkg` flag to map a package name to a source directory
     #[arg(
         long = "pkg",

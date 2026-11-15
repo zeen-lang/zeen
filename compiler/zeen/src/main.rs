@@ -1,7 +1,9 @@
 use clap::{CommandFactory, Parser};
 use rustc_hash::FxHashSet as HashSet;
 use std::{cell::RefCell, env, io::Write, path::Path, process::exit, rc::Rc, sync::Arc};
-use zeen_driver::{CORE_FILES, CompilationContext, CompilationOutput, MietteDriver, PathsConfig};
+use zeen_driver::{
+    CORE_FILES, CompilationContext, CompilationMode, CompilationOutput, MietteDriver, PathsConfig,
+};
 
 mod cli;
 mod targets;
@@ -621,6 +623,11 @@ fn compile(args: cli::Args) {
 
             linker.with_link_libs(&args.link);
             linker.with_link_dirs(&args.link_dir);
+            linker.with_options(zeen_linker::LinkOptions {
+                strip: matches!(args.mode, CompilationMode::Release),
+                small: args.small,
+                gc_sections: matches!(args.mode, CompilationMode::Debug),
+            });
 
             let object_file = tempfile::Builder::new()
                 .prefix("zeen-")
