@@ -168,6 +168,7 @@ impl Toolchain {
 pub struct LinkOptions {
     pub strip: bool,
     pub small: bool,
+    pub gc_sections: bool,
 }
 
 fn link_flags(target: &Target, msvc: bool, options: LinkOptions) -> Vec<String> {
@@ -181,6 +182,9 @@ fn link_flags(target: &Target, msvc: bool, options: LinkOptions) -> Vec<String> 
     }
     if options.small && target.is_elf() {
         flags.push("-Wl,-z,noseparate-code".to_owned());
+    }
+    if options.gc_sections && !target.is_wasm() {
+        flags.push("-Wl,--gc-sections".to_owned());
     }
     flags
 }
@@ -884,6 +888,7 @@ mod tests {
         let options = LinkOptions {
             strip: true,
             small: false,
+            gc_sections: false,
         };
         assert_eq!(link_flags(&target, false, options), vec!["-s".to_owned()]);
     }
@@ -893,6 +898,7 @@ mod tests {
         let options = LinkOptions {
             strip: false,
             small: true,
+            gc_sections: false,
         };
         let linux = Target::parse("x86_64-unknown-linux-gnu");
         let darwin = Target::parse("aarch64-apple-darwin");
@@ -912,8 +918,34 @@ mod tests {
         let options = LinkOptions {
             strip: true,
             small: true,
+            gc_sections: false,
         };
         assert!(link_flags(&target, true, options).is_empty());
+    }
+
+    #[test]
+    fn gc_sections_adds_the_gc_sections_flag() {
+        let target = Target::parse("x86_64-unknown-linux-gnu");
+        let options = LinkOptions {
+            strip: false,
+            small: false,
+            gc_sections: true,
+        };
+        assert_eq!(
+            link_flags(&target, false, options),
+            vec!["-Wl,--gc-sections".to_owned()]
+        );
+    }
+
+    #[test]
+    fn gc_sections_skipped_on_wasm() {
+        let wasm = Target::parse("wasm32-unknown-unknown");
+        let options = LinkOptions {
+            strip: false,
+            small: false,
+            gc_sections: true,
+        };
+        assert!(link_flags(&wasm, false, options).is_empty());
     }
 
     #[test]

@@ -637,6 +637,9 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             let fn_type = self.make_fn_type(ret, &param_types, false);
 
             let function = self.module.add_function(&name, fn_type, None);
+            if self.options.mode == CompilationMode::Debug {
+                function.set_section(Some(&format!(".text.{}", name)));
+            }
             if !self.fn_is_exported(id, func) {
                 function.set_linkage(inkwell::module::Linkage::Internal);
             }
