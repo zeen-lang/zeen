@@ -77,6 +77,21 @@ fn is_generic_fn(hir_fn: &HirFn, owner: Option<DefId>, typecheck: &TypeCheckResu
         || has_params(typecheck.enum_generics.get(&owner))
 }
 
+fn is_library_root(resolution: &ResolutionResult, def_id: DefId, hir_fn: &HirFn) -> bool {
+    let Some(info) = resolution.defs.get(&def_id) else {
+        return false;
+    };
+
+    if info.is_pub {
+        return resolution
+            .def_modules
+            .get(&def_id)
+            .is_some_and(|module| *module == resolution.root_module);
+    }
+
+    hir_fn.is_extern && hir_fn.body.is_some()
+}
+
 pub fn lower_program<'ctx>(
     rodeo: Rc<RefCell<Rodeo>>,
     typecheck: &'ctx mut TypeCheckResult,
@@ -119,17 +134,18 @@ pub fn lower_program<'ctx>(
 
         main_fn = Some(main_fn_monomorphized);
     } else {
-        fns_with_owners.iter().for_each(|(def_id, hir_fn, owner)| {
-            let is_core = resolution
-                .defs
-                .get(def_id)
-                .map(|info| info.span.src().name().starts_with("core."))
-                .unwrap_or(false);
+        let roots: Vec<(DefId, Option<DefId>)> = fns_with_owners
+            .iter()
+            .filter(|(def_id, hir_fn, owner)| {
+                !is_generic_fn(hir_fn, *owner, &*lowering.typecheck)
+                    && is_library_root(resolution, *def_id, hir_fn)
+            })
+            .map(|(def_id, _, owner)| (*def_id, *owner))
+            .collect();
 
-            if !is_core && !is_generic_fn(hir_fn, *owner, &*lowering.typecheck) {
-                lowering.monomorphize_fn(*def_id, Vec::new(), *owner, &[]);
-            }
-        });
+        for (def_id, owner) in roots {
+            lowering.monomorphize_fn(def_id, Vec::new(), owner, &[]);
+        }
     }
 
     lowering.register_user_struct_layouts(resolution);

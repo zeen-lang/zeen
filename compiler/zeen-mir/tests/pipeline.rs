@@ -280,7 +280,7 @@ struct Box[T] { value: T }
 
 #[test]
 fn user_functions_are_lowered_without_main() {
-    let mir = compile_ok("fn unused() i32 { return 42; }");
+    let mir = compile_ok("pub fn unused() i32 { return 42; }");
     assert!(mir.contains("fn unused() i32"), "MIR:\n{mir}");
 }
 
@@ -292,7 +292,7 @@ struct Vec2 { x: i32, y: i32 }
 implement Add: Vec2 {
     fn add(self, other: Vec2) Vec2 { return self; }
 }
-fn make() Vec2 {
+pub fn make() Vec2 {
     let a = Vec2 { .x = 1, .y = 2 };
     let b = Vec2 { .x = 3, .y = 4 };
     return a + b;
