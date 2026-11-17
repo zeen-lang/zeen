@@ -597,6 +597,22 @@ pub enum TypeError {
         span: SourceSpan,
     },
 
+    #[error("expected a const generic argument of type `{expected}`, but found `{found}`")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::const_generic_arg_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-const_generic_arg_mismatch")
+    )]
+    ConstGenericArgMismatch {
+        expected: SmolStr,
+        found: SmolStr,
+
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
     #[error("empty arrays are not allowed")]
     #[diagnostic(
         severity(Error),
