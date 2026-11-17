@@ -15,6 +15,28 @@ pub const SLICE_PTR_FIELD: DefId = DefId(u32::MAX - 2);
 pub const SLICE_LEN_FIELD: DefId = DefId(u32::MAX - 1);
 pub const ARRAY_LEN_FIELD: DefId = DefId(u32::MAX - 4);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ArrayLen {
+    Known(u64),
+    Param(DefId),
+}
+
+impl ArrayLen {
+    pub fn known(self) -> Option<u64> {
+        match self {
+            Self::Known(n) => Some(n),
+            Self::Param(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConstArg {
+    Int(i128),
+    Bool(bool),
+    Char(char),
+}
+
 pub const CLOSURE_FAT_DEF: DefId = DefId(u32::MAX - 5);
 pub const CLOSURE_FAT_FN_FIELD: DefId = DefId(u32::MAX - 6);
 pub const CLOSURE_FAT_ENV_FIELD: DefId = DefId(u32::MAX - 7);
@@ -56,7 +78,7 @@ pub enum Type {
 
     Array {
         element: TypeId,
-        len: Option<u64>,
+        len: ArrayLen,
     },
 
     Slice {
@@ -83,6 +105,9 @@ pub enum Type {
         base: TypeId,
         def: DefId,
     },
+
+    ConstArg(ConstArg),
+    ConstParam(DefId),
 
     Void,
     Never,
@@ -153,11 +178,13 @@ impl Type {
                 }
             }
 
-            Type::Interface { def_id } | Type::GenericParam(def_id) => resolution_result
-                .defs
-                .get(def_id)
-                .map(|info| interner.borrow().resolve(&info.name).to_string())
-                .unwrap_or("undefined".to_string()),
+            Type::Interface { def_id } | Type::GenericParam(def_id) | Type::ConstParam(def_id) => {
+                resolution_result
+                    .defs
+                    .get(def_id)
+                    .map(|info| interner.borrow().resolve(&info.name).to_string())
+                    .unwrap_or("undefined".to_string())
+            }
 
             Type::Pointer { inner, is_const } => format!(
                 "*{}{}",
@@ -171,11 +198,21 @@ impl Type {
                 type_interner.display_type(*inner, interner, resolution_result)
             ),
 
-            Type::Array { element, len } => format!(
-                "[{}]{}",
-                len.map(|val| val.to_string()).unwrap_or_default(),
-                type_interner.display_type(*element, interner, resolution_result)
-            ),
+            Type::Array { element, len } => {
+                let len_str = match len {
+                    ArrayLen::Known(n) => n.to_string(),
+                    ArrayLen::Param(d) => resolution_result
+                        .defs
+                        .get(d)
+                        .map(|info| interner.borrow().resolve(&info.name).to_string())
+                        .unwrap_or("?".to_string()),
+                };
+
+                format!(
+                    "[{len_str}]{}",
+                    type_interner.display_type(*element, interner, resolution_result)
+                )
+            }
 
             Type::Slice { element, is_const } => format!(
                 "[]{}{}",
@@ -230,6 +267,12 @@ impl Type {
 
                 format!("{}.{}", base_name, name)
             }
+
+            Type::ConstArg(c) => match c {
+                ConstArg::Int(n) => n.to_string(),
+                ConstArg::Bool(b) => b.to_string(),
+                ConstArg::Char(c) => format!("'{c}'"),
+            },
 
             Type::Void => "void".into(),
             Type::Never => "never".into(),
@@ -505,7 +548,18 @@ pub fn match_builtin_shape(
                 element: found,
                 len: found_len,
             } => {
-                *found_len == Some(*len)
+                let found_known = match found_len {
+                    ArrayLen::Known(n) => Some(*n),
+                    ArrayLen::Param(d) => match bindings.get(d).copied() {
+                        Some(bound_ty) => match interner.get(bound_ty) {
+                            Type::ConstArg(ConstArg::Int(n)) if *n >= 0 => Some(*n as u64),
+                            _ => None,
+                        },
+                        None => None,
+                    },
+                };
+
+                found_known == Some(*len)
                     && match_builtin_shape(interner, element, *found, generics, bindings)
             }
             _ => false,
@@ -534,6 +588,10 @@ pub fn substitute_generics(
 ) -> TypeId {
     match interner.get(ty).clone() {
         Type::GenericParam(g) => bindings.get(&g).copied().unwrap_or(ty),
+
+        Type::ConstParam(d) => bindings.get(&d).copied().unwrap_or(ty),
+
+        Type::ConstArg(_) => ty,
 
         Type::InterfaceSelfPlaceholder(placeholder) => {
             bindings.get(&placeholder).copied().unwrap_or(ty)
@@ -589,12 +647,23 @@ pub fn substitute_generics(
 
         Type::Array { element, len } => {
             let new_elem = substitute_generics(interner, element, bindings);
-            if new_elem == element {
+            let new_len = match len {
+                ArrayLen::Param(d) => match bindings.get(&d).copied() {
+                    Some(bound_ty) => match interner.get(bound_ty) {
+                        Type::ConstArg(ConstArg::Int(n)) if *n >= 0 => ArrayLen::Known(*n as u64),
+                        _ => ArrayLen::Param(d),
+                    },
+                    None => ArrayLen::Param(d),
+                },
+                other => other,
+            };
+
+            if new_elem == element && new_len == len {
                 ty
             } else {
                 interner.intern(Type::Array {
                     element: new_elem,
-                    len,
+                    len: new_len,
                 })
             }
         }
@@ -861,11 +930,7 @@ mod tests {
         });
         let array = interner.intern(Type::Array {
             element: inner,
-            len: Some(4),
-        });
-        let array_unknown = interner.intern(Type::Array {
-            element: inner,
-            len: None,
+            len: ArrayLen::Known(4),
         });
         let slice = interner.intern(Type::Slice {
             element: inner,
@@ -903,14 +968,6 @@ mod tests {
         assert_eq!(
             interner.display_type(array, Rc::new(RefCell::new(Rodeo::default())), &resolution),
             "[4]i32"
-        );
-        assert_eq!(
-            interner.display_type(
-                array_unknown,
-                Rc::new(RefCell::new(Rodeo::default())),
-                &resolution
-            ),
-            "[]i32"
         );
         assert_eq!(
             interner.display_type(slice, Rc::new(RefCell::new(Rodeo::default())), &resolution),
@@ -1167,6 +1224,45 @@ mod tests {
         assert_eq!(
             substitute_generics(&mut interner, ty, &bindings),
             replacement
+        );
+    }
+
+    #[test]
+    fn substitute_generics_replaces_const_param() {
+        let mut interner = TypeInterner::new();
+        let generic = DefId(1);
+        let ty = interner.intern(Type::ConstParam(generic));
+        let replacement = interner.intern(Type::ConstArg(ConstArg::Int(4)));
+        let mut bindings = HashMap::default();
+        bindings.insert(generic, replacement);
+
+        assert_eq!(
+            substitute_generics(&mut interner, ty, &bindings),
+            replacement
+        );
+    }
+
+    #[test]
+    fn substitute_generics_resolves_const_array_length() {
+        let mut interner = TypeInterner::new();
+        let generic = DefId(1);
+        let element = interner.intern(Type::Builtin(BuiltinType::u8));
+        let array = interner.intern(Type::Array {
+            element,
+            len: ArrayLen::Param(generic),
+        });
+
+        let mut bindings = HashMap::default();
+        bindings.insert(generic, interner.intern(Type::ConstArg(ConstArg::Int(4))));
+
+        let resolved = substitute_generics(&mut interner, array, &bindings);
+
+        assert_eq!(
+            interner.get(resolved),
+            &Type::Array {
+                element,
+                len: ArrayLen::Known(4),
+            }
         );
     }
 

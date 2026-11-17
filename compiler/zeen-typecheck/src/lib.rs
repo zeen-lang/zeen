@@ -38,9 +38,9 @@ use zeen_hir::{
 };
 use zeen_resolve::{DefId, DefKind, ResolutionResult};
 use zeen_types::{
-    ARRAY_LEN_FIELD, Capabilities, EnumTypeInfo, EnumVariantInfo, ReceiverAccess, SLICE_LEN_FIELD,
-    SLICE_PTR_FIELD, SelfMode, StructFieldInfo, StructTypeInfo, Type, TypeId, VariantPayload,
-    binary_op_interface, self_mode_of, unary_op_interface,
+    ARRAY_LEN_FIELD, ArrayLen, Capabilities, EnumTypeInfo, EnumVariantInfo, ReceiverAccess,
+    SLICE_LEN_FIELD, SLICE_PTR_FIELD, SelfMode, StructFieldInfo, StructTypeInfo, Type, TypeId,
+    VariantPayload, binary_op_interface, self_mode_of, unary_op_interface,
 };
 
 pub mod closure_alloc;
@@ -1310,7 +1310,7 @@ impl<'res> TypeChecker<'res> {
 
                 self.result.interner.intern(Type::Array {
                     element,
-                    len: Some(*len),
+                    len: ArrayLen::Known(*len),
                 })
             }
 
@@ -1733,10 +1733,10 @@ impl<'res> TypeChecker<'res> {
                     return self.result.interner.error();
                 }
 
-                if len_val.is_some() {
+                if let Some(len_val) = len_val {
                     self.result.interner.intern(Type::Array {
                         element: elem_ty,
-                        len: len_val,
+                        len: ArrayLen::Known(len_val),
                     })
                 } else {
                     self.result.interner.intern(Type::Slice {
@@ -3106,7 +3106,7 @@ impl<'res> TypeChecker<'res> {
                 HirExprKind::ArrayInit { elements },
                 Type::Array {
                     element,
-                    len: Some(len),
+                    len: ArrayLen::Known(len),
                 },
             ) => {
                 *len == elements.len() as u64
@@ -3852,7 +3852,7 @@ impl<'res> TypeChecker<'res> {
                     let char_ty = self.result.interner.builtin(BuiltinType::char);
                     self.result.interner.intern(Type::Array {
                         element: char_ty,
-                        len: Some(str_resolved.len() as u64 + 1), // + 1 for null-terminator
+                        len: ArrayLen::Known(str_resolved.len() as u64 + 1), // + 1 for null-terminator
                     })
                 }
                 Literal::Null => {
@@ -4168,7 +4168,7 @@ impl<'res> TypeChecker<'res> {
 
                 self.result.interner.intern(Type::Array {
                     element: first_ty,
-                    len: Some(elements.len() as u64),
+                    len: ArrayLen::Known(elements.len() as u64),
                 })
             }
 
@@ -4200,7 +4200,7 @@ impl<'res> TypeChecker<'res> {
 
                 self.result.interner.intern(Type::Array {
                     element: elem_ty,
-                    len: Some(len_val),
+                    len: ArrayLen::Known(len_val),
                 })
             }
 
@@ -4772,7 +4772,7 @@ impl<'res> TypeChecker<'res> {
 
                 self.result.interner.intern(Type::Array {
                     element: name_ty,
-                    len: Some(variant_count),
+                    len: ArrayLen::Known(variant_count),
                 })
             }
 
@@ -5570,7 +5570,7 @@ impl<'res> TypeChecker<'res> {
                 let element_ty = match self.result.interner.get(expected).clone() {
                     Type::Array {
                         element,
-                        len: Some(n),
+                        len: ArrayLen::Known(n),
                         ..
                     } if n == elements.len() as u64 => Some(element),
                     _ => None,
@@ -12542,7 +12542,7 @@ impl<'res> TypeChecker<'res> {
         let array_element = match &other {
             Type::Array {
                 element,
-                len: Some(_),
+                len: ArrayLen::Known(_),
             } => Some(*element),
             _ => None,
         };
@@ -12570,10 +12570,16 @@ impl<'res> TypeChecker<'res> {
 
     fn array_like_type(&self, ty: TypeId) -> Option<TypeId> {
         match self.result.interner.get(ty) {
-            Type::Array { len: Some(_), .. } => Some(ty),
+            Type::Array {
+                len: ArrayLen::Known(_),
+                ..
+            } => Some(ty),
             Type::Pointer { inner, .. } | Type::ManyPointer { inner, .. } => {
                 match self.result.interner.get(*inner) {
-                    Type::Array { len: Some(_), .. } => Some(*inner),
+                    Type::Array {
+                        len: ArrayLen::Known(_),
+                        ..
+                    } => Some(*inner),
                     _ => None,
                 }
             }

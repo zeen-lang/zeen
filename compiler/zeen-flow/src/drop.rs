@@ -39,6 +39,8 @@ fn type_needs_drop_impl(
         | Type::ManyPointer { .. }
         | Type::Fn { .. }
         | Type::Associated { .. }
+        | Type::ConstArg(_)
+        | Type::ConstParam(_)
         | Type::Void
         | Type::Never
         | Type::Error => false,

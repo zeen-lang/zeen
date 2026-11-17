@@ -24,7 +24,7 @@ use zeen_typecheck::{
     result::{CallResolution, OperatorResolution, TypeCheckResult},
 };
 use zeen_types::{
-    CLOSURE_FAT_DEF, CLOSURE_FAT_DROP_FIELD, CLOSURE_FAT_ENV_FIELD, CLOSURE_FAT_FN_FIELD,
+    ArrayLen, CLOSURE_FAT_DEF, CLOSURE_FAT_DROP_FIELD, CLOSURE_FAT_ENV_FIELD, CLOSURE_FAT_FN_FIELD,
     SLICE_LEN_FIELD, SLICE_PTR_FIELD, SLICE_STRUCT_DEF, StructTypeInfo, Type, TypeId,
     VariantPayload,
 };
@@ -3684,12 +3684,12 @@ impl<'ctx> MirLowering<'ctx> {
         source: &Source,
     ) -> (BlockId, Operand) {
         let (element, len) = match self.typecheck.interner.get(array_ty).clone() {
-            Type::Array {
-                element,
-                len: Some(len),
-            } => (element, len),
+            Type::Array { element, len } => (element, len),
             _ => unreachable!("array to slice coercion requires a sized array"),
         };
+        let len = len
+            .known()
+            .expect("array to slice coercion requires a known length");
 
         let usize_ty = self.typecheck.interner.builtin(BuiltinType::usize);
 
@@ -4356,8 +4356,10 @@ impl<'ctx> MirLowering<'ctx> {
                     );
                 }
 
-                if let Type::Array { len: Some(len), .. } =
-                    self.typecheck.interner.get(obj_ty).clone()
+                if let Type::Array {
+                    len: ArrayLen::Known(len),
+                    ..
+                } = self.typecheck.interner.get(obj_ty).clone()
                     && self.rodeo.borrow().resolve(&field.0) == "len"
                 {
                     return (
@@ -4538,7 +4540,7 @@ impl<'ctx> MirLowering<'ctx> {
                 let (block, elem_op) = self.lower_expr_to_operand(fb, element, block);
 
                 let n = match self.typecheck.interner.get(ty).clone() {
-                    Type::Array { len: Some(n), .. } => n as usize,
+                    Type::Array { len, .. } => len.known().unwrap_or(0) as usize,
                     _ => 0,
                 };
 
@@ -5098,7 +5100,7 @@ impl<'ctx> MirLowering<'ctx> {
                 HirMacroKind::VariantNames => {
                     let result_ty = self.expr_type(fb, expr);
                     let variant_count = match self.typecheck.interner.get(result_ty).clone() {
-                        Type::Array { len: Some(n), .. } => n as usize,
+                        Type::Array { len, .. } => len.known().unwrap_or(0) as usize,
                         _ => 0,
                     };
 
@@ -5932,7 +5934,7 @@ impl<'ctx> MirLowering<'ctx> {
         let pat_len = self.rodeo.borrow().resolve(&pat).len() as u64;
         let pat_ty = self.typecheck.interner.intern(Type::Array {
             element: char_ty,
-            len: Some(pat_len + 1),
+            len: ArrayLen::Known(pat_len + 1),
         });
         let pat_temp = fb.new_temp(pat_ty);
         fb.push_stmt(
@@ -5948,8 +5950,8 @@ impl<'ctx> MirLowering<'ctx> {
         );
 
         let scrut_len = match self.typecheck.interner.get(scrut_ty).clone() {
-            Type::Array { len: Some(len), .. } => {
-                Operand::Constant(ConstValue::Int(len as i128), None)
+            Type::Array { len, .. } => {
+                Operand::Constant(ConstValue::Int(len.known().unwrap_or(0) as i128), None)
             }
             Type::Slice { .. } => {
                 let mut len_place = scrut_place.clone();
@@ -5994,8 +5996,8 @@ impl<'ctx> MirLowering<'ctx> {
 
         let len_plus_one = fb.new_temp(bool_ty);
         let scrut_len_2 = match self.typecheck.interner.get(scrut_ty).clone() {
-            Type::Array { len: Some(len), .. } => {
-                Operand::Constant(ConstValue::Int(len as i128), None)
+            Type::Array { len, .. } => {
+                Operand::Constant(ConstValue::Int(len.known().unwrap_or(0) as i128), None)
             }
             _ => {
                 let mut len_place = scrut_place.clone();
@@ -6639,8 +6641,8 @@ impl<'ctx> MirLowering<'ctx> {
             .intern(Type::Builtin(zeen_ast::types::BuiltinType::usize));
 
         let len_operand = match self.typecheck.interner.get(obj_ty).clone() {
-            Type::Array { len: Some(len), .. } => {
-                Operand::Constant(ConstValue::Int(len as i128), None)
+            Type::Array { len, .. } => {
+                Operand::Constant(ConstValue::Int(len.known().unwrap_or(0) as i128), None)
             }
             Type::Slice { .. } => {
                 let mut len_place = obj_place.clone();
@@ -6756,10 +6758,10 @@ impl<'ctx> MirLowering<'ctx> {
             }
             None => {
                 let len_local = match self.typecheck.interner.get(obj_ty).clone() {
-                    Type::Array { len: Some(len), .. } => self.const_to_local(
+                    Type::Array { len, .. } => self.const_to_local(
                         fb,
                         block,
-                        ConstValue::Int(len as i128),
+                        ConstValue::Int(len.known().unwrap_or(0) as i128),
                         usize_ty,
                         source,
                     ),
@@ -6959,8 +6961,8 @@ impl<'ctx> MirLowering<'ctx> {
         );
 
         let len_operand = match self.typecheck.interner.get(obj_ty).clone() {
-            Type::Array { len: Some(len), .. } => {
-                Operand::Constant(ConstValue::Int(len as i128), None)
+            Type::Array { len, .. } => {
+                Operand::Constant(ConstValue::Int(len.known().unwrap_or(0) as i128), None)
             }
             Type::Slice { .. } => {
                 let mut len_place = obj_place.clone();
@@ -8744,7 +8746,7 @@ impl<'ctx> MirLowering<'ctx> {
 
         let (element_ty, elements, len_rvalue) = match self.typecheck.interner.get(ty).clone() {
             Type::Array { element, len } => {
-                let len = len.expect("format array length must be known");
+                let len = len.known().expect("format array length must be known");
 
                 (
                     element,
@@ -10081,7 +10083,9 @@ impl<'ctx> MirLowering<'ctx> {
 
         let (len_operand, elem_ty) = match self.typecheck.interner.get(iter_ty).clone() {
             Type::Array { element, len } => {
-                let len_val = len.expect("unknown array length (must be comptime known)");
+                let len_val = len
+                    .known()
+                    .expect("unknown array length (must be comptime known)");
 
                 (
                     Operand::Constant(ConstValue::Int(len_val as i128), None),
@@ -10476,7 +10480,7 @@ impl<'ctx> MirLowering<'ctx> {
 
                 self.typecheck.interner.intern(Type::Array {
                     element,
-                    len: Some(*len),
+                    len: ArrayLen::Known(*len),
                 })
             }
 

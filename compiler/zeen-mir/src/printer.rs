@@ -8,7 +8,7 @@ use std::rc::Rc;
 use lasso::Rodeo;
 use zeen_resolve::{DefId, ResolutionResult};
 use zeen_typecheck::result::TypeCheckResult;
-use zeen_types::{ARRAY_LEN_FIELD, SLICE_LEN_FIELD, SLICE_PTR_FIELD, Type, TypeId};
+use zeen_types::{ARRAY_LEN_FIELD, ArrayLen, SLICE_LEN_FIELD, SLICE_PTR_FIELD, Type, TypeId};
 
 use crate::{
     AggregateKind, BasicBlock, BlockId, CallTarget, ConstValue, LocalDecl, LocalId, LocalKind,
@@ -559,8 +559,8 @@ impl<'a> MirPrinter<'a> {
             Type::Array { element, len } => {
                 let elem_s = self.display_type(element);
                 match len {
-                    Some(n) => format!("[{}]{}", n, elem_s),
-                    None => format!("[?]{}", elem_s),
+                    ArrayLen::Known(n) => format!("[{}]{}", n, elem_s),
+                    ArrayLen::Param(_) => format!("[?]{}", elem_s),
                 }
             }
 
@@ -585,6 +585,12 @@ impl<'a> MirPrinter<'a> {
             }
 
             Type::GenericParam(def_id) => self.resolve_def_name(def_id),
+            Type::ConstParam(def_id) => self.resolve_def_name(def_id),
+            Type::ConstArg(arg) => match arg {
+                zeen_types::ConstArg::Int(n) => n.to_string(),
+                zeen_types::ConstArg::Bool(b) => b.to_string(),
+                zeen_types::ConstArg::Char(c) => format!("'{c}'"),
+            },
             Type::InterfaceSelfPlaceholder(_) => "Self".to_string(),
 
             Type::Associated { base, def } => {

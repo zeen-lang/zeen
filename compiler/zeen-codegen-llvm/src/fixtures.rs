@@ -34,7 +34,7 @@ use zeen_mir::{
 };
 use zeen_resolve::{DefId, DefInfo, DefKind, ResolutionResult};
 use zeen_typecheck::{format_str::FormatChunk, result::TypeCheckResult};
-use zeen_types::{Type, TypeId};
+use zeen_types::{ArrayLen, Type, TypeId};
 
 pub struct Fixture {
     pub typecheck: TypeCheckResult,
@@ -118,7 +118,7 @@ impl Fixture {
     pub fn array(&mut self, element: TypeId, len: u64) -> TypeId {
         self.ty(Type::Array {
             element,
-            len: Some(len),
+            len: ArrayLen::Known(len),
         })
     }
 

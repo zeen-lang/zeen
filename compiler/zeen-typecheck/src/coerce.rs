@@ -379,6 +379,7 @@ pub fn verify_cast(interner: &mut TypeInterner, from: TypeId, to: TypeId) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeen_types::ArrayLen;
 
     fn coerce(it: &mut TypeInterner, from: Type, to: Type) -> CoerceResult {
         let from = it.intern(from);
@@ -585,7 +586,7 @@ mod tests {
 
         let arr = it.intern(Type::Array {
             element: elem,
-            len: Some(8),
+            len: ArrayLen::Known(8),
         });
         let slice = it.intern(Type::Slice {
             element: elem,
@@ -602,7 +603,7 @@ mod tests {
 
         let arr = it.intern(Type::Array {
             element: elem,
-            len: Some(4),
+            len: ArrayLen::Known(4),
         });
         let many = it.intern(Type::ManyPointer {
             inner: elem,
@@ -663,7 +664,7 @@ mod tests {
         let elem_b = it.intern(builtin(BuiltinType::i64));
         let arr = it.intern(Type::Array {
             element: elem_a,
-            len: Some(2),
+            len: ArrayLen::Known(2),
         });
         let slice = it.intern(Type::Slice {
             element: elem_b,
