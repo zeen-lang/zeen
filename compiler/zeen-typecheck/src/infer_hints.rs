@@ -310,6 +310,7 @@ impl Collector {
             HirExprKind::Literal(_)
             | HirExprKind::VarRef { .. }
             | HirExprKind::GenericParamRef(_)
+            | HirExprKind::ConstParamRef(_)
             | HirExprKind::SelfValue(_)
             | HirExprKind::Type(_)
             | HirExprKind::Error => {}

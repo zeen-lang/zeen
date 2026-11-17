@@ -32,6 +32,8 @@ pub(crate) fn type_display(interner: &Rc<RefCell<Rodeo>>, ty: &TypeExpr<'_>) -> 
 
         TypeKind::Const(inner) => type_display(interner, inner),
 
+        TypeKind::ConstValue(expr) => expr_display(interner, expr),
+
         TypeKind::Associated { base, name } => {
             format!(
                 "{}.{}",

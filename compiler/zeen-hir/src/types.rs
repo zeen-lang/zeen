@@ -42,6 +42,9 @@ pub enum HirTypeKind {
         len: Option<Rc<HirExpr>>,
     },
 
+    ConstValue(Rc<HirExpr>),
+    ConstParam(DefId),
+
     Fn {
         params: Vec<Rc<HirTypeExpr>>,
         generics: Vec<HirGenericParam>,

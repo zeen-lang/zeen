@@ -443,9 +443,11 @@ impl<'arena> Interp<'arena> {
         }
 
         match ty.kind {
-            TypeKind::Builtin(_) | TypeKind::SelfType | TypeKind::SelfAlias | TypeKind::VaArgs => {
-                Ok(ty)
-            }
+            TypeKind::Builtin(_)
+            | TypeKind::SelfType
+            | TypeKind::SelfAlias
+            | TypeKind::VaArgs
+            | TypeKind::ConstValue(_) => Ok(ty),
 
             TypeKind::Named { name, generic_args } => {
                 let Some(args) = generic_args else {

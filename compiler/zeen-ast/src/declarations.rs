@@ -249,6 +249,7 @@ pub struct GenericType<'arena> {
     pub name: (Spur, SourceSpan),
     pub interfaces: Option<&'arena [(Spur, SourceSpan)]>,
     pub callable_bounds: Option<&'arena [CallableBound<'arena>]>,
+    pub const_type: Option<crate::types::ConstParamType>,
 }
 
 // Struct

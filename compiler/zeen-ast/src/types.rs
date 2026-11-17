@@ -53,6 +53,8 @@ pub enum TypeKind<'arena> {
         len: Option<&'arena crate::expressions::Expression<'arena>>,
     },
 
+    ConstValue(&'arena crate::expressions::Expression<'arena>),
+
     Fn {
         params: &'arena [&'arena TypeExpr<'arena>],
         generic_args: Option<&'arena [crate::declarations::GenericType<'arena>]>,
@@ -66,6 +68,26 @@ pub enum TypeKind<'arena> {
         ret: &'arena TypeExpr<'arena>,
         once: bool,
     },
+}
+
+#[derive(Debug, PartialEq, Clone, Copy, Eq, Hash)]
+pub enum ConstParamType {
+    UInt,
+    Int,
+    Bool,
+    Char,
+}
+
+impl ConstParamType {
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "comptime_uint" => Some(Self::UInt),
+            "comptime_int" => Some(Self::Int),
+            "comptime_bool" => Some(Self::Bool),
+            "comptime_char" => Some(Self::Char),
+            _ => None,
+        }
+    }
 }
 
 #[allow(non_camel_case_types)]

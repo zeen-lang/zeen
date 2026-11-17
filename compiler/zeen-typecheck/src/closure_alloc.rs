@@ -303,6 +303,7 @@ impl<'a> Analyzer<'a> {
 
             HirExprKind::Literal(_)
             | HirExprKind::GenericParamRef(_)
+            | HirExprKind::ConstParamRef(_)
             | HirExprKind::SelfValue(_)
             | HirExprKind::Type(_)
             | HirExprKind::Error => {}

@@ -25,7 +25,7 @@ use zeen_typecheck::{
 };
 use zeen_types::{
     ArrayLen, CLOSURE_FAT_DEF, CLOSURE_FAT_DROP_FIELD, CLOSURE_FAT_ENV_FIELD, CLOSURE_FAT_FN_FIELD,
-    SLICE_LEN_FIELD, SLICE_PTR_FIELD, SLICE_STRUCT_DEF, StructTypeInfo, Type, TypeId,
+    ConstArg, SLICE_LEN_FIELD, SLICE_PTR_FIELD, SLICE_STRUCT_DEF, StructTypeInfo, Type, TypeId,
     VariantPayload,
 };
 
@@ -781,6 +781,7 @@ impl<'ctx> MirLowering<'ctx> {
             HirExprKind::Try { expr: inner } => self.collect_global_expr_deps(inner, out),
             HirExprKind::Literal(_)
             | HirExprKind::GenericParamRef(_)
+            | HirExprKind::ConstParamRef(_)
             | HirExprKind::Type(_)
             | HirExprKind::Error => {}
         }
@@ -5264,6 +5265,28 @@ impl<'ctx> MirLowering<'ctx> {
                 });
 
                 (block, Operand::Constant(ConstValue::NullPtr, None))
+            }
+
+            HirExprKind::ConstParamRef(def_id) => {
+                let value = fb.bindings.get(def_id).and_then(|bound| {
+                    match self.typecheck.interner.get(*bound) {
+                        Type::ConstArg(ConstArg::Int(n)) => Some(ConstValue::Int(*n)),
+                        Type::ConstArg(ConstArg::Bool(b)) => Some(ConstValue::Bool(*b)),
+                        Type::ConstArg(ConstArg::Char(c)) => Some(ConstValue::Char(*c)),
+                        _ => None,
+                    }
+                });
+
+                let Some(value) = value else {
+                    self.errors.push(MirError::GenericParamNotValue {
+                        src: expr.source.src(),
+                        span: expr.source.span,
+                    });
+
+                    return (block, Operand::Constant(ConstValue::Int(0), None));
+                };
+
+                (block, Operand::Constant(value, Some(expr.source.clone())))
             }
 
             HirExprKind::Switch { object, arms } => {

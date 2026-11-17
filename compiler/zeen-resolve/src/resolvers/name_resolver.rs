@@ -1787,18 +1787,23 @@ impl<'ctx> NameResolver {
             if let Some(existing) = self.table.lookup_type(generic.name.0)
                 && matches!(
                     self.result.defs.get(&existing).map(|info| &info.kind),
-                    Some(DefKind::GenericParam)
+                    Some(DefKind::GenericParam) | Some(DefKind::ConstParam(_))
                 )
             {
                 self.result
                     .binding_sites
                     .insert(NodeKey::from_generic(generic), existing);
             } else {
+                let kind = match generic.const_type {
+                    Some(ct) => DefKind::ConstParam(ct),
+                    None => DefKind::GenericParam,
+                };
+
                 let def_id = self.define_at(
                     NodeKey::from_generic(generic),
                     DefInfo {
                         name: generic.name.0,
-                        kind: DefKind::GenericParam,
+                        kind,
                         span: (generic.name.1, current_src.clone()).into(),
                         decl: None,
                         is_pub: false,
@@ -2462,10 +2467,10 @@ impl<'ctx> NameResolver {
 
             self.check_visibility(def_id, &(self.current_src.clone(), span).into());
 
-            let resolution = if self.result.defs[&def_id].kind == DefKind::GenericParam {
-                Resolution::GenericParam(def_id)
-            } else {
-                Resolution::Def(def_id)
+            let resolution = match self.result.defs[&def_id].kind {
+                DefKind::GenericParam => Resolution::GenericParam(def_id),
+                DefKind::ConstParam(_) => Resolution::ConstParam(def_id),
+                _ => Resolution::Def(def_id),
             };
 
             return resolution;
@@ -2561,7 +2566,11 @@ impl<'ctx> NameResolver {
                         if ambiguous || !self.process_capture(def_id, ty.span) {
                             Resolution::Error
                         } else {
-                            Resolution::Def(def_id)
+                            match self.result.defs[&def_id].kind {
+                                DefKind::GenericParam => Resolution::GenericParam(def_id),
+                                DefKind::ConstParam(_) => Resolution::ConstParam(def_id),
+                                _ => Resolution::Def(def_id),
+                            }
                         }
                     }
                     None => {
@@ -2600,6 +2609,10 @@ impl<'ctx> NameResolver {
             | TypeKind::SinglePointer(inner)
             | TypeKind::ManyPointer(inner) => {
                 self.resolve_type(inner);
+            }
+
+            TypeKind::ConstValue(expr) => {
+                self.resolve_expr(expr);
             }
 
             TypeKind::Associated { base, .. } => {

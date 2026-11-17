@@ -20,7 +20,7 @@ use crate::{error::TypeError, format_str::FormatParseError};
 
 use zeen_ast::{
     expressions::{BinaryOp, Literal, UnaryOp},
-    types::{BuiltinShape, BuiltinType},
+    types::{BuiltinShape, BuiltinType, ConstParamType},
 };
 use zeen_driver::{CompilationContext, CompilationOutput};
 use zeen_hir::{
@@ -38,9 +38,9 @@ use zeen_hir::{
 };
 use zeen_resolve::{DefId, DefKind, ResolutionResult};
 use zeen_types::{
-    ARRAY_LEN_FIELD, ArrayLen, Capabilities, EnumTypeInfo, EnumVariantInfo, ReceiverAccess,
-    SLICE_LEN_FIELD, SLICE_PTR_FIELD, SelfMode, StructFieldInfo, StructTypeInfo, Type, TypeId,
-    VariantPayload, binary_op_interface, self_mode_of, unary_op_interface,
+    ARRAY_LEN_FIELD, ArrayLen, Capabilities, ConstArg, EnumTypeInfo, EnumVariantInfo,
+    ReceiverAccess, SLICE_LEN_FIELD, SLICE_PTR_FIELD, SelfMode, StructFieldInfo, StructTypeInfo,
+    Type, TypeId, VariantPayload, binary_op_interface, self_mode_of, unary_op_interface,
 };
 
 pub mod closure_alloc;
@@ -257,6 +257,15 @@ fn literal_kind_word(lit: &Literal) -> &'static str {
         Literal::Bool(_) => "boolean",
         Literal::String(_) => "string",
         Literal::Null => "null",
+    }
+}
+
+fn const_param_runtime_builtin(param: ConstParamType) -> BuiltinType {
+    match param {
+        ConstParamType::UInt => BuiltinType::usize,
+        ConstParamType::Int => BuiltinType::isize,
+        ConstParamType::Bool => BuiltinType::bool,
+        ConstParamType::Char => BuiltinType::char,
     }
 }
 
@@ -1535,6 +1544,12 @@ impl<'res> TypeChecker<'res> {
         match &ty.kind {
             HirTypeKind::Builtin(builtin) => self.result.interner.builtin(*builtin),
 
+            HirTypeKind::ConstParam(def_id) => {
+                self.result.interner.intern(Type::ConstParam(*def_id))
+            }
+
+            HirTypeKind::ConstValue(expr) => self.lower_const_arg(expr),
+
             HirTypeKind::SelfType(def_id) | HirTypeKind::SelfAlias(def_id) => {
                 match self.def_kind(*def_id) {
                     Some(DefKind::InterfaceSelfPlaceholder) => self
@@ -1863,6 +1878,39 @@ impl<'res> TypeChecker<'res> {
                 None
             }
         }
+    }
+
+    fn lower_const_arg(&mut self, expr: &HirExpr) -> TypeId {
+        let arg = match &expr.kind {
+            HirExprKind::Literal(Literal::Int(n)) => Some(ConstArg::Int(*n as i128)),
+            HirExprKind::Literal(Literal::Char(c)) => Some(ConstArg::Char(*c)),
+            HirExprKind::Literal(Literal::Bool(b)) => Some(ConstArg::Bool(*b)),
+
+            HirExprKind::Unary {
+                op: UnaryOp::Neg,
+                expr: inner,
+            } => match &inner.kind {
+                HirExprKind::Literal(Literal::Int(n)) => Some(ConstArg::Int(-(*n as i128))),
+                _ => None,
+            },
+
+            HirExprKind::ConstParamRef(def) => {
+                return self.result.interner.intern(Type::ConstParam(*def));
+            }
+
+            _ => None,
+        };
+
+        let Some(arg) = arg else {
+            self.report(TypeError::ConstArgNotConst {
+                src: expr.source.src(),
+                span: expr.source.span,
+            });
+
+            return self.result.interner.error();
+        };
+
+        self.result.interner.intern(Type::ConstArg(arg))
     }
 
     // > Pass 2
@@ -3467,6 +3515,8 @@ impl<'res> TypeChecker<'res> {
         }
 
         match &expr.kind {
+            HirExprKind::ConstParamRef(_) => {}
+
             HirExprKind::VarRef { def, .. } => {
                 if movable.contains(def) && (nested || consumed) {
                     *moved = true;
@@ -3816,6 +3866,18 @@ impl<'res> TypeChecker<'res> {
 
     fn synth_expr_inner(&mut self, expr: &HirExpr) -> TypeId {
         match &expr.kind {
+            HirExprKind::ConstParamRef(def) => {
+                let builtin = self
+                    .def_kind(*def)
+                    .and_then(|kind| match kind {
+                        DefKind::ConstParam(ct) => Some(const_param_runtime_builtin(*ct)),
+                        _ => None,
+                    })
+                    .unwrap_or(BuiltinType::usize);
+
+                self.result.interner.builtin(builtin)
+            }
+
             HirExprKind::Literal(lit) => match lit {
                 Literal::Int(_) => self.result.interner.int_literal(),
                 Literal::Float(_) => self.result.interner.float_literal(),

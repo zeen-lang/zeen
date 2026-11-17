@@ -584,6 +584,19 @@ pub enum TypeError {
         span: SourceSpan,
     },
 
+    #[error("const generic argument must be a literal or a comptime constant")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::const_arg_not_const),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-const_arg_not_const")
+    )]
+    ConstArgNotConst {
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
     #[error("empty arrays are not allowed")]
     #[diagnostic(
         severity(Error),
