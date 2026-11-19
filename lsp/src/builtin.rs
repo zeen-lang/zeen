@@ -1,4 +1,4 @@
-use zeen_ast::types::BuiltinShape;
+use zeen_ast::types::{BuiltinShape, ShapeLen};
 
 pub(crate) fn is_scalar_type_name(name: &str) -> bool {
     matches!(
@@ -82,14 +82,24 @@ fn shape_matches_text(shape: &BuiltinShape, ty: &str, bindings: &mut Vec<(u32, S
                 return false;
             };
 
-            let digits = &rest[..close];
+            let digits = rest[..close].trim();
 
-            if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            if digits.is_empty() {
                 return false;
             }
 
-            if digits.parse::<u64>() != Ok(*len) {
-                return false;
+            match len {
+                ShapeLen::Known(expected) => {
+                    if digits.parse::<u64>() != Ok(*expected) {
+                        return false;
+                    }
+                }
+
+                ShapeLen::Param(index) => match bindings.iter().find(|(slot, _)| slot == index) {
+                    Some((_, bound)) if bound != digits => return false,
+                    Some(_) => {}
+                    None => bindings.push((*index, digits.to_string())),
+                },
             }
 
             shape_matches_text(element, &rest[close + 1..], bindings)
@@ -110,5 +120,31 @@ fn strip_const(ty: &str) -> (bool, &str) {
     match ty.trim_start().strip_prefix("const ") {
         Some(rest) => (true, rest.trim_start()),
         None => (false, ty.trim_start()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zeen_ast::types::BuiltinType;
+
+    fn array(len: ShapeLen) -> BuiltinShape {
+        BuiltinShape::Array {
+            element: Box::new(BuiltinShape::Scalar(BuiltinType::u8)),
+            len,
+        }
+    }
+
+    #[test]
+    fn generic_array_shape_matches_concrete_text() {
+        assert!(shape_matches_type(&array(ShapeLen::Param(0)), "[4]u8"));
+        assert!(shape_matches_type(&array(ShapeLen::Param(0)), "[N]u8"));
+        assert!(!shape_matches_type(&array(ShapeLen::Param(0)), "[]u8"));
+    }
+
+    #[test]
+    fn concrete_array_shape_rejects_other_lengths() {
+        assert!(shape_matches_type(&array(ShapeLen::Known(4)), "[4]u8"));
+        assert!(!shape_matches_type(&array(ShapeLen::Known(4)), "[8]u8"));
     }
 }

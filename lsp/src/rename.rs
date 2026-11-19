@@ -511,6 +511,24 @@ mod tests {
         assert!(result.contains("b.value"));
     }
 
+    const CONST_PARAM_SAMPLE: &str = "struct Buffer[N: comptime_uint] {\n    pub data: [N]u8,\n}\n\nimplement[N: comptime_uint] Buffer[N] {\n    pub fn count(*const self) usize {\n        return N;\n    }\n}\n\nfn main() {\n    const b: Buffer[4] = Buffer#[4] { .data = {1, 2, 3, 4} };\n    @println(\"{}\", b.count());\n}\n";
+
+    #[test]
+    fn renames_const_generic_parameter() {
+        let fixture = Fixture::check(&[("main", CONST_PARAM_SAMPLE)]);
+        let docs = fixture.docs();
+        let offset = fixture.offset(0, "N: comptime_uint");
+        let edits = rename_edits(&docs, &fixture.uris[0], offset, "LEN");
+
+        let result = applied(&fixture.texts[0], &edits[&fixture.uris[0]]);
+
+        assert!(
+            result.contains("struct Buffer[LEN: comptime_uint]"),
+            "{result}"
+        );
+        assert!(result.contains("pub data: [LEN]u8"), "{result}");
+    }
+
     #[test]
     fn rejects_bad_names() {
         let fixture = Fixture::check(&[("main", FN_SAMPLE)]);

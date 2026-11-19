@@ -1036,6 +1036,7 @@ impl<'ctx> Walker<'ctx> {
             | DefKind::TypeAlias
             | DefKind::Enum
             | DefKind::GenericParam
+            | DefKind::ConstParam(_)
             | DefKind::Builtin(_)
             | DefKind::BuiltinShape(_)
             | DefKind::AssociatedType { .. }
@@ -1366,7 +1367,9 @@ impl<'ctx> Walker<'ctx> {
             HirDeclKind::Struct(strukt) => {
                 let name = self.interner.resolve(&strukt.name.0).to_string();
                 self.analysis.type_defs.insert(name, decl.def_id);
-                self.analysis.type_kinds.insert(decl.def_id, TypeKind::Struct);
+                self.analysis
+                    .type_kinds
+                    .insert(decl.def_id, TypeKind::Struct);
             }
 
             HirDeclKind::Implement(implement) => {
@@ -2040,6 +2043,7 @@ impl<'ctx> Walker<'ctx> {
                 generic_args: _,
             }
             | HirExprKind::GenericParamRef(target)
+            | HirExprKind::ConstParamRef(target)
             | HirExprKind::SelfValue(target) => {
                 self.emit_ref(
                     expr.source.span.offset(),
@@ -2312,7 +2316,9 @@ impl<'ctx> Walker<'ctx> {
         match &ty.kind {
             HirTypeKind::Builtin(_) | HirTypeKind::VaArgs | HirTypeKind::Error => {}
 
-            HirTypeKind::SelfType(target) | HirTypeKind::SelfAlias(target) => {
+            HirTypeKind::SelfType(target)
+            | HirTypeKind::SelfAlias(target)
+            | HirTypeKind::ConstParam(target) => {
                 self.emit_ref(
                     ty.source.span.offset(),
                     ty.source.span.len(),
@@ -2320,6 +2326,10 @@ impl<'ctx> Walker<'ctx> {
                     Some(ty.id),
                 );
             }
+
+            HirTypeKind::ConstValue(expr) => self.walk_expr(expr),
+
+            HirTypeKind::ConstLiteral(_) => {}
 
             HirTypeKind::Associated { base, name } => {
                 self.walk_type(base);
