@@ -2322,17 +2322,28 @@ impl<'ctx> MirLowering<'ctx> {
         struct_defs.sort_by_key(|def_id| def_id.0);
 
         for struct_def in struct_defs {
-            let generic_args: Vec<TypeId> = self
+            let generics = self
                 .typecheck
                 .struct_generics
                 .get(&struct_def)
-                .map(|generics| {
-                    generics
-                        .iter()
-                        .map(|&generic| self.typecheck.interner.intern(Type::GenericParam(generic)))
-                        .collect()
-                })
+                .cloned()
                 .unwrap_or_default();
+
+            let has_const_generic = generics.iter().any(|generic| {
+                matches!(
+                    self.resolution.defs.get(generic).map(|info| &info.kind),
+                    Some(DefKind::ConstParam(_))
+                )
+            });
+
+            if has_const_generic {
+                continue;
+            }
+
+            let generic_args: Vec<TypeId> = generics
+                .iter()
+                .map(|&generic| self.typecheck.interner.intern(Type::GenericParam(generic)))
+                .collect();
 
             let struct_ty = self.typecheck.interner.intern(Type::Struct {
                 def_id: struct_def,
