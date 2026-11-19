@@ -10,7 +10,7 @@ use zeen_mir::{
 };
 use zeen_resolve::{DefId, DefKind};
 use zeen_typecheck::format_str::{FormatChunk, FormatSpec};
-use zeen_types::Type;
+use zeen_types::{ConstArg, Type};
 
 use crate::codegen::{CodeGen, CodegenOptions};
 use crate::fixtures::*;
@@ -1492,6 +1492,51 @@ fn struct_field_store_and_load() {
     let ir = compile(&fx, CompilationMode::Debug);
 
     assert!(ir.contains("getelementptr"), "{ir}");
+}
+
+#[test]
+fn const_generic_instantiations_get_distinct_names() {
+    let mut fx = Fixture::new();
+    let buffer_def = fx.def("Buffer", DefKind::Struct);
+    let field_def = fx.def("data", DefKind::Field);
+    let u8_ty = fx.u8();
+
+    let mut struct_tys = Vec::new();
+
+    for (len, arg) in [(4, 4i128), (5, 5i128)] {
+        let arg = fx.ty(Type::ConstArg(ConstArg::Int(arg)));
+        let struct_ty = fx.ty(Type::Struct {
+            def_id: buffer_def,
+            generic_args: vec![arg],
+        });
+        let array_ty = fx.array(u8_ty, len);
+        struct_tys.push(struct_ty);
+
+        fx.add_struct_layout(
+            struct_ty,
+            StructLayout {
+                def_id: buffer_def,
+                generic_args: vec![arg],
+                fields: vec![StructFieldLayout {
+                    def_id: field_def,
+                    ty: array_ty,
+                }],
+            },
+        );
+    }
+
+    let read_def = fx.def("read", DefKind::Function);
+    let mut f = fx.fn_builder("read", read_def, u8_ty);
+    f.local("four", struct_tys[0]);
+    f.local("five", struct_tys[1]);
+    f.entry("bb0");
+    f.ret(const_int(0));
+    f.finish();
+
+    let ir = compile(&fx, CompilationMode::Debug);
+
+    assert!(ir.contains("Buffer$n4"), "{ir}");
+    assert!(ir.contains("Buffer$n5"), "{ir}");
 }
 
 #[test]

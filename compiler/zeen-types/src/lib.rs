@@ -28,6 +28,15 @@ impl ArrayLen {
             Self::Param(_) => None,
         }
     }
+
+    pub fn expect_known(self) -> u64 {
+        match self {
+            Self::Known(n) => n,
+            Self::Param(def) => {
+                panic!("array length stayed generic after monomorphization: {def:?}")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1264,6 +1273,15 @@ mod tests {
                 len: ArrayLen::Known(4),
             }
         );
+    }
+
+    #[test]
+    fn expect_known_returns_concrete_length_and_panics_on_param() {
+        assert_eq!(ArrayLen::Known(4).expect_known(), 4);
+
+        let panicked = std::panic::catch_unwind(|| ArrayLen::Param(DefId(1)).expect_known());
+
+        assert!(panicked.is_err());
     }
 
     #[test]

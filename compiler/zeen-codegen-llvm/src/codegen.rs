@@ -40,7 +40,7 @@ use zeen_typecheck::{
     format_str::{FormatChunk, FormatSpec},
     result::TypeCheckResult,
 };
-use zeen_types::{ArrayLen, Type, TypeId};
+use zeen_types::{ArrayLen, ConstArg, Type, TypeId};
 
 use crate::error::CodegenError;
 
@@ -808,7 +808,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
 
             Type::Array { element, len } => self
                 .map_basic_type(element)
-                .array_type(len.known().unwrap_or(0) as u32)
+                .array_type(len.expect_known() as u32)
                 .into(),
 
             Type::Fn { .. } => self.context.ptr_type(AddressSpace::default()).into(),
@@ -1453,7 +1453,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         let Type::Array { element, len } = self.typecheck.interner.get(array_ty).clone() else {
             unreachable!("array arithmetic on a non-array type");
         };
-        let len = len.known().unwrap_or(0);
+        let len = len.expect_known();
 
         let dest_ptr = self.place_ptr(dest, func);
         let lhs_ptr = self.array_operand_ptr(lhs, func);
@@ -2075,7 +2075,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
     ) -> BasicValueEnum<'ctx> {
         let eq = match self.typecheck.interner.get(ty).clone() {
             Type::Array { element, len } => {
-                let len = len.known().unwrap_or(0) as u32;
+                let len = len.expect_known() as u32;
                 let mut acc: Option<BasicValueEnum<'ctx>> = None;
                 for i in 0..len {
                     let l = self
@@ -2481,10 +2481,9 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
 
             Type::Pointer { .. } | Type::ManyPointer { .. } | Type::Fn { .. } => Shape::Pointer,
 
-            Type::Array { element, len } => Shape::Array(
-                Box::new(self.layout_shape(element)),
-                len.known().unwrap_or(0),
-            ),
+            Type::Array { element, len } => {
+                Shape::Array(Box::new(self.layout_shape(element)), len.expect_known())
+            }
 
             Type::Associated { .. } => {
                 unreachable!("associated types must be normalized before codegen")
@@ -4950,11 +4949,17 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             Type::Array { element, len } => {
                 format!(
                     "arr{}.{}",
-                    len.known().unwrap_or(0),
+                    len.expect_known(),
                     self.mangle_type_name(*element)
                 )
             }
             Type::Slice { element, .. } => format!("slice.{}", self.mangle_type_name(*element)),
+            Type::ConstArg(arg) => match arg {
+                ConstArg::Int(n) => format!("n{n}"),
+                ConstArg::Bool(b) => format!("b{}", u8::from(*b)),
+                ConstArg::Char(c) => format!("c{}", *c as u32),
+            },
+            Type::ConstParam(def) => format!("g{}", def.0),
             Type::Enum { def_id, .. } => {
                 self.prefixed_name(*def_id, self.resolve_def_name(*def_id))
             }
