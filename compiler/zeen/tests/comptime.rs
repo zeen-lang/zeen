@@ -2075,6 +2075,21 @@ fn rejects_non_type_comptime_call_in_type_position() {
 
     assert!(!result.success);
     assert!(
+        result.stderr.contains("expected type `3`"),
+        "stderr: {}",
+        result.stderr
+    );
+}
+
+#[test]
+fn rejects_non_type_comptime_str_call_in_type_position() {
+    let result = compile(
+        "type_position_wrong_str",
+        "comptime fn label() comptime_str {\n  return \"three\";\n}\n\nfn main() {\n  let value: label() = 1;\n}\n",
+    );
+
+    assert!(!result.success);
+    assert!(
         result.stderr.contains("must produce a zeen_type"),
         "stderr: {}",
         result.stderr

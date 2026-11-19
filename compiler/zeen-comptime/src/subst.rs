@@ -651,6 +651,19 @@ impl<'arena> Interp<'arena> {
                         Some(Value::Type(ty_expr)) => {
                             return Ok(Some(self.arena.alloc(*ty_expr)));
                         }
+                        Some(value @ (Value::Int(_) | Value::Bool(_) | Value::Char(_))) => {
+                            let expr = match self.value_into_expr(value, ty.span) {
+                                Ok(expr) => expr,
+                                Err(error) => return Err(self.report(error)),
+                            };
+
+                            let rebuilt = TypeExpr {
+                                kind: TypeKind::ConstValue(self.arena.alloc(expr)),
+                                span: ty.span,
+                            };
+
+                            return Ok(Some(self.arena.alloc(rebuilt)));
+                        }
                         Some(_) => {}
                         None => {}
                     }
@@ -718,6 +731,19 @@ impl<'arena> Interp<'arena> {
                     Some(new_ty) => Ok(Some(new_ty)),
                     None => Ok(Some(result)),
                 },
+                Ok(other @ (Value::Int(_) | Value::Bool(_) | Value::Char(_))) => {
+                    let expr = match self.value_into_expr(other, ty.span) {
+                        Ok(expr) => expr,
+                        Err(error) => return Err(self.report(error)),
+                    };
+
+                    let rebuilt = TypeExpr {
+                        kind: TypeKind::ConstValue(self.arena.alloc(expr)),
+                        span: ty.span,
+                    };
+
+                    Ok(Some(self.arena.alloc(rebuilt)))
+                }
                 Ok(other) => {
                     self.errors.push(Error::TypeMismatch {
                         message: format!(
@@ -1080,8 +1106,21 @@ impl<'arena> Interp<'arena> {
             ExpressionKind::Literal(_) => Ok(None),
 
             ExpressionKind::Ident { name, generic_args } => {
-                if generic_args.is_some() {
-                    return Ok(None);
+                if let Some(args) = generic_args {
+                    return match self.substitute_type_args(module, args)? {
+                        None => Ok(None),
+                        Some(new_args) => {
+                            let built = self.arena.alloc_slice_copy(&new_args);
+
+                            Ok(Some(self.arena.alloc(Expression {
+                                kind: ExpressionKind::Ident {
+                                    name: *name,
+                                    generic_args: Some(built),
+                                },
+                                span: expr.span,
+                            })))
+                        }
+                    };
                 }
 
                 if self.is_comptime_const(module, *name) {
