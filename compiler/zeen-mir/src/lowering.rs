@@ -9398,10 +9398,13 @@ impl<'ctx> MirLowering<'ctx> {
                 }
 
                 for (arg, &owner_g) in entry.object_args.iter().zip(owner_generics.iter()) {
-                    if let Type::GenericParam(imp_g) = self.typecheck.interner.get(*arg)
-                        && let Some(&concrete) = bindings.get(&owner_g)
-                    {
-                        bindings.insert(*imp_g, concrete);
+                    let imp_g = match self.typecheck.interner.get(*arg) {
+                        Type::GenericParam(imp_g) | Type::ConstParam(imp_g) => *imp_g,
+                        _ => continue,
+                    };
+
+                    if let Some(&concrete) = bindings.get(&owner_g) {
+                        bindings.insert(imp_g, concrete);
                     }
                 }
             }

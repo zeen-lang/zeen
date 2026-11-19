@@ -1016,7 +1016,7 @@ impl<'res> TypeChecker<'res> {
                 .iter()
                 .zip(struct_generics.iter())
                 .filter_map(|(arg, &struct_g)| match self.result.interner.get(*arg) {
-                    Type::GenericParam(g) => Some((*g, struct_g)),
+                    Type::GenericParam(g) | Type::ConstParam(g) => Some((*g, struct_g)),
                     _ => None,
                 })
                 .collect();
@@ -1254,7 +1254,7 @@ impl<'res> TypeChecker<'res> {
             let arg = self.lower_hir_type(slot);
 
             match self.result.interner.get(arg) {
-                Type::GenericParam(g) if imp_generic_defs.contains(g) => {}
+                Type::GenericParam(g) | Type::ConstParam(g) if imp_generic_defs.contains(g) => {}
                 _ if self.type_contains_generic(arg) => {
                     if report_mixed {
                         self.report(TypeError::ImplSlotMixed {

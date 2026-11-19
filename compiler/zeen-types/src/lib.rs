@@ -634,6 +634,28 @@ fn shape_len_matches(
     }
 }
 
+fn substitute_array_len(
+    interner: &TypeInterner,
+    len: ArrayLen,
+    bindings: &HashMap<DefId, TypeId>,
+) -> ArrayLen {
+    let mut current = len;
+
+    while let ArrayLen::Param(def) = current {
+        let Some(bound_ty) = bindings.get(&def).copied() else {
+            break;
+        };
+
+        current = match interner.get(bound_ty) {
+            Type::ConstArg(ConstArg::Int(n)) if *n >= 0 => ArrayLen::Known(*n as u64),
+            Type::ConstParam(other) => ArrayLen::Param(*other),
+            _ => break,
+        };
+    }
+
+    current
+}
+
 pub fn substitute_generics(
     interner: &mut TypeInterner,
     ty: TypeId,
@@ -700,16 +722,7 @@ pub fn substitute_generics(
 
         Type::Array { element, len } => {
             let new_elem = substitute_generics(interner, element, bindings);
-            let new_len = match len {
-                ArrayLen::Param(d) => match bindings.get(&d).copied() {
-                    Some(bound_ty) => match interner.get(bound_ty) {
-                        Type::ConstArg(ConstArg::Int(n)) if *n >= 0 => ArrayLen::Known(*n as u64),
-                        _ => ArrayLen::Param(d),
-                    },
-                    None => ArrayLen::Param(d),
-                },
-                other => other,
-            };
+            let new_len = substitute_array_len(interner, len, bindings);
 
             if new_elem == element && new_len == len {
                 ty
@@ -1292,6 +1305,44 @@ mod tests {
         assert_eq!(
             substitute_generics(&mut interner, ty, &bindings),
             replacement
+        );
+    }
+
+    #[test]
+    fn substitute_generics_maps_const_param_to_const_param() {
+        let mut interner = TypeInterner::new();
+        let outer = DefId(1);
+        let inner = DefId(2);
+        let element = interner.intern(Type::Builtin(BuiltinType::u8));
+        let array = interner.intern(Type::Array {
+            element,
+            len: ArrayLen::Param(outer),
+        });
+        let inner_param = interner.intern(Type::ConstParam(inner));
+
+        let mut bindings = HashMap::default();
+        bindings.insert(outer, inner_param);
+
+        let expected = interner.intern(Type::Array {
+            element,
+            len: ArrayLen::Param(inner),
+        });
+
+        assert_eq!(
+            substitute_generics(&mut interner, array, &bindings),
+            expected
+        );
+
+        bindings.insert(inner, interner.intern(Type::ConstArg(ConstArg::Int(4))));
+
+        let expected = interner.intern(Type::Array {
+            element,
+            len: ArrayLen::Known(4),
+        });
+
+        assert_eq!(
+            substitute_generics(&mut interner, array, &bindings),
+            expected
         );
     }
 
