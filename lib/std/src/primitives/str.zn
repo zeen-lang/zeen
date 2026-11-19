@@ -1,0 +1,497 @@
+use std.string;
+
+fn chars[N: comptime_uint](s: *const [N]char) []const char {
+  if (N > 0 && s[N - 1] == '\0') {
+    return s[0..N - 1];
+  };
+
+  return s[0..N];
+}
+
+implement builtin []const char {
+  pub fn len(self) usize {
+    return self.len;
+  }
+
+  pub fn is_empty(self) bool {
+    return self.len == 0;
+  }
+
+  pub fn get(self, index: usize) Option[char] {
+    if (index >= self.len) {
+      return Option.None;
+    };
+
+    return Option.Some(self[index]);
+  }
+
+  pub fn is_ascii(self) bool {
+    let i: usize = 0;
+
+    while (i < self.len) {
+      if (!self[i].is_ascii()) {
+        return false;
+      };
+
+      i += 1;
+    };
+
+    return true;
+  }
+
+  pub fn starts_with(self, prefix: []const char) bool {
+    const n = prefix.len;
+
+    if (n > self.len) {
+      return false;
+    };
+
+    let i: usize = 0;
+
+    while (i < n) {
+      if (self[i] != prefix[i]) {
+        return false;
+      };
+
+      i += 1;
+    };
+
+    return true;
+  }
+
+  pub fn ends_with(self, suffix: []const char) bool {
+    const n = suffix.len;
+
+    if (n > self.len) {
+      return false;
+    };
+
+    const offset = self.len - n;
+    let i: usize = 0;
+
+    while (i < n) {
+      if (self[offset + i] != suffix[i]) {
+        return false;
+      };
+
+      i += 1;
+    };
+
+    return true;
+  }
+
+  pub fn find(self, needle: []const char) Option[usize] {
+    const n = needle.len;
+
+    if (n == 0) {
+      return Option.Some(@as(usize, 0));
+    };
+
+    if (n > self.len) {
+      return Option.None;
+    };
+
+    let i: usize = 0;
+
+    while (i + n <= self.len) {
+      if (self[i..i + n] == needle) {
+        return Option.Some(i);
+      };
+
+      i += 1;
+    };
+
+    return Option.None;
+  }
+
+  pub fn rfind(self, needle: []const char) Option[usize] {
+    const n = needle.len;
+
+    if (n == 0) {
+      return Option.Some(self.len);
+    };
+
+    if (n > self.len) {
+      return Option.None;
+    };
+
+    let i: usize = self.len - n;
+
+    while (true) {
+      if (self[i..i + n] == needle) {
+        return Option.Some(i);
+      };
+
+      if (i == 0) { break; };
+
+      i -= 1;
+    };
+
+    return Option.None;
+  }
+
+  pub fn contains(self, needle: []const char) bool {
+    return self.find(needle).is_some();
+  }
+
+  pub fn strip_prefix(self, prefix: []const char) Option[[]const char] {
+    if (!self.starts_with(prefix)) {
+      return Option.None;
+    };
+
+    return Option.Some(self.ptr[prefix.len..self.len]);
+  }
+
+  pub fn strip_suffix(self, suffix: []const char) Option[[]const char] {
+    if (!self.ends_with(suffix)) {
+      return Option.None;
+    };
+
+    return Option.Some(self.ptr[0..self.len - suffix.len]);
+  }
+
+  pub fn trim_start_matches(self, value: char) []const char {
+    let i: usize = 0;
+
+    while (i < self.len && self[i] == value) {
+      i += 1;
+    };
+
+    return self.ptr[i..self.len];
+  }
+
+  pub fn trim_end_matches(self, value: char) []const char {
+    let end = self.len;
+
+    while (end > 0 && self[end - 1] == value) {
+      end -= 1;
+    };
+
+    return self.ptr[0..end];
+  }
+
+  pub fn trim_start(self) []const char {
+    let i: usize = 0;
+
+    while (i < self.len && self[i].is_whitespace()) {
+      i += 1;
+    };
+
+    return self.ptr[i..self.len];
+  }
+
+  pub fn trim_end(self) []const char {
+    let end = self.len;
+
+    while (end > 0 && self[end - 1].is_whitespace()) {
+      end -= 1;
+    };
+
+    return self.ptr[0..end];
+  }
+
+  pub fn trim(self) []const char {
+    const start = self.len - self.trim_start().len;
+    const end = self.trim_end().len;
+
+    if (start >= end) {
+      return self.ptr[self.len..self.len];
+    };
+
+    return self.ptr[start..end];
+  }
+
+  pub fn eq_ignore_ascii_case(self, other: []const char) bool {
+    if (self.len != other.len) {
+      return false;
+    };
+
+    let i: usize = 0;
+
+    while (i < self.len) {
+      if (!self[i].eq_ignore_ascii_case(other[i])) {
+        return false;
+      };
+
+      i += 1;
+    };
+
+    return true;
+  }
+
+  pub fn to_string(self) String {
+    return String.from(self);
+  }
+
+  pub fn to_ascii_uppercase(self) String {
+    let out = String.with_capacity(self.len);
+    let i: usize = 0;
+
+    while (i < self.len) {
+      out.push(self[i].to_ascii_uppercase());
+      i += 1;
+    };
+
+    return out;
+  }
+
+  pub fn to_ascii_lowercase(self) String {
+    let out = String.with_capacity(self.len);
+    let i: usize = 0;
+
+    while (i < self.len) {
+      out.push(self[i].to_ascii_lowercase());
+      i += 1;
+    };
+
+    return out;
+  }
+
+  pub fn repeat(self, times: usize) String {
+    let out = String.with_capacity(self.len * times);
+    let i: usize = 0;
+
+    while (i < times) {
+      out.push_str(self);
+      i += 1;
+    };
+
+    return out;
+  }
+}
+
+implement builtin []char {
+  pub fn as_str(self) []const char {
+    return self;
+  }
+
+  pub fn fill(*self, value: char) {
+    let s: []char = *self;
+    let i: usize = 0;
+
+    while (i < s.len) {
+      s[i] = value;
+      i += 1;
+    };
+  }
+
+  pub fn make_ascii_uppercase(*self) {
+    let s: []char = *self;
+    let i: usize = 0;
+
+    while (i < s.len) {
+      s[i] = s[i].to_ascii_uppercase();
+      i += 1;
+    };
+  }
+
+  pub fn make_ascii_lowercase(*self) {
+    let s: []char = *self;
+    let i: usize = 0;
+
+    while (i < s.len) {
+      s[i] = s[i].to_ascii_lowercase();
+      i += 1;
+    };
+  }
+
+  pub fn len(*const self) usize {
+    const s: []const char = *self;
+
+    return s.len();
+  }
+
+  pub fn is_empty(*const self) bool {
+    const s: []const char = *self;
+
+    return s.is_empty();
+  }
+
+  pub fn get(*const self, index: usize) Option[char] {
+    const s: []const char = *self;
+
+    return s.get(index);
+  }
+
+  pub fn is_ascii(*const self) bool {
+    const s: []const char = *self;
+
+    return s.is_ascii();
+  }
+
+  pub fn starts_with(*const self, prefix: []const char) bool {
+    const s: []const char = *self;
+
+    return s.starts_with(prefix);
+  }
+
+  pub fn ends_with(*const self, suffix: []const char) bool {
+    const s: []const char = *self;
+
+    return s.ends_with(suffix);
+  }
+
+  pub fn find(*const self, needle: []const char) Option[usize] {
+    const s: []const char = *self;
+
+    return s.find(needle);
+  }
+
+  pub fn rfind(*const self, needle: []const char) Option[usize] {
+    const s: []const char = *self;
+
+    return s.rfind(needle);
+  }
+
+  pub fn contains(*const self, needle: []const char) bool {
+    const s: []const char = *self;
+
+    return s.contains(needle);
+  }
+
+  pub fn strip_prefix(*const self, prefix: []const char) Option[[]const char] {
+    const s: []const char = *self;
+
+    return s.strip_prefix(prefix);
+  }
+
+  pub fn strip_suffix(*const self, suffix: []const char) Option[[]const char] {
+    const s: []const char = *self;
+
+    return s.strip_suffix(suffix);
+  }
+
+  pub fn trim_start_matches(*const self, value: char) []const char {
+    const s: []const char = *self;
+
+    return s.trim_start_matches(value);
+  }
+
+  pub fn trim_end_matches(*const self, value: char) []const char {
+    const s: []const char = *self;
+
+    return s.trim_end_matches(value);
+  }
+
+  pub fn trim(*const self) []const char {
+    const s: []const char = *self;
+
+    return s.trim();
+  }
+
+  pub fn trim_start(*const self) []const char {
+    const s: []const char = *self;
+
+    return s.trim_start();
+  }
+
+  pub fn trim_end(*const self) []const char {
+    const s: []const char = *self;
+
+    return s.trim_end();
+  }
+
+  pub fn eq_ignore_ascii_case(*const self, other: []const char) bool {
+    const s: []const char = *self;
+
+    return s.eq_ignore_ascii_case(other);
+  }
+
+  pub fn to_string(*const self) String {
+    const s: []const char = *self;
+
+    return s.to_string();
+  }
+
+  pub fn to_ascii_uppercase(*const self) String {
+    const s: []const char = *self;
+
+    return s.to_ascii_uppercase();
+  }
+
+  pub fn to_ascii_lowercase(*const self) String {
+    const s: []const char = *self;
+
+    return s.to_ascii_lowercase();
+  }
+
+  pub fn repeat(*const self, times: usize) String {
+    const s: []const char = *self;
+
+    return s.repeat(times);
+  }
+}
+
+implement[N: comptime_uint] builtin [N]char {
+  pub fn as_str(*const self) []const char {
+    return chars#[N](self);
+  }
+
+  pub fn len(*const self) usize {
+    return chars#[N](self).len;
+  }
+
+  pub fn is_ascii(*const self) bool {
+    return chars#[N](self).is_ascii();
+  }
+
+  pub fn starts_with(*const self, prefix: []const char) bool {
+    return chars#[N](self).starts_with(prefix);
+  }
+
+  pub fn ends_with(*const self, suffix: []const char) bool {
+    return chars#[N](self).ends_with(suffix);
+  }
+
+  pub fn find(*const self, needle: []const char) Option[usize] {
+    return chars#[N](self).find(needle);
+  }
+
+  pub fn rfind(*const self, needle: []const char) Option[usize] {
+    return chars#[N](self).rfind(needle);
+  }
+
+  pub fn strip_prefix(*const self, prefix: []const char) Option[[]const char] {
+    return chars#[N](self).strip_prefix(prefix);
+  }
+
+  pub fn strip_suffix(*const self, suffix: []const char) Option[[]const char] {
+    return chars#[N](self).strip_suffix(suffix);
+  }
+
+  pub fn trim_start_matches(*const self, value: char) []const char {
+    return chars#[N](self).trim_start_matches(value);
+  }
+
+  pub fn trim_end_matches(*const self, value: char) []const char {
+    return chars#[N](self).trim_end_matches(value);
+  }
+
+  pub fn trim(*const self) []const char {
+    return chars#[N](self).trim();
+  }
+
+  pub fn trim_start(*const self) []const char {
+    return chars#[N](self).trim_start();
+  }
+
+  pub fn trim_end(*const self) []const char {
+    return chars#[N](self).trim_end();
+  }
+
+  pub fn eq_ignore_ascii_case(*const self, other: []const char) bool {
+    return chars#[N](self).eq_ignore_ascii_case(other);
+  }
+
+  pub fn to_string(*const self) String {
+    return chars#[N](self).to_string();
+  }
+
+  pub fn to_ascii_uppercase(*const self) String {
+    return chars#[N](self).to_ascii_uppercase();
+  }
+
+  pub fn to_ascii_lowercase(*const self) String {
+    return chars#[N](self).to_ascii_lowercase();
+  }
+}

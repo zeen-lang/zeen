@@ -1,0 +1,36 @@
+fn main() {
+  const s: []const char = "  Hello, World  ";
+  @println("{} {} {} {}", s.len(), s.is_empty(), s.get(2).unwrap(), s.get(99).is_none());
+  @println("{} {} {}", s.is_ascii(), s.starts_with("  He"), s.ends_with("  "));
+  @println("{} {} {}", s.find("o").unwrap(), s.rfind("o").unwrap(), s.contains("World"));
+  @println("[{}] [{}] [{}]", s.trim(), s.trim_start(), s.trim_end());
+  @println("[{}] [{}]", s.strip_prefix("  ").unwrap(), s.strip_suffix("  ").unwrap());
+  @println("[{}] [{}]", "xxxhi".trim_start_matches('x'), "hi...".trim_end_matches('.'));
+  @println("{} {}", s.eq_ignore_ascii_case("  hello, world  "), s.eq_ignore_ascii_case("no"));
+  @println("{} [{}] [{}]", s.to_string().len(), s.to_ascii_uppercase().trim(), s.to_ascii_lowercase().trim());
+  @println("[{}]", s.trim().repeat(2));
+
+  let buf: [3]char = @uninit();
+  let m: []char = buf;
+  m[0] = 'a';
+  m[1] = 'B';
+  m[2] = 'c';
+  @println("[{}] {} {}", m, m.len(), m.find("Bc").unwrap());
+  m.make_ascii_uppercase();
+  @println("[{}] {}", m, m.eq_ignore_ascii_case("ABC"));
+  m.make_ascii_lowercase();
+  @println("[{}] [{}]", m, m.as_str().trim());
+  m.fill('z');
+  @println("[{}]", m);
+
+  const arr: [5]char = {'a', 'b', 'c', 'd', 'e'};
+  @println("{} {} {}", arr.len(), arr.starts_with("ab"), arr.ends_with("de"));
+  @println("{} {} {}", arr.find("cd").unwrap(), arr.rfind("c").unwrap(), arr.strip_prefix("abc").unwrap().len);
+  @println("[{}] [{}]", arr.trim(), arr.to_ascii_uppercase());
+
+  const carr: [3]const char = {'x', 'y', 'z'};
+  @println("{} [{}]", carr.len(), carr.trim());
+
+  const p: []const char = "padded";
+  @println("[{}] [{}]", "  padded  ".trim(), p.repeat(2));
+}
