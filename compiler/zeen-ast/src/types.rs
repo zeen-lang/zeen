@@ -142,6 +142,12 @@ impl BuiltinType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ShapeLen {
+    Known(u64),
+    Param(u32),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BuiltinShape {
     Scalar(BuiltinType),
@@ -155,7 +161,7 @@ pub enum BuiltinShape {
     },
     Array {
         element: Box<BuiltinShape>,
-        len: u64,
+        len: ShapeLen,
     },
     Param(u32),
 }
@@ -164,9 +170,10 @@ impl BuiltinShape {
     pub fn has_params(&self) -> bool {
         match self {
             Self::Scalar(_) => false,
-            Self::Slice { element, .. }
-            | Self::ManyPointer { element, .. }
-            | Self::Array { element, .. } => element.has_params(),
+            Self::Slice { element, .. } | Self::ManyPointer { element, .. } => element.has_params(),
+            Self::Array { element, len } => {
+                element.has_params() || matches!(len, ShapeLen::Param(_))
+            }
             Self::Param(_) => true,
         }
     }
@@ -174,9 +181,18 @@ impl BuiltinShape {
     pub fn used_params(&self, out: &mut Vec<u32>) {
         match self {
             Self::Scalar(_) => {}
-            Self::Slice { element, .. }
-            | Self::ManyPointer { element, .. }
-            | Self::Array { element, .. } => element.used_params(out),
+            Self::Slice { element, .. } | Self::ManyPointer { element, .. } => {
+                element.used_params(out)
+            }
+            Self::Array { element, len } => {
+                element.used_params(out);
+
+                if let ShapeLen::Param(index) = len
+                    && !out.contains(index)
+                {
+                    out.push(*index);
+                }
+            }
             Self::Param(index) => {
                 if !out.contains(index) {
                     out.push(*index);
@@ -194,7 +210,10 @@ impl BuiltinShape {
             Self::ManyPointer { element, is_const } => {
                 format!("[*]{}{}", Self::const_prefix(*is_const), element.key())
             }
-            Self::Array { element, len } => format!("[{len}]{}", element.key()),
+            Self::Array { element, len } => match len {
+                ShapeLen::Known(n) => format!("[{n}]{}", element.key()),
+                ShapeLen::Param(index) => format!("[#{index}]{}", element.key()),
+            },
             Self::Param(index) => format!("#{index}"),
         }
     }

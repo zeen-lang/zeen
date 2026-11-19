@@ -1,0 +1,58 @@
+interface Length {
+  fn length(*const self) usize;
+}
+
+implement[N: comptime_uint] Length : builtin [N]u8 {
+  fn length(*const self) usize {
+    return N;
+  }
+}
+
+implement[N: comptime_uint] builtin [N]u8 {
+  fn sum(*const self) u32 {
+    let total = 0;
+    for (i : N) {
+      total += @as(u32, (*self)[i]);
+    }
+    return total;
+  }
+
+  fn first(*const self) u8 {
+    return (*self)[0];
+  }
+
+  fn doubled(*const self) [N]u8 {
+    let out: [N]u8 = {0; N};
+    for (i : N) {
+      out[i] = (*self)[i] * 2;
+    }
+    return out;
+  }
+}
+
+implement[N: comptime_uint] builtin [N]i32 {
+  fn product(*const self) i32 {
+    let result = 1;
+    for (i : N) {
+      result *= (*self)[i];
+    }
+    return result;
+  }
+}
+
+fn main() {
+  const bytes: [3]u8 = {1, 2, 3};
+  @println("{}", bytes.sum());
+  @println("{}", bytes.length());
+  @println("{}", bytes.first());
+
+  const nums: [4]i32 = {2, 3, 4, 5};
+  @println("{}", nums.product());
+
+  const longer: [5]u8 = {9, 9, 9, 9, 9};
+  @println("{}", longer.length());
+  @println("{}", longer.sum());
+
+  const doubled = bytes.doubled();
+  @println("{} {} {}", doubled[0], doubled[1], doubled[2]);
+}

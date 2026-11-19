@@ -20,7 +20,7 @@ use crate::{error::TypeError, format_str::FormatParseError};
 
 use zeen_ast::{
     expressions::{BinaryOp, Literal, UnaryOp},
-    types::{BuiltinShape, BuiltinType, ConstParamType},
+    types::{BuiltinShape, BuiltinType, ConstParamType, ShapeLen},
 };
 use zeen_driver::{CompilationContext, CompilationOutput};
 use zeen_hir::{
@@ -1328,10 +1328,15 @@ impl<'res> TypeChecker<'res> {
             BuiltinShape::Array { element, len } => {
                 let element = self.builtin_shape_type(element, generics);
 
-                self.result.interner.intern(Type::Array {
-                    element,
-                    len: ArrayLen::Known(*len),
-                })
+                let len = match len {
+                    ShapeLen::Known(n) => ArrayLen::Known(*n),
+                    ShapeLen::Param(index) => match generics.get(*index as usize).copied() {
+                        Some(generic) => ArrayLen::Param(generic),
+                        None => return self.result.interner.error(),
+                    },
+                };
+
+                self.result.interner.intern(Type::Array { element, len })
             }
 
             BuiltinShape::Param(index) => match generics.get(*index as usize).copied() {
@@ -9964,8 +9969,9 @@ impl<'res> TypeChecker<'res> {
 
             let generics = self.type_member_generics(owner);
             let mut bindings: HashMap<DefId, TypeId> = HashMap::default();
+            let mut len_bindings: HashMap<DefId, u64> = HashMap::default();
 
-            if !self.match_builtin_shape(shape, ty, &generics, &mut bindings) {
+            if !self.match_builtin_shape(shape, ty, &generics, &mut bindings, &mut len_bindings) {
                 return false;
             }
 
@@ -10560,17 +10566,21 @@ impl<'res> TypeChecker<'res> {
         let mut found: Option<(TypeId, HashMap<DefId, TypeId>)> = None;
 
         for owner in owners {
-            let Some(entries) = self.result.impl_registry.get(&(owner, interface)) else {
-                continue;
+            let entries = match self.result.impl_registry.get(&(owner, interface)) {
+                Some(entries) => entries.clone(),
+                None => continue,
             };
 
             let shape = self.result.builtin_shapes[&owner].clone();
             let generics = self.type_member_generics(owner);
             let mut matched: HashMap<DefId, TypeId> = HashMap::default();
+            let mut len_matched: HashMap<DefId, u64> = HashMap::default();
 
-            if !self.match_builtin_shape(&shape, base, &generics, &mut matched) {
+            if !self.match_builtin_shape(&shape, base, &generics, &mut matched, &mut len_matched) {
                 continue;
             }
+
+            self.merge_len_bindings(&mut matched, len_matched);
 
             let bound = entries
                 .iter()
@@ -11448,8 +11458,26 @@ impl<'res> TypeChecker<'res> {
         ty: TypeId,
         generics: &[DefId],
         bindings: &mut HashMap<DefId, TypeId>,
+        len_bindings: &mut HashMap<DefId, u64>,
     ) -> bool {
-        zeen_types::match_builtin_shape(&self.result.interner, shape, ty, generics, bindings)
+        zeen_types::match_builtin_shape(
+            &self.result.interner,
+            shape,
+            ty,
+            generics,
+            bindings,
+            len_bindings,
+        )
+    }
+
+    fn merge_len_bindings(
+        &mut self,
+        bindings: &mut HashMap<DefId, TypeId>,
+        len_bindings: HashMap<DefId, u64>,
+    ) {
+        for (def, len) in len_bindings {
+            bindings.insert(def, self.const_int_arg(len));
+        }
     }
 
     fn report_unknown_shape_field(
@@ -11519,10 +11547,14 @@ impl<'res> TypeChecker<'res> {
             let generics = self.type_member_generics(owner);
 
             let mut matched: HashMap<DefId, TypeId> = HashMap::default();
+            let mut len_matched: HashMap<DefId, u64> = HashMap::default();
 
-            if !self.match_builtin_shape(&shape, recv_ty, &generics, &mut matched) {
+            if !self.match_builtin_shape(&shape, recv_ty, &generics, &mut matched, &mut len_matched)
+            {
                 continue;
             }
+
+            self.merge_len_bindings(&mut matched, len_matched);
 
             let args: Vec<TypeId> = generics
                 .iter()

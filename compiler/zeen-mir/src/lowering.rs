@@ -7,7 +7,7 @@ use smol_str::SmolStr;
 use zeen_ast::{
     Source,
     expressions::{BinaryOp, Literal, UnaryOp},
-    types::{BuiltinShape, BuiltinType},
+    types::{BuiltinShape, BuiltinType, ShapeLen},
 };
 use zeen_driver::CompilationMode;
 use zeen_hir::{
@@ -2002,7 +2002,12 @@ impl<'ctx> MirLowering<'ctx> {
         owners.sort();
 
         for owner in owners {
-            let Some(entries) = self.typecheck.impl_registry.get(&(owner, interface)) else {
+            let Some(entries) = self
+                .typecheck
+                .impl_registry
+                .get(&(owner, interface))
+                .cloned()
+            else {
                 continue;
             };
 
@@ -2015,6 +2020,7 @@ impl<'ctx> MirLowering<'ctx> {
                 .unwrap_or_default();
 
             let mut matched: HashMap<DefId, TypeId> = HashMap::default();
+            let mut len_matched: HashMap<DefId, u64> = HashMap::default();
 
             if !zeen_types::match_builtin_shape(
                 &self.typecheck.interner,
@@ -2022,9 +2028,12 @@ impl<'ctx> MirLowering<'ctx> {
                 base,
                 &generics,
                 &mut matched,
+                &mut len_matched,
             ) {
                 continue;
             }
+
+            self.merge_shape_len_bindings(&mut matched, len_matched);
 
             let bound = entries
                 .iter()
@@ -9082,12 +9091,16 @@ impl<'ctx> MirLowering<'ctx> {
                 owners.sort();
 
                 for owner in owners {
-                    let Some(entries) = self.typecheck.impl_registry.get(&(owner, iface_def))
+                    let Some(entries) = self
+                        .typecheck
+                        .impl_registry
+                        .get(&(owner, iface_def))
+                        .cloned()
                     else {
                         continue;
                     };
 
-                    let Some(shape) = self.typecheck.builtin_shapes.get(&owner) else {
+                    let Some(shape) = self.typecheck.builtin_shapes.get(&owner).cloned() else {
                         continue;
                     };
                     let generics = self
@@ -9097,16 +9110,20 @@ impl<'ctx> MirLowering<'ctx> {
                         .cloned()
                         .unwrap_or_default();
                     let mut bindings: HashMap<DefId, TypeId> = HashMap::default();
+                    let mut len_bindings: HashMap<DefId, u64> = HashMap::default();
 
                     if !zeen_types::match_builtin_shape(
                         &self.typecheck.interner,
-                        shape,
+                        &shape,
                         recv_ty,
                         &generics,
                         &mut bindings,
+                        &mut len_bindings,
                     ) {
                         continue;
                     }
+
+                    self.merge_shape_len_bindings(&mut bindings, len_bindings);
 
                     if let Some(method) = entries
                         .iter()
@@ -10501,16 +10518,47 @@ impl<'ctx> MirLowering<'ctx> {
             BuiltinShape::Array { element, len } => {
                 let element = self.concrete_shape_type(element, args);
 
-                self.typecheck.interner.intern(Type::Array {
-                    element,
-                    len: ArrayLen::Known(*len),
-                })
+                let len = match len {
+                    ShapeLen::Known(n) => ArrayLen::Known(*n),
+                    ShapeLen::Param(index) => ArrayLen::Known(self.shape_len_value(args, *index)),
+                };
+
+                self.typecheck.interner.intern(Type::Array { element, len })
             }
 
             BuiltinShape::Param(index) => args
                 .get(*index as usize)
                 .copied()
                 .unwrap_or_else(|| self.typecheck.interner.error()),
+        }
+    }
+
+    fn shape_len_value(&self, args: &[TypeId], index: u32) -> u64 {
+        let arg = args
+            .get(index as usize)
+            .copied()
+            .expect("builtin shape length argument must be present");
+
+        match self.typecheck.interner.get(arg) {
+            Type::ConstArg(ConstArg::Int(value)) if *value >= 0 => *value as u64,
+            other => {
+                panic!("builtin shape length argument must be a known length, found {other:?}")
+            }
+        }
+    }
+
+    fn merge_shape_len_bindings(
+        &mut self,
+        bindings: &mut HashMap<DefId, TypeId>,
+        len_bindings: HashMap<DefId, u64>,
+    ) {
+        for (def, len) in len_bindings {
+            let arg = self
+                .typecheck
+                .interner
+                .intern(Type::ConstArg(ConstArg::Int(len as i128)));
+
+            bindings.insert(def, arg);
         }
     }
 
@@ -10702,6 +10750,14 @@ impl<'ctx> MirLowering<'ctx> {
 
             BuiltinShape::Array { element, len } => {
                 let element = self.render_builtin_shape_name(element, generic_args);
+
+                let len = match len {
+                    ShapeLen::Known(n) => n.to_string(),
+                    ShapeLen::Param(index) => generic_args
+                        .get(*index as usize)
+                        .map(|&arg| self.display_type_name(arg))
+                        .unwrap_or_default(),
+                };
 
                 format!("[{len}]{element}")
             }

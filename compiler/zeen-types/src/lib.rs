@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use lasso::Spur;
 
-use zeen_ast::types::{BuiltinShape, BuiltinType};
+use zeen_ast::types::{BuiltinShape, BuiltinType, ShapeLen};
 use zeen_hir::HirTypeKind;
 use zeen_resolve::DefId;
 
@@ -524,6 +524,7 @@ pub fn match_builtin_shape(
     ty: TypeId,
     generics: &[DefId],
     bindings: &mut HashMap<DefId, TypeId>,
+    len_bindings: &mut HashMap<DefId, u64>,
 ) -> bool {
     match shape {
         BuiltinShape::Scalar(builtin) => {
@@ -536,7 +537,14 @@ pub fn match_builtin_shape(
                 is_const: found_const,
             } => {
                 found_const == is_const
-                    && match_builtin_shape(interner, element, *found, generics, bindings)
+                    && match_builtin_shape(
+                        interner,
+                        element,
+                        *found,
+                        generics,
+                        bindings,
+                        len_bindings,
+                    )
             }
             _ => false,
         },
@@ -547,7 +555,14 @@ pub fn match_builtin_shape(
                 is_const: found_const,
             } => {
                 found_const == is_const
-                    && match_builtin_shape(interner, element, *found, generics, bindings)
+                    && match_builtin_shape(
+                        interner,
+                        element,
+                        *found,
+                        generics,
+                        bindings,
+                        len_bindings,
+                    )
             }
             _ => false,
         },
@@ -557,19 +572,15 @@ pub fn match_builtin_shape(
                 element: found,
                 len: found_len,
             } => {
-                let found_known = match found_len {
-                    ArrayLen::Known(n) => Some(*n),
-                    ArrayLen::Param(d) => match bindings.get(d).copied() {
-                        Some(bound_ty) => match interner.get(bound_ty) {
-                            Type::ConstArg(ConstArg::Int(n)) if *n >= 0 => Some(*n as u64),
-                            _ => None,
-                        },
-                        None => None,
-                    },
-                };
-
-                found_known == Some(*len)
-                    && match_builtin_shape(interner, element, *found, generics, bindings)
+                shape_len_matches(generics, *len, *found_len, len_bindings)
+                    && match_builtin_shape(
+                        interner,
+                        element,
+                        *found,
+                        generics,
+                        bindings,
+                        len_bindings,
+                    )
             }
             _ => false,
         },
@@ -583,6 +594,39 @@ pub fn match_builtin_shape(
                 Some(existing) => *existing == ty,
                 None => {
                     bindings.insert(generic, ty);
+                    true
+                }
+            }
+        }
+    }
+}
+
+fn shape_len_matches(
+    generics: &[DefId],
+    expected: ShapeLen,
+    found: ArrayLen,
+    len_bindings: &mut HashMap<DefId, u64>,
+) -> bool {
+    match (expected, found) {
+        (ShapeLen::Known(expected), ArrayLen::Known(found)) => expected == found,
+
+        (ShapeLen::Known(expected), ArrayLen::Param(def)) => {
+            len_bindings.get(&def).copied() == Some(expected)
+        }
+
+        (ShapeLen::Param(index), ArrayLen::Param(def)) => {
+            generics.get(index as usize).copied() == Some(def)
+        }
+
+        (ShapeLen::Param(index), ArrayLen::Known(found)) => {
+            let Some(&generic) = generics.get(index as usize) else {
+                return false;
+            };
+
+            match len_bindings.get(&generic) {
+                Some(existing) => *existing == found,
+                None => {
+                    len_bindings.insert(generic, found);
                     true
                 }
             }
