@@ -613,6 +613,36 @@ pub enum TypeError {
         span: SourceSpan,
     },
 
+    #[error("array length `{found}` does not match the const generic length `{expected}`")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::const_array_length_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-const_array_length_mismatch")
+    )]
+    ConstArrayLengthMismatch {
+        expected: SmolStr,
+        found: SmolStr,
+
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
+    #[error("const generic argument `0` is not allowed")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::zero_const_arg),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-zero_const_arg"),
+        help("zero-length arrays are not allowed")
+    )]
+    ZeroConstArg {
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
     #[error("empty arrays are not allowed")]
     #[diagnostic(
         severity(Error),

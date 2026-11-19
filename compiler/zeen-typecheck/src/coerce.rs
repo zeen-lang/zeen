@@ -142,12 +142,13 @@ pub fn try_coerce(interner: &mut TypeInterner, from: TypeId, to: TypeId) -> Coer
 
         (
             Type::Array {
-                element: from_elem, ..
+                element: from_elem,
+                len,
             },
             Type::Slice {
                 element: to_elem, ..
             },
-        ) if from_elem == to_elem => CoerceResult::ArrayToSlice,
+        ) if from_elem == to_elem && len.known().is_some() => CoerceResult::ArrayToSlice,
 
         (
             Type::ManyPointer {
@@ -183,12 +184,12 @@ pub fn try_coerce(interner: &mut TypeInterner, from: TypeId, to: TypeId) -> Coer
         ) if fe == te => CoerceResult::RemoveConst,
 
         (
-            Type::Array { element: fe, .. },
+            Type::Array { element: fe, len },
             Type::Slice {
                 element: te,
                 is_const: _,
             },
-        ) if fe == te => CoerceResult::ArrayToSlice,
+        ) if fe == te && len.known().is_some() => CoerceResult::ArrayToSlice,
 
         (Type::Array { element: fe, .. }, Type::ManyPointer { inner: te, .. }) if fe == te => {
             CoerceResult::ArrayToManyPointer

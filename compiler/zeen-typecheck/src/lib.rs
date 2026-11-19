@@ -1526,6 +1526,18 @@ impl<'res> TypeChecker<'res> {
             return self.result.interner.error();
         }
 
+        if matches!(
+            self.result.interner.get(value),
+            Type::ConstArg(ConstArg::Int(0))
+        ) {
+            self.report(TypeError::ZeroConstArg {
+                src: arg.source.src(),
+                span: arg.source.span,
+            });
+
+            return self.result.interner.error();
+        }
+
         value
     }
 
@@ -5774,6 +5786,25 @@ impl<'res> TypeChecker<'res> {
                         len: ArrayLen::Known(n),
                         ..
                     } if n == elements.len() as u64 => Some(element),
+                    Type::Array {
+                        element,
+                        len: ArrayLen::Param(def),
+                    } => {
+                        for el in elements {
+                            self.check_expr(el, element, false);
+                        }
+
+                        let expected_len = self.display_array_len(ArrayLen::Param(def));
+
+                        self.report(TypeError::ConstArrayLengthMismatch {
+                            expected: expected_len,
+                            found: elements.len().to_string().into(),
+                            src: expr.source.src(),
+                            span: expr.source.span,
+                        });
+
+                        return self.result.interner.error();
+                    }
                     _ => None,
                 };
                 if let Some(element) = element_ty {
@@ -5788,12 +5819,40 @@ impl<'res> TypeChecker<'res> {
 
             HirExprKind::ArrayRepeatInit { element, len } => {
                 if let Type::Array {
-                    element: elem_ty, ..
+                    element: elem_ty,
+                    len: expected_len,
                 } = self.result.interner.get(expected).clone()
                 {
-                    let int_ty = self.result.interner.builtin(DEFAULT_INT_LITERAL);
                     self.check_expr(element, elem_ty, false);
-                    self.check_expr(len, int_ty, false);
+
+                    match (&len.kind, expected_len) {
+                        (HirExprKind::ConstParamRef(def), ArrayLen::Param(expected_def))
+                            if *def == expected_def =>
+                        {
+                            self.synth_expr(len);
+                        }
+
+                        (HirExprKind::ConstParamRef(_), _) => {
+                            let found = self.synth_expr(len);
+                            let found = self.display_type(found);
+                            let expected_len = self.display_array_len(expected_len);
+
+                            self.report(TypeError::ConstArrayLengthMismatch {
+                                expected: expected_len,
+                                found: found.into(),
+                                src: len.source.src(),
+                                span: len.source.span,
+                            });
+
+                            return self.result.interner.error();
+                        }
+
+                        _ => {
+                            let int_ty = self.result.interner.builtin(DEFAULT_INT_LITERAL);
+                            self.check_expr(len, int_ty, false);
+                        }
+                    }
+
                     self.result.record_expr_type(expr.id, expected);
                     return expected;
                 }
@@ -9275,6 +9334,16 @@ impl<'res> TypeChecker<'res> {
             .intern(Type::ConstArg(ConstArg::Int(value as i128)))
     }
 
+    fn display_array_len(&mut self, len: ArrayLen) -> SmolStr {
+        match len {
+            ArrayLen::Known(n) => n.to_string().into(),
+            ArrayLen::Param(def) => {
+                let param_ty = self.result.interner.intern(Type::ConstParam(def));
+                self.display_type(param_ty).into()
+            }
+        }
+    }
+
     fn infer_or_check_arg(
         &mut self,
         param_ty: TypeId,
@@ -9402,11 +9471,13 @@ impl<'res> TypeChecker<'res> {
     fn type_contains_generic(&self, ty: TypeId) -> bool {
         match self.result.interner.get(ty) {
             Type::GenericParam(_) => true,
+            Type::ConstParam(_) => true,
             Type::Pointer { inner, .. } => self.type_contains_generic(*inner),
             Type::ManyPointer { inner, .. } => self.type_contains_generic(*inner),
-            Type::Array { element, .. } | Type::Slice { element, .. } => {
-                self.type_contains_generic(*element)
+            Type::Array { element, len } => {
+                matches!(len, ArrayLen::Param(_)) || self.type_contains_generic(*element)
             }
+            Type::Slice { element, .. } => self.type_contains_generic(*element),
             Type::Struct { generic_args, .. } => {
                 generic_args.iter().any(|a| self.type_contains_generic(*a))
             }
@@ -20321,5 +20392,110 @@ mod tests {
             "#
         ))
         .expect("a generic local must not bind the generic params of another body");
+    }
+
+    #[test]
+    fn const_length_is_inferred_from_array_argument() {
+        typecheck(
+            r#"
+            fn sum_of[N: comptime_uint](values: [N]i32) i32 {
+                return values[0];
+            }
+
+            fn main() i32 {
+                let values: [8]i32 = {1, 2, 3, 4, 5, 6, 7, 8};
+                return sum_of(values);
+            }
+            "#,
+        )
+        .expect("a const length must be inferred from a concrete array argument");
+    }
+
+    #[test]
+    fn array_repeat_init_accepts_symbolic_length() {
+        typecheck(
+            r#"
+            fn zeros[N: comptime_uint]() [N]i32 {
+                return {0; N};
+            }
+
+            fn main() i32 {
+                let values: [8]i32 = zeros();
+                return values[0];
+            }
+            "#,
+        )
+        .expect("a repeat init must accept a const generic length");
+    }
+
+    #[test]
+    fn array_literal_against_symbolic_length_is_reported() {
+        let errors = typecheck(
+            r#"
+            fn literal[N: comptime_uint]() [N]i32 {
+                return {1, 2, 3};
+            }
+
+            fn main() i32 {
+                return 0;
+            }
+            "#,
+        )
+        .expect_err("an element-wise literal cannot fill a symbolic length");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::ConstArrayLengthMismatch { .. })),
+            "expected ConstArrayLengthMismatch, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn zero_const_argument_is_reported() {
+        let errors = typecheck(
+            r#"
+            struct Buffer[N: comptime_uint] {
+                data: [N]u8,
+            }
+
+            fn main() i32 {
+                let buffer: Buffer[0];
+                return 0;
+            }
+            "#,
+        )
+        .expect_err("a zero const argument would produce an empty array");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::ZeroConstArg { .. })),
+            "expected ZeroConstArg, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn symbolic_array_does_not_coerce_to_slice() {
+        let errors = typecheck(
+            r#"
+            fn first[N: comptime_uint](values: [N]i32) []i32 {
+                return values;
+            }
+
+            fn main() i32 {
+                let values: [4]i32 = {1, 2, 3, 4};
+                return first(values)[0];
+            }
+            "#,
+        )
+        .expect_err("a symbolic array length cannot coerce to a slice");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::Mismatch { .. })),
+            "expected Mismatch, got: {errors:?}"
+        );
     }
 }
