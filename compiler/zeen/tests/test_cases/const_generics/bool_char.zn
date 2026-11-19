@@ -1,0 +1,31 @@
+struct Flag[B: comptime_bool] {
+  pub value: i32,
+}
+
+implement[B: comptime_bool] Flag[B] {
+  pub fn enabled(*const self) bool {
+    return B;
+  }
+}
+
+struct Marker[C: comptime_char] {
+  pub code: u32,
+}
+
+implement[C: comptime_char] Marker[C] {
+  pub fn matches(*const self, c: char) bool {
+    return c == C;
+  }
+}
+
+fn main() {
+  const on: Flag[true] = Flag#[true] { .value = 1 };
+  const off: Flag[false] = Flag#[false] { .value = 0 };
+
+  @println("{} {}", on.enabled(), off.enabled());
+  @println("{} {}", on.value, off.value);
+
+  const m: Marker['x'] = Marker#['x'] { .code = 120 };
+  @println("{} {}", m.matches('x'), m.matches('y'));
+  @println("{}", m.code);
+}

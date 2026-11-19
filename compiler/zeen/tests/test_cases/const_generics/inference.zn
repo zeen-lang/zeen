@@ -1,0 +1,39 @@
+struct Buffer[N: comptime_uint] {
+  pub data: [N]u8,
+}
+
+fn zeros[N: comptime_uint]() [N]i32 {
+  return {0; N};
+}
+
+fn repeat[N: comptime_uint](value: i32) [N]i32 {
+  return {value; N};
+}
+
+fn total[N: comptime_uint](values: [N]i32) i32 {
+  let sum = 0;
+
+  for (v : values) {
+    sum = sum + v;
+  }
+
+  return sum;
+}
+
+fn main() {
+  const a: [4]i32 = zeros();
+  @println("{}", total(a));
+
+  const b = zeros#[8]();
+  @println("{}", total(b));
+
+  const c: [3]i32 = repeat(5);
+  @println("{}", total(c));
+
+  const d = repeat#[2](9);
+  @println("{}", total(d));
+
+  const data: [4]u8 = {1, 2, 3, 4};
+  const buf: Buffer[4] = Buffer { .data = data };
+  @println("{}", buf.data[3]);
+}

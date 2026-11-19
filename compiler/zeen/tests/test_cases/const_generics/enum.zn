@@ -1,0 +1,29 @@
+enum Chunk[N: comptime_uint] {
+  empty,
+  bytes: [N]u8,
+
+  pub fn len(*const self) usize {
+    return switch (*self) {
+      .empty => 0,
+      .bytes(_payload) => N,
+    };
+  }
+}
+
+fn main() {
+  const data: [3]u8 = {1, 2, 3};
+  const filled: Chunk[3] = Chunk#[3].bytes(data);
+  @println("{}", filled.len());
+
+  switch (filled) {
+    .empty => @println("empty"),
+    .bytes(payload) => {
+      for (b : payload) {
+        @println("{}", b);
+      }
+    },
+  };
+
+  const empty: Chunk[2] = Chunk#[2].empty;
+  @println("{} {}", empty.len(), @enumTag(empty));
+}
