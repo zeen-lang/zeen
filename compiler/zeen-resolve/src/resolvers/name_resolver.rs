@@ -12,7 +12,7 @@ use std::{
 
 use zeen_ast::{
     declarations::{Declaration, DeclarationKind, EnumVariantPayload, GenericType},
-    expressions::{Expression, ExpressionKind, Literal, Pattern, UnaryOp},
+    expressions::{BinaryOp, Expression, ExpressionKind, Literal, Pattern, UnaryOp},
     statements::{Statement, StatementKind},
     types::{BuiltinType, TypeExpr, TypeKind},
 };
@@ -2043,6 +2043,25 @@ impl<'ctx> NameResolver {
                 }
                 self.result.const_values.get(&def).copied()
             }
+            ExpressionKind::Binary { lhs, rhs, op } => {
+                let left = match self.const_literal(lhs)? {
+                    Literal::Int(n) => n,
+                    _ => return None,
+                };
+                let right = match self.const_literal(rhs)? {
+                    Literal::Int(n) => n,
+                    _ => return None,
+                };
+                let evaluated = match op {
+                    BinaryOp::Add => left.checked_add(right)?,
+                    BinaryOp::Sub => left.checked_sub(right)?,
+                    BinaryOp::Mul => left.checked_mul(right)?,
+                    BinaryOp::Div => left.checked_div(right)?,
+                    BinaryOp::Mod => left.checked_rem(right)?,
+                    _ => return None,
+                };
+                Some(Literal::Int(evaluated))
+            }
             _ => None,
         }
     }
@@ -2574,23 +2593,40 @@ impl<'ctx> NameResolver {
                         }
                     }
                     None => {
-                        let name_str = self.interner_resolve(&name);
+                        if let Some(def_id) = self.table.lookup_value(name)
+                            && self.is_const_def(def_id)
+                        {
+                            match self.result.const_values.get(&def_id).copied() {
+                                Some(lit) => Resolution::ConstValue(lit),
+                                None => {
+                                    self.errors.push(ResolveError::NonLiteralConstArgument {
+                                        name: self.interner_resolve(&name),
+                                        src: self.named_src(),
+                                        span: ty.span,
+                                    });
 
-                        if self.is_private_in_used_module(name, false) {
-                            self.errors.push(ResolveError::PrivateItemNotAccessible {
-                                name: name_str,
-                                src: self.named_src(),
-                                span: ty.span,
-                            });
+                                    Resolution::Error
+                                }
+                            }
                         } else {
-                            self.errors.push(ResolveError::UnresolvedType {
-                                name: name_str,
-                                src: self.named_src(),
-                                span: ty.span,
-                            });
-                        }
+                            let name_str = self.interner_resolve(&name);
 
-                        Resolution::Error
+                            if self.is_private_in_used_module(name, false) {
+                                self.errors.push(ResolveError::PrivateItemNotAccessible {
+                                    name: name_str,
+                                    src: self.named_src(),
+                                    span: ty.span,
+                                });
+                            } else {
+                                self.errors.push(ResolveError::UnresolvedType {
+                                    name: name_str,
+                                    src: self.named_src(),
+                                    span: ty.span,
+                                });
+                            }
+
+                            Resolution::Error
+                        }
                     }
                 };
 
@@ -2613,6 +2649,12 @@ impl<'ctx> NameResolver {
 
             TypeKind::ConstValue(expr) => {
                 self.resolve_expr(expr);
+
+                if let Some(lit) = self.const_literal(expr) {
+                    self.result
+                        .type_bindings
+                        .insert(NodeKey::from_type(ty), Resolution::ConstValue(lit));
+                }
             }
 
             TypeKind::Associated { base, .. } => {

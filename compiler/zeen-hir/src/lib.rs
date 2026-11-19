@@ -878,6 +878,7 @@ impl<'res> HirLowering<'res> {
                     },
                     Some(Resolution::GenericParam(id)) => HirExprKind::GenericParamRef(id),
                     Some(Resolution::ConstParam(id)) => HirExprKind::ConstParamRef(id),
+                    Some(Resolution::ConstValue(lit)) => HirExprKind::Literal(lit),
                     Some(Resolution::SelfValue(id)) => HirExprKind::SelfValue(id),
                     Some(Resolution::SelfType(id)) => HirExprKind::Type(Rc::new(HirTypeExpr {
                         id: self.fresh_id(),
@@ -1234,6 +1235,14 @@ impl<'res> HirLowering<'res> {
                     };
                 }
 
+                if let Some(Resolution::ConstValue(lit)) = self.resolution.resolution_of_type(ty) {
+                    return HirTypeExpr {
+                        id: self.fresh_id(),
+                        kind: HirTypeKind::ConstLiteral(lit),
+                        source: (ty.span, self.current_src.clone()).into(),
+                    };
+                }
+
                 let def_id = match self.resolution.resolution_of_type(ty) {
                     Some(Resolution::Def(id)) | Some(Resolution::GenericParam(id)) => id,
                     _ => {
@@ -1276,7 +1285,10 @@ impl<'res> HirLowering<'res> {
                 len: len.map(|e| Rc::new(self.lower_expr(e))),
             },
 
-            TypeKind::ConstValue(expr) => HirTypeKind::ConstValue(Rc::new(self.lower_expr(expr))),
+            TypeKind::ConstValue(expr) => match self.resolution.resolution_of_type(ty) {
+                Some(Resolution::ConstValue(lit)) => HirTypeKind::ConstLiteral(lit),
+                _ => HirTypeKind::ConstValue(Rc::new(self.lower_expr(expr))),
+            },
 
             TypeKind::Fn {
                 params,

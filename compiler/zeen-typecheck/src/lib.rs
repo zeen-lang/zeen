@@ -1503,6 +1503,8 @@ impl<'res> TypeChecker<'res> {
 
             HirTypeKind::ConstValue(expr) => self.lower_const_arg(expr),
 
+            HirTypeKind::ConstLiteral(lit) => self.const_arg_from_literal(*lit, &arg.source),
+
             _ => {
                 let lowered = self.lower_hir_type(arg);
                 let found = self.display_type(lowered);
@@ -1675,6 +1677,8 @@ impl<'res> TypeChecker<'res> {
             }
 
             HirTypeKind::ConstValue(expr) => self.lower_const_arg(expr),
+
+            HirTypeKind::ConstLiteral(lit) => self.const_arg_from_literal(*lit, &ty.source),
 
             HirTypeKind::SelfType(def_id) | HirTypeKind::SelfAlias(def_id) => {
                 match self.def_kind(*def_id) {
@@ -2018,6 +2022,43 @@ impl<'res> TypeChecker<'res> {
                 });
                 None
             }
+        }
+    }
+
+    fn const_arg_from_literal(&mut self, lit: Literal, source: &Source) -> TypeId {
+        let arg = match lit {
+            Literal::Int(n) => ConstArg::Int(n as i128),
+            Literal::Bool(b) => ConstArg::Bool(b),
+            Literal::Char(c) | Literal::ByteChar(c) => ConstArg::Char(c),
+
+            other => {
+                let found = self.const_literal_text(other);
+
+                self.report(TypeError::ConstGenericArgMismatch {
+                    expected: "comptime_uint, comptime_int, comptime_bool or comptime_char".into(),
+                    found: found.into(),
+                    src: source.src(),
+                    span: source.span,
+                });
+
+                return self.result.interner.error();
+            }
+        };
+
+        self.result.interner.intern(Type::ConstArg(arg))
+    }
+
+    fn const_literal_text(&self, lit: Literal) -> String {
+        match lit {
+            Literal::Int(n) => n.to_string(),
+            Literal::Float(f) => f.to_string(),
+            Literal::Char(c) | Literal::ByteChar(c) => format!("'{c}'"),
+            Literal::Bool(b) => b.to_string(),
+            Literal::String(s) => {
+                let text = self.interner.borrow().resolve(&s).to_owned();
+                format!("\"{text}\"")
+            }
+            Literal::Null => "null".into(),
         }
     }
 

@@ -95,6 +95,7 @@ pub enum Resolution {
     Def(DefId),
     GenericParam(DefId),
     ConstParam(DefId),
+    ConstValue(zeen_ast::expressions::Literal),
     SelfValue(DefId),
     SelfType(DefId),
     Builtin,

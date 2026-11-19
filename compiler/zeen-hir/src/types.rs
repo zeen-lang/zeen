@@ -43,6 +43,7 @@ pub enum HirTypeKind {
     },
 
     ConstValue(Rc<HirExpr>),
+    ConstLiteral(zeen_ast::expressions::Literal),
     ConstParam(DefId),
 
     Fn {
