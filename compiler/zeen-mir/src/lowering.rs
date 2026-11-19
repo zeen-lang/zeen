@@ -4133,6 +4133,7 @@ impl<'ctx> MirLowering<'ctx> {
 
                 let obj_ty = self.expr_type(fb, object);
                 let (block, obj_place) = self.lower_expr_to_place_or_temp(fb, object, block);
+                let (obj_place, obj_ty) = self.deref_index_object(obj_place, obj_ty);
                 let (block, index_operand) = self.lower_expr_to_operand(fb, index, block);
 
                 let index_local = {
@@ -6364,6 +6365,7 @@ impl<'ctx> MirLowering<'ctx> {
 
                 let obj_ty = self.expr_type(fb, object);
                 let (block, obj_place) = self.lower_expr_to_place_or_temp(fb, object, block);
+                let (obj_place, obj_ty) = self.deref_index_object(obj_place, obj_ty);
                 let (block, index_operand) = self.lower_expr_to_operand(fb, index, block);
 
                 let index_local = match index_operand {
@@ -6665,6 +6667,13 @@ impl<'ctx> MirLowering<'ctx> {
         }
     }
 
+    fn deref_index_object(&self, place: Place, ty: TypeId) -> (Place, TypeId) {
+        match self.typecheck.interner.get(ty).clone() {
+            Type::Pointer { inner, .. } => (place.deref(), inner),
+            _ => (place, ty),
+        }
+    }
+
     fn lower_bounds_check(
         &mut self,
         fb: &mut FnBuilder,
@@ -6774,6 +6783,7 @@ impl<'ctx> MirLowering<'ctx> {
             .intern(Type::Builtin(zeen_ast::types::BuiltinType::usize));
         let (block, obj_place) = self.lower_expr_to_place_or_temp(fb, object, block);
         let obj_ty = self.expr_type(fb, object);
+        let (obj_place, obj_ty) = self.deref_index_object(obj_place, obj_ty);
 
         let (block, start_local) = match start {
             Some(start) => {
