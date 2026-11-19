@@ -721,6 +721,14 @@ pub fn substitute_generics(
         }
 
         Type::Array { element, len } => {
+            if let ArrayLen::Param(def) = len
+                && bindings
+                    .get(&def)
+                    .is_some_and(|bound| matches!(interner.get(*bound), Type::Error))
+            {
+                return interner.error();
+            }
+
             let new_elem = substitute_generics(interner, element, bindings);
             let new_len = substitute_array_len(interner, len, bindings);
 
@@ -1344,6 +1352,23 @@ mod tests {
             substitute_generics(&mut interner, array, &bindings),
             expected
         );
+    }
+
+    #[test]
+    fn substitute_generics_maps_error_bound_array_to_error() {
+        let mut interner = TypeInterner::new();
+        let generic = DefId(1);
+        let element = interner.intern(Type::Builtin(BuiltinType::u8));
+        let array = interner.intern(Type::Array {
+            element,
+            len: ArrayLen::Param(generic),
+        });
+        let error = interner.error();
+
+        let mut bindings = HashMap::default();
+        bindings.insert(generic, error);
+
+        assert_eq!(substitute_generics(&mut interner, array, &bindings), error);
     }
 
     #[test]

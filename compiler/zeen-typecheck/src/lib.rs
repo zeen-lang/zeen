@@ -20553,6 +20553,29 @@ mod tests {
     }
 
     #[test]
+    fn zero_const_argument_does_not_cascade_into_array_length_errors() {
+        let errors = typecheck(
+            r#"
+            struct Buffer[N: comptime_uint] {
+                data: [N]u8,
+            }
+
+            fn main() i32 {
+                let buffer = Buffer#[0] { .data = {1} };
+                return 0;
+            }
+            "#,
+        )
+        .expect_err("a zero const argument would produce an empty array");
+
+        assert_eq!(errors.len(), 1, "expected a single error, got: {errors:?}");
+        assert!(
+            matches!(errors[0], TypeError::ZeroConstArg { .. }),
+            "expected ZeroConstArg, got: {errors:?}"
+        );
+    }
+
+    #[test]
     fn symbolic_array_does_not_coerce_to_slice() {
         let errors = typecheck(
             r#"
