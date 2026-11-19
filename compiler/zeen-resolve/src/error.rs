@@ -259,6 +259,22 @@ pub enum ResolveError {
         #[label]
         span: SourceSpan,
     },
+
+    #[error("constant `{name}` has no literal value usable as a const generic argument")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::resolver::non_literal_const_argument),
+        url("https://zeen-lang.tech/diagnostics/#zeen-resolver-non_literal_const_argument"),
+        help("declare the constant with a literal or an integer arithmetic expression")
+    )]
+    NonLiteralConstArgument {
+        name: SmolStr,
+
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
 }
 
 #[derive(Debug, Error, Diagnostic, Clone)]

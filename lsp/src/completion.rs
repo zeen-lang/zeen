@@ -1304,8 +1304,8 @@ fn push_type_members(
     items: &mut Vec<CompletionItem>,
     seen: &mut std::collections::HashSet<String>,
 ) {
-    let local_def = find_type_def(analysis, text, lookup)
-        .or_else(|| analysis.type_defs.get(lookup).copied());
+    let local_def =
+        find_type_def(analysis, text, lookup).or_else(|| analysis.type_defs.get(lookup).copied());
 
     if let Some(def) = local_def {
         push_owner_members(analysis, def, static_context, cursor, filter, items, seen);
@@ -4121,8 +4121,9 @@ mod tests {
             return;
         };
 
-        let uri: tower_lsp_server::ls_types::Uri =
-            "file:///tmp/zeen-lsp-iter-default-probe.zn".parse().unwrap();
+        let uri: tower_lsp_server::ls_types::Uri = "file:///tmp/zeen-lsp-iter-default-probe.zn"
+            .parse()
+            .unwrap();
         let paths = ResolvePaths {
             dir: Some(std::path::Path::new("/tmp")),
             root: Some(std::path::Path::new("/tmp")),
@@ -4130,8 +4131,7 @@ mod tests {
             packages: None,
         };
 
-        let text =
-            "use std.collections.list;\n\nfn main() {\n  let l = List#[i32].new();\n  l.iter().\n}\n";
+        let text = "use std.collections.list;\n\nfn main() {\n  let l = List#[i32].new();\n  l.iter().\n}\n";
         let offset = text.find("l.iter().").unwrap() + "l.iter().".len();
         let repaired = repair_for_completion(text, offset).unwrap();
         let output = crate::diagnostics::check_completion(&uri, &repaired, &[]);
@@ -4448,9 +4448,9 @@ mod tests {
     }
 
     fn repaired_analysis(text: &str, offset: usize) -> crate::analysis::Analysis {
-        let uri: tower_lsp_server::ls_types::Uri =
-            "file:///tmp/zeen-lsp-probe.zn".parse().unwrap();
-        let repaired = repair_for_plain(text, offset, false).expect("alias line must be repairable");
+        let uri: tower_lsp_server::ls_types::Uri = "file:///tmp/zeen-lsp-probe.zn".parse().unwrap();
+        let repaired =
+            repair_for_plain(text, offset, false).expect("alias line must be repairable");
 
         assert!(crate::diagnostics::parses(&repaired), "{repaired:?}");
 
@@ -4478,7 +4478,8 @@ mod tests {
     #[test]
     fn implement_body_before_detects_implement_blocks() {
         let text = "struct P {\n    pub x: i32,\n}\n\nimplement Iterator : P {\n    \n}\n";
-        let inside = text.find("implement Iterator : P {").unwrap() + "implement Iterator : P {".len();
+        let inside =
+            text.find("implement Iterator : P {").unwrap() + "implement Iterator : P {".len();
         let outside = text.find("struct P").unwrap();
 
         assert!(implement_body_before(text, inside));
@@ -4517,10 +4518,7 @@ mod tests {
         let offset = text.find("alias ").unwrap() + "alias ".len();
         let repaired = repair_for_plain(text, offset, false).unwrap();
 
-        assert!(
-            repaired.contains("__zeen_complete = i32;"),
-            "{repaired:?}"
-        );
+        assert!(repaired.contains("__zeen_complete = i32;"), "{repaired:?}");
         assert!(crate::diagnostics::parses(&repaired), "{repaired:?}");
     }
 }

@@ -14,8 +14,9 @@ use zeen_ast::{
 
 use crate::error::Error;
 
-const COMPTIME_TYPES: [&str; 8] = [
+const COMPTIME_TYPES: [&str; 9] = [
     "comptime_int",
+    "comptime_uint",
     "comptime_float",
     "comptime_bool",
     "comptime_char",
@@ -458,12 +459,13 @@ impl<'arena> Checker<'_> {
                 | BuiltinType::i16
                 | BuiltinType::i32
                 | BuiltinType::i64
-                | BuiltinType::isize
-                | BuiltinType::u8
+                | BuiltinType::isize => Some("comptime_int"),
+
+                BuiltinType::u8
                 | BuiltinType::u16
                 | BuiltinType::u32
                 | BuiltinType::u64
-                | BuiltinType::usize => Some("comptime_int"),
+                | BuiltinType::usize => Some("comptime_uint"),
 
                 BuiltinType::f32 | BuiltinType::f64 => Some("comptime_float"),
 

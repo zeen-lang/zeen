@@ -99,12 +99,19 @@ pub struct HirParam {
     pub span: SourceSpan,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HirGenericParamKind {
+    Type,
+    Const(zeen_ast::types::ConstParamType),
+}
+
 #[derive(Debug, Clone)]
 pub struct HirGenericParam {
     pub def_id: DefId,
     pub name: (Spur, SourceSpan),
     pub bounds: Vec<DefId>,
     pub callable_bounds: Vec<HirCallableBound>,
+    pub kind: HirGenericParamKind,
 }
 
 // -> Struct

@@ -1,0 +1,23 @@
+implement[T, N: comptime_uint] builtin [N]T {
+  fn count(*const self) usize {
+    return N;
+  }
+
+  fn first(*const self) T {
+    return (*self)[0];
+  }
+}
+
+implement[T] builtin [4]T {
+  fn count(*const self) usize {
+    return 100;
+  }
+}
+
+fn main() {
+  const bytes: [4]u8 = {1, 2, 3, 4};
+  @println("{} {}", bytes.count(), bytes.first());
+
+  const nums: [3]i32 = {7, 8, 9};
+  @println("{} {}", nums.count(), nums.first());
+}

@@ -314,6 +314,7 @@ impl<'a, 'b> Preprocessor<'a, 'b> {
                 name: generic.name,
                 interfaces: generic.interfaces,
                 callable_bounds,
+                const_type: generic.const_type,
             });
         }
 
@@ -486,6 +487,8 @@ impl<'a, 'b> Preprocessor<'a, 'b> {
                 element: self.resolve_type(element),
                 len: len.map(|e| self.resolve_expr(e)),
             },
+
+            TypeKind::ConstValue(expr) => TypeKind::ConstValue(self.resolve_expr(expr)),
 
             TypeKind::Fn {
                 params,

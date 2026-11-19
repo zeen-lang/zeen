@@ -40,7 +40,7 @@ use zeen_typecheck::{
     format_str::{FormatChunk, FormatSpec},
     result::TypeCheckResult,
 };
-use zeen_types::{Type, TypeId};
+use zeen_types::{ArrayLen, ConstArg, Type, TypeId};
 
 use crate::error::CodegenError;
 
@@ -800,13 +800,15 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                 self.context.i32_type().into()
             }
 
+            Type::ConstArg(_) | Type::ConstParam(_) => self.context.i32_type().into(),
+
             Type::Pointer { .. } | Type::ManyPointer { .. } => {
                 self.context.ptr_type(AddressSpace::default()).into()
             }
 
             Type::Array { element, len } => self
                 .map_basic_type(element)
-                .array_type(len.unwrap_or(0) as u32)
+                .array_type(len.expect_known() as u32)
                 .into(),
 
             Type::Fn { .. } => self.context.ptr_type(AddressSpace::default()).into(),
@@ -854,7 +856,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         let Type::Array { element, len } = self.typecheck.interner.get(ty) else {
             return None;
         };
-        let len = (*len)?;
+        let len = len.known()?;
         if len == 0 {
             return None;
         }
@@ -1274,7 +1276,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             }
 
             Type::Array { element, len } => {
-                let Some(len) = len else { return };
+                let Some(len) = len.known() else { return };
                 let arr_ty = self.map_basic_type(ty);
                 let index_ty = self.context.ptr_sized_int_type(&self.target_data, None);
                 for i in 0..len {
@@ -1396,7 +1398,10 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod
         ) && matches!(
             self.typecheck.interner.get(ty),
-            Type::Array { len: Some(_), .. }
+            Type::Array {
+                len: ArrayLen::Known(_),
+                ..
+            }
         )
     }
 
@@ -1448,7 +1453,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         let Type::Array { element, len } = self.typecheck.interner.get(array_ty).clone() else {
             unreachable!("array arithmetic on a non-array type");
         };
-        let len = len.unwrap_or(0);
+        let len = len.expect_known();
 
         let dest_ptr = self.place_ptr(dest, func);
         let lhs_ptr = self.array_operand_ptr(lhs, func);
@@ -1757,10 +1762,16 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             _ => None,
         };
 
+        let numeric = matches!(
+            self.typecheck.interner.get(operand_ty),
+            Type::Builtin(b) if builtin_is_integer(*b) || builtin_is_float(*b)
+        );
         let const_expected =
             |other_ty: Option<TypeId>| match other_ty.map(|t| self.typecheck.interner.get(t)) {
                 Some(Type::Pointer { .. } | Type::ManyPointer { .. } | Type::Fn { .. }) => None,
-                _ => other_ty,
+                Some(_) => other_ty,
+                None if numeric => Some(operand_ty),
+                None => None,
             };
 
         let lhs_v = match lhs {
@@ -2070,7 +2081,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
     ) -> BasicValueEnum<'ctx> {
         let eq = match self.typecheck.interner.get(ty).clone() {
             Type::Array { element, len } => {
-                let len = len.unwrap_or(0) as u32;
+                let len = len.expect_known() as u32;
                 let mut acc: Option<BasicValueEnum<'ctx>> = None;
                 for i in 0..len {
                     let l = self
@@ -2472,10 +2483,12 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                 Shape::I32
             }
 
+            Type::ConstArg(_) | Type::ConstParam(_) => Shape::I32,
+
             Type::Pointer { .. } | Type::ManyPointer { .. } | Type::Fn { .. } => Shape::Pointer,
 
             Type::Array { element, len } => {
-                Shape::Array(Box::new(self.layout_shape(element)), len.unwrap_or(0))
+                Shape::Array(Box::new(self.layout_shape(element)), len.expect_known())
             }
 
             Type::Associated { .. } => {
@@ -2509,7 +2522,8 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                                 matches!(
                                     self.typecheck.interner.get(element).clone(),
                                     Type::Builtin(BuiltinType::char)
-                                ) && len == Some(self.resolve_spur(*spur).len() as u64 + 1),
+                                ) && len
+                                    == ArrayLen::Known(self.resolve_spur(*spur).len() as u64 + 1),
                                 "string literal array cast must match its type"
                             );
                             let content = self.resolve_spur(*spur);
@@ -3696,7 +3710,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                     )
                 {
                     let ptr = self.place_ptr(place, func);
-                    let Some(array_len) = len else {
+                    let Some(array_len) = len.known() else {
                         return ("%s".to_string(), vec![ptr.into()], ptr.into());
                     };
                     let len_i32 = self.context.i32_type().const_int(array_len, false);
@@ -4142,7 +4156,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                         unreachable!("string array format arg must come from a place");
                     };
                     let ptr = self.place_ptr(place, func);
-                    let Some(array_len) = len else {
+                    let Some(array_len) = len.known() else {
                         let specifier = match spec {
                             FormatSpec::Debug => "\"%s\"".to_string(),
                             _ => "%s".to_string(),
@@ -4941,11 +4955,17 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             Type::Array { element, len } => {
                 format!(
                     "arr{}.{}",
-                    len.unwrap_or(0),
+                    len.expect_known(),
                     self.mangle_type_name(*element)
                 )
             }
             Type::Slice { element, .. } => format!("slice.{}", self.mangle_type_name(*element)),
+            Type::ConstArg(arg) => match arg {
+                ConstArg::Int(n) => format!("n{n}"),
+                ConstArg::Bool(b) => format!("b{}", u8::from(*b)),
+                ConstArg::Char(c) => format!("c{}", *c as u32),
+            },
+            Type::ConstParam(def) => format!("g{}", def.0),
             Type::Enum { def_id, .. } => {
                 self.prefixed_name(*def_id, self.resolve_def_name(*def_id))
             }

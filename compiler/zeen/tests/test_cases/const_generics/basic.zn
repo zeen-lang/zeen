@@ -1,0 +1,55 @@
+const WIDTH: usize = 2 + 1;
+
+struct Buffer[N: comptime_uint] {
+  pub data: [N]u8,
+}
+
+implement[N: comptime_uint] Buffer[N] {
+  pub fn new() Buffer[N] {
+    return Buffer#[N] { .data = {0; N} };
+  }
+
+  pub fn fill(*self, value: u8) {
+    for (i : N) {
+      self.data[i] = value;
+    }
+  }
+
+  pub fn count(*const self) usize {
+    return N;
+  }
+
+  pub fn length(*const self) usize {
+    return self.data.len;
+  }
+}
+
+fn pointer_size[N: comptime_uint](p: *const Buffer[N]) usize {
+  return p.data.len + @sizeof(Buffer[N]);
+}
+
+fn main() {
+  const b: Buffer[4] = Buffer#[4] { .data = {1, 2, 3, 4} };
+
+  for (elem : b.data) {
+    @println("{}", elem);
+  }
+
+  @println("{} {}", b.count(), b.length());
+
+  let c = Buffer#[3].new();
+  c.fill(7);
+
+  @println("{} {}", c.count(), c.length());
+
+  for (elem : c.data) {
+    @println("{}", elem);
+  }
+
+  @println("{} {}", pointer_size#[4](&b), pointer_size#[3](&c));
+
+  const d: Buffer[WIDTH] = .{ .data = {4, 5, 6} };
+  const e = Buffer#[(WIDTH + 1)] { .data = {7, 8, 9, 10} };
+
+  @println("{} {}", d.length(), e.length());
+}

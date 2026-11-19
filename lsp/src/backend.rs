@@ -1574,6 +1574,10 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
+        if !diagnostics::parses(&document.text) {
+            return Ok(Some(Vec::new()));
+        }
+
         let start = position::position_to_offset(&document.text, params.range.start);
         let end = position::position_to_offset(&document.text, params.range.end);
 

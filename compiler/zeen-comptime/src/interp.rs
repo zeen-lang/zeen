@@ -115,6 +115,7 @@ enum TypeKey {
     SinglePointer(Box<TypeKey>),
     ManyPointer(Box<TypeKey>),
     Array(Box<TypeKey>, Option<usize>),
+    ConstValue(usize),
     Fn(Vec<TypeKey>, Box<TypeKey>),
     FatFn(Vec<TypeKey>, Box<TypeKey>, bool),
 }
@@ -144,6 +145,7 @@ fn type_key(ty: &TypeExpr<'_>) -> TypeKey {
             Box::new(type_key(element)),
             len.map(|len| len as *const Expression<'_> as usize),
         ),
+        TypeKind::ConstValue(expr) => TypeKey::ConstValue(*expr as *const Expression<'_> as usize),
         TypeKind::Fn { params, ret, .. } => TypeKey::Fn(
             params.iter().map(|param| type_key(param)).collect(),
             Box::new(type_key(ret)),

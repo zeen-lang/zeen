@@ -930,6 +930,22 @@ mod tests {
     }
 
     #[test]
+    fn accepts_const_generic_parameters() {
+        let text = "struct Buffer[N: comptime_uint] {\n    pub data: [N]u8,\n}\n\ncomptime Len = 4;\n\nfn main() {\n    const b: Buffer[Len] = Buffer#[Len] { .data = {1, 2, 3, 4} };\n    @println(\"{}\", b.data.len);\n}\n";
+        let uri = Uri::from_str("file:///tmp/zeen-lsp-const-generic.zn").unwrap();
+        let output = check(&uri, text, &[]);
+
+        assert!(
+            !output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("unresolved type")),
+            "{:?}",
+            output.diagnostics
+        );
+    }
+
+    #[test]
     fn reports_void_macro_removal() {
         let text = "fn main() {\n    let value: void = @void();\n}\n";
         let uri = Uri::from_str("file:///tmp/zeen-lsp-void-macro.zn").unwrap();

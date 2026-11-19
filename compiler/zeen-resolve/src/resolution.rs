@@ -94,6 +94,8 @@ pub fn builtin_def_id(builtin: BuiltinType) -> DefId {
 pub enum Resolution {
     Def(DefId),
     GenericParam(DefId),
+    ConstParam(DefId),
+    ConstValue(zeen_ast::expressions::Literal),
     SelfValue(DefId),
     SelfType(DefId),
     Builtin,
@@ -123,6 +125,7 @@ pub enum DefKind {
     Param,
     Field,
     GenericParam,
+    ConstParam(zeen_ast::types::ConstParamType),
     ExternVar,
     GlobalVar { is_const: bool },
     Builtin(BuiltinType),

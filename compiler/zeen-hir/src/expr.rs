@@ -23,6 +23,7 @@ pub enum HirExprKind {
         generic_args: Vec<Rc<HirTypeExpr>>,
     },
     GenericParamRef(DefId),
+    ConstParamRef(DefId),
     SelfValue(DefId),
 
     Binary {

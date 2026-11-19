@@ -7,7 +7,7 @@ use smol_str::SmolStr;
 use zeen_ast::{
     Source,
     expressions::{BinaryOp, Literal, UnaryOp},
-    types::{BuiltinShape, BuiltinType},
+    types::{BuiltinShape, BuiltinType, ShapeLen},
 };
 use zeen_driver::CompilationMode;
 use zeen_hir::{
@@ -24,8 +24,8 @@ use zeen_typecheck::{
     result::{CallResolution, OperatorResolution, TypeCheckResult},
 };
 use zeen_types::{
-    CLOSURE_FAT_DEF, CLOSURE_FAT_DROP_FIELD, CLOSURE_FAT_ENV_FIELD, CLOSURE_FAT_FN_FIELD,
-    SLICE_LEN_FIELD, SLICE_PTR_FIELD, SLICE_STRUCT_DEF, StructTypeInfo, Type, TypeId,
+    ArrayLen, CLOSURE_FAT_DEF, CLOSURE_FAT_DROP_FIELD, CLOSURE_FAT_ENV_FIELD, CLOSURE_FAT_FN_FIELD,
+    ConstArg, SLICE_LEN_FIELD, SLICE_PTR_FIELD, SLICE_STRUCT_DEF, StructTypeInfo, Type, TypeId,
     VariantPayload,
 };
 
@@ -781,6 +781,7 @@ impl<'ctx> MirLowering<'ctx> {
             HirExprKind::Try { expr: inner } => self.collect_global_expr_deps(inner, out),
             HirExprKind::Literal(_)
             | HirExprKind::GenericParamRef(_)
+            | HirExprKind::ConstParamRef(_)
             | HirExprKind::Type(_)
             | HirExprKind::Error => {}
         }
@@ -2001,7 +2002,12 @@ impl<'ctx> MirLowering<'ctx> {
         owners.sort();
 
         for owner in owners {
-            let Some(entries) = self.typecheck.impl_registry.get(&(owner, interface)) else {
+            let Some(entries) = self
+                .typecheck
+                .impl_registry
+                .get(&(owner, interface))
+                .cloned()
+            else {
                 continue;
             };
 
@@ -2014,6 +2020,7 @@ impl<'ctx> MirLowering<'ctx> {
                 .unwrap_or_default();
 
             let mut matched: HashMap<DefId, TypeId> = HashMap::default();
+            let mut len_matched: HashMap<DefId, u64> = HashMap::default();
 
             if !zeen_types::match_builtin_shape(
                 &self.typecheck.interner,
@@ -2021,9 +2028,12 @@ impl<'ctx> MirLowering<'ctx> {
                 base,
                 &generics,
                 &mut matched,
+                &mut len_matched,
             ) {
                 continue;
             }
+
+            self.merge_shape_len_bindings(&mut matched, len_matched);
 
             let bound = entries
                 .iter()
@@ -2312,17 +2322,28 @@ impl<'ctx> MirLowering<'ctx> {
         struct_defs.sort_by_key(|def_id| def_id.0);
 
         for struct_def in struct_defs {
-            let generic_args: Vec<TypeId> = self
+            let generics = self
                 .typecheck
                 .struct_generics
                 .get(&struct_def)
-                .map(|generics| {
-                    generics
-                        .iter()
-                        .map(|&generic| self.typecheck.interner.intern(Type::GenericParam(generic)))
-                        .collect()
-                })
+                .cloned()
                 .unwrap_or_default();
+
+            let has_const_generic = generics.iter().any(|generic| {
+                matches!(
+                    self.resolution.defs.get(generic).map(|info| &info.kind),
+                    Some(DefKind::ConstParam(_))
+                )
+            });
+
+            if has_const_generic {
+                continue;
+            }
+
+            let generic_args: Vec<TypeId> = generics
+                .iter()
+                .map(|&generic| self.typecheck.interner.intern(Type::GenericParam(generic)))
+                .collect();
 
             let struct_ty = self.typecheck.interner.intern(Type::Struct {
                 def_id: struct_def,
@@ -3684,12 +3705,12 @@ impl<'ctx> MirLowering<'ctx> {
         source: &Source,
     ) -> (BlockId, Operand) {
         let (element, len) = match self.typecheck.interner.get(array_ty).clone() {
-            Type::Array {
-                element,
-                len: Some(len),
-            } => (element, len),
+            Type::Array { element, len } => (element, len),
             _ => unreachable!("array to slice coercion requires a sized array"),
         };
+        let len = len
+            .known()
+            .expect("array to slice coercion requires a known length");
 
         let usize_ty = self.typecheck.interner.builtin(BuiltinType::usize);
 
@@ -4112,6 +4133,7 @@ impl<'ctx> MirLowering<'ctx> {
 
                 let obj_ty = self.expr_type(fb, object);
                 let (block, obj_place) = self.lower_expr_to_place_or_temp(fb, object, block);
+                let (obj_place, obj_ty) = self.deref_index_object(obj_place, obj_ty);
                 let (block, index_operand) = self.lower_expr_to_operand(fb, index, block);
 
                 let index_local = {
@@ -4356,8 +4378,10 @@ impl<'ctx> MirLowering<'ctx> {
                     );
                 }
 
-                if let Type::Array { len: Some(len), .. } =
-                    self.typecheck.interner.get(obj_ty).clone()
+                if let Type::Array {
+                    len: ArrayLen::Known(len),
+                    ..
+                } = self.typecheck.interner.get(obj_ty).clone()
                     && self.rodeo.borrow().resolve(&field.0) == "len"
                 {
                     return (
@@ -4538,7 +4562,7 @@ impl<'ctx> MirLowering<'ctx> {
                 let (block, elem_op) = self.lower_expr_to_operand(fb, element, block);
 
                 let n = match self.typecheck.interner.get(ty).clone() {
-                    Type::Array { len: Some(n), .. } => n as usize,
+                    Type::Array { len, .. } => len.expect_known() as usize,
                     _ => 0,
                 };
 
@@ -5098,7 +5122,7 @@ impl<'ctx> MirLowering<'ctx> {
                 HirMacroKind::VariantNames => {
                     let result_ty = self.expr_type(fb, expr);
                     let variant_count = match self.typecheck.interner.get(result_ty).clone() {
-                        Type::Array { len: Some(n), .. } => n as usize,
+                        Type::Array { len, .. } => len.expect_known() as usize,
                         _ => 0,
                     };
 
@@ -5262,6 +5286,28 @@ impl<'ctx> MirLowering<'ctx> {
                 });
 
                 (block, Operand::Constant(ConstValue::NullPtr, None))
+            }
+
+            HirExprKind::ConstParamRef(def_id) => {
+                let value = fb.bindings.get(def_id).and_then(|bound| {
+                    match self.typecheck.interner.get(*bound) {
+                        Type::ConstArg(ConstArg::Int(n)) => Some(ConstValue::Int(*n)),
+                        Type::ConstArg(ConstArg::Bool(b)) => Some(ConstValue::Bool(*b)),
+                        Type::ConstArg(ConstArg::Char(c)) => Some(ConstValue::Char(*c)),
+                        _ => None,
+                    }
+                });
+
+                let Some(value) = value else {
+                    self.errors.push(MirError::GenericParamNotValue {
+                        src: expr.source.src(),
+                        span: expr.source.span,
+                    });
+
+                    return (block, Operand::Constant(ConstValue::Int(0), None));
+                };
+
+                (block, Operand::Constant(value, Some(expr.source.clone())))
             }
 
             HirExprKind::Switch { object, arms } => {
@@ -5932,7 +5978,7 @@ impl<'ctx> MirLowering<'ctx> {
         let pat_len = self.rodeo.borrow().resolve(&pat).len() as u64;
         let pat_ty = self.typecheck.interner.intern(Type::Array {
             element: char_ty,
-            len: Some(pat_len + 1),
+            len: ArrayLen::Known(pat_len + 1),
         });
         let pat_temp = fb.new_temp(pat_ty);
         fb.push_stmt(
@@ -5948,8 +5994,8 @@ impl<'ctx> MirLowering<'ctx> {
         );
 
         let scrut_len = match self.typecheck.interner.get(scrut_ty).clone() {
-            Type::Array { len: Some(len), .. } => {
-                Operand::Constant(ConstValue::Int(len as i128), None)
+            Type::Array { len, .. } => {
+                Operand::Constant(ConstValue::Int(len.expect_known() as i128), None)
             }
             Type::Slice { .. } => {
                 let mut len_place = scrut_place.clone();
@@ -5994,8 +6040,8 @@ impl<'ctx> MirLowering<'ctx> {
 
         let len_plus_one = fb.new_temp(bool_ty);
         let scrut_len_2 = match self.typecheck.interner.get(scrut_ty).clone() {
-            Type::Array { len: Some(len), .. } => {
-                Operand::Constant(ConstValue::Int(len as i128), None)
+            Type::Array { len, .. } => {
+                Operand::Constant(ConstValue::Int(len.expect_known() as i128), None)
             }
             _ => {
                 let mut len_place = scrut_place.clone();
@@ -6319,6 +6365,7 @@ impl<'ctx> MirLowering<'ctx> {
 
                 let obj_ty = self.expr_type(fb, object);
                 let (block, obj_place) = self.lower_expr_to_place_or_temp(fb, object, block);
+                let (obj_place, obj_ty) = self.deref_index_object(obj_place, obj_ty);
                 let (block, index_operand) = self.lower_expr_to_operand(fb, index, block);
 
                 let index_local = match index_operand {
@@ -6620,6 +6667,13 @@ impl<'ctx> MirLowering<'ctx> {
         }
     }
 
+    fn deref_index_object(&self, place: Place, ty: TypeId) -> (Place, TypeId) {
+        match self.typecheck.interner.get(ty).clone() {
+            Type::Pointer { inner, .. } => (place.deref(), inner),
+            _ => (place, ty),
+        }
+    }
+
     fn lower_bounds_check(
         &mut self,
         fb: &mut FnBuilder,
@@ -6639,8 +6693,8 @@ impl<'ctx> MirLowering<'ctx> {
             .intern(Type::Builtin(zeen_ast::types::BuiltinType::usize));
 
         let len_operand = match self.typecheck.interner.get(obj_ty).clone() {
-            Type::Array { len: Some(len), .. } => {
-                Operand::Constant(ConstValue::Int(len as i128), None)
+            Type::Array { len, .. } => {
+                Operand::Constant(ConstValue::Int(len.expect_known() as i128), None)
             }
             Type::Slice { .. } => {
                 let mut len_place = obj_place.clone();
@@ -6729,6 +6783,7 @@ impl<'ctx> MirLowering<'ctx> {
             .intern(Type::Builtin(zeen_ast::types::BuiltinType::usize));
         let (block, obj_place) = self.lower_expr_to_place_or_temp(fb, object, block);
         let obj_ty = self.expr_type(fb, object);
+        let (obj_place, obj_ty) = self.deref_index_object(obj_place, obj_ty);
 
         let (block, start_local) = match start {
             Some(start) => {
@@ -6756,10 +6811,10 @@ impl<'ctx> MirLowering<'ctx> {
             }
             None => {
                 let len_local = match self.typecheck.interner.get(obj_ty).clone() {
-                    Type::Array { len: Some(len), .. } => self.const_to_local(
+                    Type::Array { len, .. } => self.const_to_local(
                         fb,
                         block,
-                        ConstValue::Int(len as i128),
+                        ConstValue::Int(len.expect_known() as i128),
                         usize_ty,
                         source,
                     ),
@@ -6959,8 +7014,8 @@ impl<'ctx> MirLowering<'ctx> {
         );
 
         let len_operand = match self.typecheck.interner.get(obj_ty).clone() {
-            Type::Array { len: Some(len), .. } => {
-                Operand::Constant(ConstValue::Int(len as i128), None)
+            Type::Array { len, .. } => {
+                Operand::Constant(ConstValue::Int(len.expect_known() as i128), None)
             }
             Type::Slice { .. } => {
                 let mut len_place = obj_place.clone();
@@ -8744,7 +8799,7 @@ impl<'ctx> MirLowering<'ctx> {
 
         let (element_ty, elements, len_rvalue) = match self.typecheck.interner.get(ty).clone() {
             Type::Array { element, len } => {
-                let len = len.expect("format array length must be known");
+                let len = len.expect_known();
 
                 (
                     element,
@@ -9057,12 +9112,16 @@ impl<'ctx> MirLowering<'ctx> {
                 owners.sort();
 
                 for owner in owners {
-                    let Some(entries) = self.typecheck.impl_registry.get(&(owner, iface_def))
+                    let Some(entries) = self
+                        .typecheck
+                        .impl_registry
+                        .get(&(owner, iface_def))
+                        .cloned()
                     else {
                         continue;
                     };
 
-                    let Some(shape) = self.typecheck.builtin_shapes.get(&owner) else {
+                    let Some(shape) = self.typecheck.builtin_shapes.get(&owner).cloned() else {
                         continue;
                     };
                     let generics = self
@@ -9072,16 +9131,20 @@ impl<'ctx> MirLowering<'ctx> {
                         .cloned()
                         .unwrap_or_default();
                     let mut bindings: HashMap<DefId, TypeId> = HashMap::default();
+                    let mut len_bindings: HashMap<DefId, u64> = HashMap::default();
 
                     if !zeen_types::match_builtin_shape(
                         &self.typecheck.interner,
-                        shape,
+                        &shape,
                         recv_ty,
                         &generics,
                         &mut bindings,
+                        &mut len_bindings,
                     ) {
                         continue;
                     }
+
+                    self.merge_shape_len_bindings(&mut bindings, len_bindings);
 
                     if let Some(method) = entries
                         .iter()
@@ -9345,10 +9408,13 @@ impl<'ctx> MirLowering<'ctx> {
                 }
 
                 for (arg, &owner_g) in entry.object_args.iter().zip(owner_generics.iter()) {
-                    if let Type::GenericParam(imp_g) = self.typecheck.interner.get(*arg)
-                        && let Some(&concrete) = bindings.get(&owner_g)
-                    {
-                        bindings.insert(*imp_g, concrete);
+                    let imp_g = match self.typecheck.interner.get(*arg) {
+                        Type::GenericParam(imp_g) | Type::ConstParam(imp_g) => *imp_g,
+                        _ => continue,
+                    };
+
+                    if let Some(&concrete) = bindings.get(&owner_g) {
+                        bindings.insert(imp_g, concrete);
                     }
                 }
             }
@@ -10081,7 +10147,9 @@ impl<'ctx> MirLowering<'ctx> {
 
         let (len_operand, elem_ty) = match self.typecheck.interner.get(iter_ty).clone() {
             Type::Array { element, len } => {
-                let len_val = len.expect("unknown array length (must be comptime known)");
+                let len_val = len
+                    .known()
+                    .expect("unknown array length (must be comptime known)");
 
                 (
                     Operand::Constant(ConstValue::Int(len_val as i128), None),
@@ -10474,16 +10542,47 @@ impl<'ctx> MirLowering<'ctx> {
             BuiltinShape::Array { element, len } => {
                 let element = self.concrete_shape_type(element, args);
 
-                self.typecheck.interner.intern(Type::Array {
-                    element,
-                    len: Some(*len),
-                })
+                let len = match len {
+                    ShapeLen::Known(n) => ArrayLen::Known(*n),
+                    ShapeLen::Param(index) => ArrayLen::Known(self.shape_len_value(args, *index)),
+                };
+
+                self.typecheck.interner.intern(Type::Array { element, len })
             }
 
             BuiltinShape::Param(index) => args
                 .get(*index as usize)
                 .copied()
                 .unwrap_or_else(|| self.typecheck.interner.error()),
+        }
+    }
+
+    fn shape_len_value(&self, args: &[TypeId], index: u32) -> u64 {
+        let arg = args
+            .get(index as usize)
+            .copied()
+            .expect("builtin shape length argument must be present");
+
+        match self.typecheck.interner.get(arg) {
+            Type::ConstArg(ConstArg::Int(value)) if *value >= 0 => *value as u64,
+            other => {
+                panic!("builtin shape length argument must be a known length, found {other:?}")
+            }
+        }
+    }
+
+    fn merge_shape_len_bindings(
+        &mut self,
+        bindings: &mut HashMap<DefId, TypeId>,
+        len_bindings: HashMap<DefId, u64>,
+    ) {
+        for (def, len) in len_bindings {
+            let arg = self
+                .typecheck
+                .interner
+                .intern(Type::ConstArg(ConstArg::Int(len as i128)));
+
+            bindings.insert(def, arg);
         }
     }
 
@@ -10675,6 +10774,14 @@ impl<'ctx> MirLowering<'ctx> {
 
             BuiltinShape::Array { element, len } => {
                 let element = self.render_builtin_shape_name(element, generic_args);
+
+                let len = match len {
+                    ShapeLen::Known(n) => n.to_string(),
+                    ShapeLen::Param(index) => generic_args
+                        .get(*index as usize)
+                        .map(|&arg| self.display_type_name(arg))
+                        .unwrap_or_default(),
+                };
 
                 format!("[{len}]{element}")
             }

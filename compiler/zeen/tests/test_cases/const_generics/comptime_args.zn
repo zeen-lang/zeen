@@ -1,0 +1,23 @@
+struct Buffer[N: comptime_uint, T] {
+  pub inner: [N]T
+
+  pub fn new() Self {
+    .{
+      .inner = @uninit(),
+    }
+  }
+}
+
+comptime Len = 5;
+
+comptime fn doubled() comptime_int {
+  return Len * 2;
+}
+
+fn main() {
+  const _a: Buffer[Len, i32] = Buffer.new();
+  const _b: Buffer[doubled(), u8] = Buffer.new();
+  const _c = Buffer#[Len, i32] { .inner = {1, 2, 3, 4, 5} };
+
+  @println("{} {} {}", _a.inner.len, _b.inner.len, _c.inner.len);
+}

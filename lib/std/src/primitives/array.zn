@@ -1,0 +1,119 @@
+implement[N: comptime_uint, T] builtin [N]T {
+  pub fn swap(*self, a: usize, b: usize) {
+    if (a >= N || b >= N) {
+      @panic("out of bounds, array len is {} but indices are {} and {}", N, a, b);
+    };
+
+    if (a == b) { return; };
+
+    let temp: T = self[a];
+    self[a] = self[b];
+    self[b] = temp;
+  }
+
+  pub fn reverse(*self) {
+    let i: usize = 0;
+
+    while (i < N / 2) {
+      const j: usize = N - 1 - i;
+      let temp: T = self[i];
+      self[i] = self[j];
+      self[j] = temp;
+      i += 1;
+    };
+  }
+}
+
+implement[N: comptime_uint, T: Copy] builtin [N]T {
+  pub fn is_empty(*const self) bool {
+    return N == 0;
+  }
+
+  pub fn first(*const self) Option[*const T] {
+    if (N == 0) {
+      return Option.None;
+    };
+
+    Option.Some(&self[0])
+  }
+
+  pub fn last(*const self) Option[*const T] {
+    if (N == 0) {
+      return Option.None;
+    };
+
+    Option.Some(&self[N - 1])
+  }
+
+  pub fn get(*const self, index: usize) Option[*const T] {
+    if (index >= N) {
+      return Option.None;
+    };
+
+    Option.Some(&self[index])
+  }
+
+  pub fn get_mut(*self, index: usize) Option[*T] {
+    if (index >= N) {
+      return Option.None;
+    };
+
+    Option.Some(&self[index])
+  }
+
+  pub fn fill(*self, value: T) {
+    for (i : 0..N) {
+      self[i] = value;
+    };
+  }
+
+  pub fn repeat[L: comptime_uint](*const self) [L]T {
+    let out: [L]T = @uninit();
+
+    for (i : 0..L) {
+      out[i] = self[i % N];
+    };
+
+    out
+  }
+
+  pub fn map[U, F: Callable(T) U](*const self, f: F) [N]U {
+    let out: [N]U = @uninit();
+
+    for (i : 0..N) {
+      out[i] = f(self[i]);
+    };
+
+    out
+  }
+}
+
+implement[N: comptime_uint, T: Copy + Eq] builtin [N]T {
+  pub fn position(*const self, value: T) Option[usize] {
+    let i: usize = 0;
+
+    while (i < N) {
+      if (self[i] == value) {
+        return Option.Some(i);
+      };
+
+      i += 1;
+    };
+
+    Option.None
+  }
+
+  pub fn contains(*const self, value: T) bool {
+    let i: usize = 0;
+
+    while (i < N) {
+      if (self[i] == value) {
+        return true;
+      };
+
+      i += 1;
+    };
+
+    false
+  }
+}

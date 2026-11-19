@@ -584,6 +584,65 @@ pub enum TypeError {
         span: SourceSpan,
     },
 
+    #[error("const generic argument must be a literal or a comptime constant")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::const_arg_not_const),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-const_arg_not_const")
+    )]
+    ConstArgNotConst {
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
+    #[error("expected a const generic argument of type `{expected}`, but found `{found}`")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::const_generic_arg_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-const_generic_arg_mismatch")
+    )]
+    ConstGenericArgMismatch {
+        expected: SmolStr,
+        found: SmolStr,
+
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
+    #[error("array length `{found}` does not match the const generic length `{expected}`")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::const_array_length_mismatch),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-const_array_length_mismatch")
+    )]
+    ConstArrayLengthMismatch {
+        expected: SmolStr,
+        found: SmolStr,
+
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
+    #[error("const generic argument `0` is not allowed")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::zero_const_arg),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-zero_const_arg"),
+        help("zero-length arrays are not allowed")
+    )]
+    ZeroConstArg {
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
     #[error("empty arrays are not allowed")]
     #[diagnostic(
         severity(Error),

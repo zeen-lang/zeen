@@ -47,6 +47,13 @@ impl<'tok, 'ctx, 'pr> TypeParser<'tok, 'ctx, 'pr> {
 
             TokenKind::Keyword(token::CompilerKeyword::Const) => self.parse_const_type(),
 
+            TokenKind::Literal { .. } => self.parse_const_value(),
+
+            TokenKind::Keyword(token::CompilerKeyword::True)
+            | TokenKind::Keyword(token::CompilerKeyword::False) => self.parse_const_value(),
+
+            TokenKind::OpenParen => self.parse_const_value(),
+
             TokenKind::Keyword(token::CompilerKeyword::TypeOf) => self.parse_typeof(),
 
             TokenKind::Dollar if self.p.splices_allowed => self.parse_splice(),
@@ -103,6 +110,17 @@ impl<'tok, 'ctx, 'pr> TypeParser<'tok, 'ctx, 'pr> {
         let tok = self.p.current();
         let slice = &self.p.src[tok.span.offset()..tok.span.offset() + tok.span.len()];
         slice == name
+    }
+
+    fn current_const_param_type(&self) -> Option<types::ConstParamType> {
+        if self.p.current().kind != TokenKind::Ident {
+            return None;
+        }
+
+        let tok = self.p.current();
+        let slice = &self.p.src[tok.span.offset()..tok.span.offset() + tok.span.len()];
+
+        types::ConstParamType::from_name(slice)
     }
 
     fn parse_fat_fn_type(&mut self) -> Option<&'ctx TypeExpr<'ctx>> {
@@ -232,52 +250,71 @@ impl<'tok, 'ctx, 'pr> TypeParser<'tok, 'ctx, 'pr> {
                 let name = (self.p.get_or_intern(name_slice), name_token.span);
 
                 let mut callable_bounds: Option<&'ctx [CallableBound<'ctx>]> = None;
+                let mut const_type: Option<types::ConstParamType> = None;
 
                 let interfaces: Option<&'ctx [(lasso::Spur, miette::SourceSpan)]> = if self
                     .p
                     .eat(TokenKind::Colon)
                 {
-                    let mut interfaces_buffer: SmallVec<[(lasso::Spur, miette::SourceSpan); 8]> =
-                        SmallVec::new();
-                    let mut callable_buffer: SmallVec<[CallableBound<'ctx>; 4]> = SmallVec::new();
+                    if let Some(ct) = self.current_const_param_type() {
+                        let _ = self.p.advance();
+                        const_type = Some(ct);
 
-                    while !matches!(
-                        self.p.current().kind,
-                        TokenKind::CloseBracket | TokenKind::Eof | TokenKind::Comma
-                    ) {
-                        if (self.current_ident_is("Callable")
-                            || self.current_ident_is("CallableOnce"))
-                            && self.p.peek_ahead_kind(0) == Some(TokenKind::OpenParen)
-                        {
-                            let bound = self.parse_callable_bound_in_generics()?;
-                            callable_buffer.push(bound);
+                        None
+                    } else if matches!(self.p.current().kind, TokenKind::Type(_)) {
+                        self.p.report(ParserError::SyntaxError {
+                            label: "const generic parameters must use a comptime type".into(),
+                            help: Some("consider `comptime_uint`".into()),
+                            src: self.p.named_src(),
+                            span: self.p.current().span,
+                        });
+
+                        return None;
+                    } else {
+                        let mut interfaces_buffer: SmallVec<
+                            [(lasso::Spur, miette::SourceSpan); 8],
+                        > = SmallVec::new();
+                        let mut callable_buffer: SmallVec<[CallableBound<'ctx>; 4]> =
+                            SmallVec::new();
+
+                        while !matches!(
+                            self.p.current().kind,
+                            TokenKind::CloseBracket | TokenKind::Eof | TokenKind::Comma
+                        ) {
+                            if (self.current_ident_is("Callable")
+                                || self.current_ident_is("CallableOnce"))
+                                && self.p.peek_ahead_kind(0) == Some(TokenKind::OpenParen)
+                            {
+                                let bound = self.parse_callable_bound_in_generics()?;
+                                callable_buffer.push(bound);
+
+                                let _ = self.p.eat(TokenKind::Plus);
+
+                                continue;
+                            }
+
+                            let interface_token = self.p.expect(TokenKind::Ident, "identifier")?;
+                            let interface_slice = self.p.src[interface_token.span.offset()
+                                ..interface_token.span.offset() + interface_token.span.len()]
+                                .to_owned();
+
+                            let interface_id = self.p.get_or_intern(interface_slice);
+                            interfaces_buffer.push((interface_id, interface_token.span));
 
                             let _ = self.p.eat(TokenKind::Plus);
-
-                            continue;
                         }
 
-                        let interface_token = self.p.expect(TokenKind::Ident, "identifier")?;
-                        let interface_slice = self.p.src[interface_token.span.offset()
-                            ..interface_token.span.offset() + interface_token.span.len()]
-                            .to_owned();
+                        if !callable_buffer.is_empty() {
+                            callable_bounds = Some(self.p.arena.alloc_slice_copy(&callable_buffer));
+                        }
 
-                        let interface_id = self.p.get_or_intern(interface_slice);
-                        interfaces_buffer.push((interface_id, interface_token.span));
+                        drop(callable_buffer);
 
-                        let _ = self.p.eat(TokenKind::Plus);
+                        let interfaces_arena = self.p.arena.alloc_slice_copy(&interfaces_buffer);
+                        drop(interfaces_buffer);
+
+                        Some(interfaces_arena)
                     }
-
-                    if !callable_buffer.is_empty() {
-                        callable_bounds = Some(self.p.arena.alloc_slice_copy(&callable_buffer));
-                    }
-
-                    drop(callable_buffer);
-
-                    let interfaces_arena = self.p.arena.alloc_slice_copy(&interfaces_buffer);
-                    drop(interfaces_buffer);
-
-                    Some(interfaces_arena)
                 } else {
                     None
                 };
@@ -288,6 +325,7 @@ impl<'tok, 'ctx, 'pr> TypeParser<'tok, 'ctx, 'pr> {
                     name,
                     interfaces,
                     callable_bounds,
+                    const_type,
                 });
             }
 
@@ -577,6 +615,20 @@ impl<'tok, 'ctx, 'pr> TypeParser<'tok, 'ctx, 'pr> {
         }
 
         Some(base)
+    }
+
+    fn parse_const_value(&mut self) -> Option<&'ctx TypeExpr<'ctx>> {
+        let start = self.p.current().span;
+
+        let mut expr_parser = crate::expressions::ExprParser::new(self.p);
+        let expr = expr_parser.parse()?;
+
+        let expr = self.p.arena.alloc(TypeExpr {
+            kind: TypeKind::ConstValue(expr),
+            span: crate::merge_spans(start, expr.span),
+        });
+
+        Some(expr)
     }
 
     fn parse_const_type(&mut self) -> Option<&'ctx TypeExpr<'ctx>> {
@@ -995,6 +1047,7 @@ mod tests {
                         name: (rodeo.borrow_mut().get_or_intern("T"), (3, 1).into()),
                         interfaces: None,
                         callable_bounds: None,
+                        const_type: None,
                     }]),
                     ret: &TypeExpr {
                         kind: TypeKind::Builtin(types::BuiltinType::usize),
@@ -1024,6 +1077,7 @@ mod tests {
                     }],
                     generic_args: Some(&[GenericType {
                         name: ({ rodeo.borrow_mut().get_or_intern("T") }, (3, 1).into()),
+                        const_type: None,
                         interfaces: Some(&[
                             /*
                              * Kinda interesting bug:
@@ -1287,5 +1341,80 @@ mod tests {
         );
 
         assert_eq!(type_parser.parse(), None);
+    }
+
+    #[test]
+    fn const_generic_parameter_declaration() {
+        const SRC: &str = "[N: comptime_uint]";
+
+        make_type_parser!(SRC, tokens, bump, rodeo, parser, type_parser);
+
+        let generics = type_parser.parse_generics_declarations().unwrap();
+        let n = rodeo.borrow_mut().get_or_intern("N");
+
+        assert_eq!(
+            generics,
+            &[GenericType {
+                name: (n, (1, 1).into()),
+                interfaces: None,
+                callable_bounds: None,
+                const_type: Some(types::ConstParamType::UInt),
+            }]
+        );
+
+        assert_eq!(type_parser.p.current().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn const_generic_literal_argument() {
+        const SRC: &str = "Buffer[4]";
+
+        make_type_parser!(SRC, tokens, bump, rodeo, parser, type_parser);
+
+        let parsed = type_parser.parse().unwrap();
+
+        let TypeKind::Named {
+            name,
+            generic_args: Some(args),
+        } = parsed.kind
+        else {
+            panic!("expected a named type with generic arguments");
+        };
+
+        assert_eq!(name, rodeo.borrow_mut().get_or_intern("Buffer"));
+
+        let TypeKind::ConstValue(expr) = args[0].kind else {
+            panic!("expected a const generic argument");
+        };
+
+        assert!(matches!(
+            expr.kind,
+            zeen_ast::expressions::ExpressionKind::Literal(zeen_ast::expressions::Literal::Int(4))
+        ));
+    }
+
+    #[test]
+    fn const_generic_parameter_argument() {
+        const SRC: &str = "Buffer[N]";
+
+        make_type_parser!(SRC, tokens, bump, rodeo, parser, type_parser);
+
+        let parsed = type_parser.parse().unwrap();
+
+        let TypeKind::Named {
+            generic_args: Some(args),
+            ..
+        } = parsed.kind
+        else {
+            panic!("expected a named type with generic arguments");
+        };
+
+        assert!(matches!(
+            args[0].kind,
+            TypeKind::Named {
+                name: _,
+                generic_args: None
+            }
+        ));
     }
 }

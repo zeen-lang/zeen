@@ -1,0 +1,20 @@
+fn drop_first(value: []const char) []const char {
+  if (value.len == 0) {
+    return value.ptr[0..0];
+  };
+
+  return value.ptr[1..value.len];
+}
+
+fn head(value: []const char) []const char {
+  return value[0..1];
+}
+
+fn main() {
+  const text: []const char = "hello";
+
+  @println("[{}] [{}]", drop_first(text), drop_first(""));
+
+  const word: []const char = "zeen";
+  @println("[{}] [{}]", head(word), drop_first(word));
+}

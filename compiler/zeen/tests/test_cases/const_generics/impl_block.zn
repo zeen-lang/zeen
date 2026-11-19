@@ -1,0 +1,40 @@
+struct Buffer[N: comptime_uint] {
+  pub data: [N]u8,
+}
+
+implement[N: comptime_uint] Buffer[N] {
+  pub fn size(*const self) usize {
+    return N;
+  }
+
+  pub fn first(*const self) u8 {
+    return self.data[0];
+  }
+}
+
+implement Buffer[4] {
+  pub fn size(*const self) usize {
+    return 99;
+  }
+
+  pub fn sum(*const self) u8 {
+    let total: u8 = 0;
+
+    for (b : self.data) {
+      total = total + b;
+    }
+
+    return total;
+  }
+}
+
+fn main() {
+  const small: [3]u8 = {1, 2, 3};
+  const a = Buffer#[3] { .data = small };
+  @println("{} {}", a.size(), a.first());
+
+  const four: [4]u8 = {4, 5, 6, 7};
+  const b = Buffer#[4] { .data = four };
+  @println("{} {}", b.size(), b.sum());
+  @println("{}", b.first());
+}

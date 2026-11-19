@@ -12,7 +12,7 @@ use zeen_ast::{
     StatementKind, TypeExpr, TypeKind, declarations,
     declarations::GenericType,
     expressions::Literal,
-    types::{BuiltinShape, BuiltinType},
+    types::{BuiltinShape, BuiltinType, ShapeLen},
 };
 use zeen_lexer::{TokenKind, token::CompilerKeyword};
 
@@ -1446,7 +1446,16 @@ impl<'tok, 'ctx, 'pr> DeclParser<'tok, 'ctx, 'pr> {
             .map(|gs| gs.iter().map(|g| g.name.0).collect())
             .unwrap_or_default();
 
-        let shape = self.builtin_shape_from_type(ty, &generic_names)?;
+        let const_names: Vec<Spur> = generics
+            .map(|gs| {
+                gs.iter()
+                    .filter(|g| g.const_type.is_some())
+                    .map(|g| g.name.0)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let shape = self.builtin_shape_from_type(ty, &generic_names, &const_names)?;
 
         let mut used = Vec::new();
         shape.used_params(&mut used);
@@ -1480,6 +1489,7 @@ impl<'tok, 'ctx, 'pr> DeclParser<'tok, 'ctx, 'pr> {
         &mut self,
         ty: &'ctx TypeExpr<'ctx>,
         generic_names: &[Spur],
+        const_names: &[Spur],
     ) -> Option<BuiltinShape> {
         match ty.kind {
             TypeKind::Builtin(builtin) => {
@@ -1499,7 +1509,8 @@ impl<'tok, 'ctx, 'pr> DeclParser<'tok, 'ctx, 'pr> {
             }
 
             TypeKind::Array { element, len } => {
-                let (element, is_const) = self.builtin_shape_element(element, generic_names)?;
+                let (element, is_const) =
+                    self.builtin_shape_element(element, generic_names, const_names)?;
 
                 let Some(len_expr) = len else {
                     return Some(BuiltinShape::Slice {
@@ -1509,11 +1520,38 @@ impl<'tok, 'ctx, 'pr> DeclParser<'tok, 'ctx, 'pr> {
                 };
 
                 let len = match len_expr.kind {
-                    ExpressionKind::Literal(Literal::Int(value)) => value,
+                    ExpressionKind::Literal(Literal::Int(value)) if value > 0 => {
+                        ShapeLen::Known(value as u64)
+                    }
+
+                    ExpressionKind::Ident {
+                        name,
+                        generic_args: None,
+                    } => {
+                        let index = const_names.iter().position(|constant| *constant == name);
+                        let Some(index) = index else {
+                            self.p.report(ParserError::UnsupportedAction {
+                                label: SmolStr::from(
+                                    "builtin array implement targets accept a positive literal or a const generic parameter",
+                                ),
+                                src: self.p.named_src(),
+                                span: len_expr.span,
+                            });
+
+                            return None;
+                        };
+
+                        let index = generic_names
+                            .iter()
+                            .position(|generic| *generic == const_names[index]);
+
+                        ShapeLen::Param(index? as u32)
+                    }
+
                     _ => {
                         self.p.report(ParserError::UnsupportedAction {
                             label: SmolStr::from(
-                                "builtin array implement targets require an integer literal length",
+                                "builtin array implement targets accept a positive literal or a const generic parameter",
                             ),
                             src: self.p.named_src(),
                             span: len_expr.span,
@@ -1523,26 +1561,15 @@ impl<'tok, 'ctx, 'pr> DeclParser<'tok, 'ctx, 'pr> {
                     }
                 };
 
-                if len <= 0 {
-                    self.p.report(ParserError::UnsupportedAction {
-                        label: SmolStr::from(
-                            "builtin array implement targets require a positive length",
-                        ),
-                        src: self.p.named_src(),
-                        span: len_expr.span,
-                    });
-
-                    return None;
-                }
-
                 Some(BuiltinShape::Array {
                     element: Box::new(element),
-                    len: len as u64,
+                    len,
                 })
             }
 
             TypeKind::ManyPointer(element) => {
-                let (element, is_const) = self.builtin_shape_element(element, generic_names)?;
+                let (element, is_const) =
+                    self.builtin_shape_element(element, generic_names, const_names)?;
 
                 Some(BuiltinShape::ManyPointer {
                     element: Box::new(element),
@@ -1606,11 +1633,18 @@ impl<'tok, 'ctx, 'pr> DeclParser<'tok, 'ctx, 'pr> {
         &mut self,
         ty: &'ctx TypeExpr<'ctx>,
         generic_names: &[Spur],
+        const_names: &[Spur],
     ) -> Option<(BuiltinShape, bool)> {
         if let TypeKind::Const(inner) = ty.kind {
-            Some((self.builtin_shape_from_type(inner, generic_names)?, true))
+            Some((
+                self.builtin_shape_from_type(inner, generic_names, const_names)?,
+                true,
+            ))
         } else {
-            Some((self.builtin_shape_from_type(ty, generic_names)?, false))
+            Some((
+                self.builtin_shape_from_type(ty, generic_names, const_names)?,
+                false,
+            ))
         }
     }
 
@@ -2900,6 +2934,30 @@ mod tests {
         };
 
         assert_eq!(builtin.unwrap().key(), "[4]u8");
+    }
+
+    #[test]
+    fn implement_builtin_const_generic_array_target_parses() {
+        const SRC: &str = "implement[N: comptime_uint] builtin [N]u8 {}";
+
+        make_parser!(SRC, tokens, bump, rodeo, parser);
+
+        let program = parser.parse_program().unwrap();
+
+        let DeclarationKind::ImplementDecl { builtin, .. } = &program[0].kind else {
+            panic!("expected an implement declaration");
+        };
+
+        assert_eq!(builtin.unwrap().key(), "[#0]u8");
+    }
+
+    #[test]
+    fn implement_builtin_array_length_rejects_non_const_generic() {
+        const SRC: &str = "implement[N: Copy] builtin [N]u8 {}";
+
+        make_parser!(SRC, tokens, bump, rodeo, parser);
+
+        assert!(parser.parse_program().is_err());
     }
 
     #[test]

@@ -20,7 +20,7 @@ use crate::{error::TypeError, format_str::FormatParseError};
 
 use zeen_ast::{
     expressions::{BinaryOp, Literal, UnaryOp},
-    types::{BuiltinShape, BuiltinType},
+    types::{BuiltinShape, BuiltinType, ConstParamType, ShapeLen},
 };
 use zeen_driver::{CompilationContext, CompilationOutput};
 use zeen_hir::{
@@ -38,9 +38,9 @@ use zeen_hir::{
 };
 use zeen_resolve::{DefId, DefKind, ResolutionResult};
 use zeen_types::{
-    ARRAY_LEN_FIELD, Capabilities, EnumTypeInfo, EnumVariantInfo, ReceiverAccess, SLICE_LEN_FIELD,
-    SLICE_PTR_FIELD, SelfMode, StructFieldInfo, StructTypeInfo, Type, TypeId, VariantPayload,
-    binary_op_interface, self_mode_of, unary_op_interface,
+    ARRAY_LEN_FIELD, ArrayLen, Capabilities, ConstArg, EnumTypeInfo, EnumVariantInfo,
+    ReceiverAccess, SLICE_LEN_FIELD, SLICE_PTR_FIELD, SelfMode, StructFieldInfo, StructTypeInfo,
+    Type, TypeId, VariantPayload, binary_op_interface, self_mode_of, unary_op_interface,
 };
 
 pub mod closure_alloc;
@@ -109,6 +109,7 @@ pub struct TypeChecker<'res> {
     in_progress_aliases: HashSet<DefId>,
 
     all_generic_bounds: HashMap<DefId, Vec<DefId>>,
+    generic_param_kinds: HashMap<DefId, zeen_hir::HirGenericParamKind>,
     all_callable_bounds: HashMap<DefId, Vec<CallableBoundSig>>,
     method_owning_interface: HashMap<DefId, DefId>,
     extracting_typename: bool,
@@ -260,6 +261,24 @@ fn literal_kind_word(lit: &Literal) -> &'static str {
     }
 }
 
+fn const_param_runtime_builtin(param: ConstParamType) -> BuiltinType {
+    match param {
+        ConstParamType::UInt => BuiltinType::usize,
+        ConstParamType::Int => BuiltinType::isize,
+        ConstParamType::Bool => BuiltinType::bool,
+        ConstParamType::Char => BuiltinType::char,
+    }
+}
+
+fn const_param_type_name(param: ConstParamType) -> &'static str {
+    match param {
+        ConstParamType::UInt => "comptime_uint",
+        ConstParamType::Int => "comptime_int",
+        ConstParamType::Bool => "comptime_bool",
+        ConstParamType::Char => "comptime_char",
+    }
+}
+
 impl<'res> TypeChecker<'res> {
     pub fn new(
         resolution: &'res ResolutionResult,
@@ -312,6 +331,7 @@ impl<'res> TypeChecker<'res> {
             type_aliases: HashMap::default(),
             in_progress_aliases: HashSet::default(),
             all_generic_bounds: HashMap::default(),
+            generic_param_kinds: HashMap::default(),
             all_callable_bounds: HashMap::default(),
             method_owning_interface: HashMap::default(),
             extracting_typename: false,
@@ -996,7 +1016,7 @@ impl<'res> TypeChecker<'res> {
                 .iter()
                 .zip(struct_generics.iter())
                 .filter_map(|(arg, &struct_g)| match self.result.interner.get(*arg) {
-                    Type::GenericParam(g) => Some((*g, struct_g)),
+                    Type::GenericParam(g) | Type::ConstParam(g) => Some((*g, struct_g)),
                     _ => None,
                 })
                 .collect();
@@ -1234,7 +1254,7 @@ impl<'res> TypeChecker<'res> {
             let arg = self.lower_hir_type(slot);
 
             match self.result.interner.get(arg) {
-                Type::GenericParam(g) if imp_generic_defs.contains(g) => {}
+                Type::GenericParam(g) | Type::ConstParam(g) if imp_generic_defs.contains(g) => {}
                 _ if self.type_contains_generic(arg) => {
                     if report_mixed {
                         self.report(TypeError::ImplSlotMixed {
@@ -1308,10 +1328,15 @@ impl<'res> TypeChecker<'res> {
             BuiltinShape::Array { element, len } => {
                 let element = self.builtin_shape_type(element, generics);
 
-                self.result.interner.intern(Type::Array {
-                    element,
-                    len: Some(*len),
-                })
+                let len = match len {
+                    ShapeLen::Known(n) => ArrayLen::Known(*n),
+                    ShapeLen::Param(index) => match generics.get(*index as usize).copied() {
+                        Some(generic) => ArrayLen::Param(generic),
+                        None => return self.result.interner.error(),
+                    },
+                };
+
+                self.result.interner.intern(Type::Array { element, len })
             }
 
             BuiltinShape::Param(index) => match generics.get(*index as usize).copied() {
@@ -1409,6 +1434,9 @@ impl<'res> TypeChecker<'res> {
 
     fn register_callable_bounds(&mut self, generics: &[HirGenericParam]) {
         for generic in generics {
+            self.generic_param_kinds
+                .insert(generic.def_id, generic.kind);
+
             if generic.callable_bounds.is_empty() {
                 continue;
             }
@@ -1419,6 +1447,115 @@ impl<'res> TypeChecker<'res> {
                 .entry(generic.def_id)
                 .or_default()
                 .extend(sigs);
+        }
+    }
+
+    fn generic_params_of(&self, def_id: DefId) -> Vec<DefId> {
+        if let Some(generics) = self.struct_generics.get(&def_id) {
+            return generics.clone();
+        }
+
+        if let Some(generics) = self.enum_generics.get(&def_id) {
+            return generics.clone();
+        }
+
+        if let Some(generics) = self.interface_generics.get(&def_id) {
+            return generics.clone();
+        }
+
+        if let Some(alias) = self.type_aliases.get(&def_id) {
+            return alias.generics.clone();
+        }
+
+        Vec::new()
+    }
+
+    fn lower_generic_arg(&mut self, param: DefId, arg: &HirTypeExpr) -> TypeId {
+        match self.generic_param_kinds.get(&param).copied() {
+            Some(zeen_hir::HirGenericParamKind::Const(const_type)) => {
+                self.lower_const_arg_kinded(arg, const_type)
+            }
+            _ => self.lower_hir_type(arg),
+        }
+    }
+
+    fn lower_const_arg_kinded(&mut self, arg: &HirTypeExpr, expected: ConstParamType) -> TypeId {
+        let value = match &arg.kind {
+            HirTypeKind::ConstParam(def_id) => {
+                let actual = match self.def_kind(*def_id) {
+                    Some(DefKind::ConstParam(actual)) => Some(*actual),
+                    _ => None,
+                };
+
+                if actual != Some(expected) {
+                    self.report(TypeError::ConstGenericArgMismatch {
+                        expected: const_param_type_name(expected).into(),
+                        found: "a const generic parameter of another type".into(),
+                        src: arg.source.src(),
+                        span: arg.source.span,
+                    });
+
+                    return self.result.interner.error();
+                }
+
+                return self.result.interner.intern(Type::ConstParam(*def_id));
+            }
+
+            HirTypeKind::ConstValue(expr) => self.lower_const_arg(expr),
+
+            HirTypeKind::ConstLiteral(lit) => self.const_arg_from_literal(*lit, &arg.source),
+
+            _ => {
+                let lowered = self.lower_hir_type(arg);
+                let found = self.display_type(lowered);
+
+                self.report(TypeError::ConstGenericArgMismatch {
+                    expected: const_param_type_name(expected).into(),
+                    found: found.into(),
+                    src: arg.source.src(),
+                    span: arg.source.span,
+                });
+
+                return self.result.interner.error();
+            }
+        };
+
+        if !self.const_arg_matches(expected, value) {
+            let found = self.display_type(value);
+
+            self.report(TypeError::ConstGenericArgMismatch {
+                expected: const_param_type_name(expected).into(),
+                found: found.into(),
+                src: arg.source.src(),
+                span: arg.source.span,
+            });
+
+            return self.result.interner.error();
+        }
+
+        if matches!(
+            self.result.interner.get(value),
+            Type::ConstArg(ConstArg::Int(0))
+        ) {
+            self.report(TypeError::ZeroConstArg {
+                src: arg.source.src(),
+                span: arg.source.span,
+            });
+
+            return self.result.interner.error();
+        }
+
+        value
+    }
+
+    fn const_arg_matches(&self, expected: ConstParamType, value: TypeId) -> bool {
+        match (expected, self.result.interner.get(value)) {
+            (_, Type::Error) => true,
+            (ConstParamType::UInt, Type::ConstArg(ConstArg::Int(n))) => *n >= 0,
+            (ConstParamType::Int, Type::ConstArg(ConstArg::Int(_))) => true,
+            (ConstParamType::Bool, Type::ConstArg(ConstArg::Bool(_))) => true,
+            (ConstParamType::Char, Type::ConstArg(ConstArg::Char(_))) => true,
+            _ => false,
         }
     }
 
@@ -1535,6 +1672,14 @@ impl<'res> TypeChecker<'res> {
         match &ty.kind {
             HirTypeKind::Builtin(builtin) => self.result.interner.builtin(*builtin),
 
+            HirTypeKind::ConstParam(def_id) => {
+                self.result.interner.intern(Type::ConstParam(*def_id))
+            }
+
+            HirTypeKind::ConstValue(expr) => self.lower_const_arg(expr),
+
+            HirTypeKind::ConstLiteral(lit) => self.const_arg_from_literal(*lit, &ty.source),
+
             HirTypeKind::SelfType(def_id) | HirTypeKind::SelfAlias(def_id) => {
                 match self.def_kind(*def_id) {
                     Some(DefKind::InterfaceSelfPlaceholder) => self
@@ -1595,9 +1740,15 @@ impl<'res> TypeChecker<'res> {
                 def_id,
                 generic_args,
             } => {
+                let params = self.generic_params_of(*def_id);
+
                 let args: Vec<TypeId> = generic_args
                     .iter()
-                    .map(|ty| self.lower_hir_type(ty))
+                    .enumerate()
+                    .map(|(index, ty)| match params.get(index).copied() {
+                        Some(param) => self.lower_generic_arg(param, ty),
+                        None => self.lower_hir_type(ty),
+                    })
                     .collect();
 
                 match self.def_kind(*def_id) {
@@ -1723,6 +1874,15 @@ impl<'res> TypeChecker<'res> {
                 let elem_ty = self.lower_hir_type(element);
                 let is_const = matches!(element.kind, HirTypeKind::Const(_));
 
+                if let Some(len_expr) = len
+                    && let HirExprKind::ConstParamRef(def_id) = &len_expr.kind
+                {
+                    return self.result.interner.intern(Type::Array {
+                        element: elem_ty,
+                        len: ArrayLen::Param(*def_id),
+                    });
+                }
+
                 let len_val = len.as_ref().and_then(|expr| self.eval_const_u64(expr));
 
                 if let Some(0) = len_val {
@@ -1733,10 +1893,10 @@ impl<'res> TypeChecker<'res> {
                     return self.result.interner.error();
                 }
 
-                if len_val.is_some() {
+                if let Some(len_val) = len_val {
                     self.result.interner.intern(Type::Array {
                         element: elem_ty,
-                        len: len_val,
+                        len: ArrayLen::Known(len_val),
                     })
                 } else {
                     self.result.interner.intern(Type::Slice {
@@ -1863,6 +2023,76 @@ impl<'res> TypeChecker<'res> {
                 None
             }
         }
+    }
+
+    fn const_arg_from_literal(&mut self, lit: Literal, source: &Source) -> TypeId {
+        let arg = match lit {
+            Literal::Int(n) => ConstArg::Int(n as i128),
+            Literal::Bool(b) => ConstArg::Bool(b),
+            Literal::Char(c) | Literal::ByteChar(c) => ConstArg::Char(c),
+
+            other => {
+                let found = self.const_literal_text(other);
+
+                self.report(TypeError::ConstGenericArgMismatch {
+                    expected: "comptime_uint, comptime_int, comptime_bool or comptime_char".into(),
+                    found: found.into(),
+                    src: source.src(),
+                    span: source.span,
+                });
+
+                return self.result.interner.error();
+            }
+        };
+
+        self.result.interner.intern(Type::ConstArg(arg))
+    }
+
+    fn const_literal_text(&self, lit: Literal) -> String {
+        match lit {
+            Literal::Int(n) => n.to_string(),
+            Literal::Float(f) => f.to_string(),
+            Literal::Char(c) | Literal::ByteChar(c) => format!("'{c}'"),
+            Literal::Bool(b) => b.to_string(),
+            Literal::String(s) => {
+                let text = self.interner.borrow().resolve(&s).to_owned();
+                format!("\"{text}\"")
+            }
+            Literal::Null => "null".into(),
+        }
+    }
+
+    fn lower_const_arg(&mut self, expr: &HirExpr) -> TypeId {
+        let arg = match &expr.kind {
+            HirExprKind::Literal(Literal::Int(n)) => Some(ConstArg::Int(*n as i128)),
+            HirExprKind::Literal(Literal::Char(c)) => Some(ConstArg::Char(*c)),
+            HirExprKind::Literal(Literal::Bool(b)) => Some(ConstArg::Bool(*b)),
+
+            HirExprKind::Unary {
+                op: UnaryOp::Neg,
+                expr: inner,
+            } => match &inner.kind {
+                HirExprKind::Literal(Literal::Int(n)) => Some(ConstArg::Int(-(*n as i128))),
+                _ => None,
+            },
+
+            HirExprKind::ConstParamRef(def) => {
+                return self.result.interner.intern(Type::ConstParam(*def));
+            }
+
+            _ => None,
+        };
+
+        let Some(arg) = arg else {
+            self.report(TypeError::ConstArgNotConst {
+                src: expr.source.src(),
+                span: expr.source.span,
+            });
+
+            return self.result.interner.error();
+        };
+
+        self.result.interner.intern(Type::ConstArg(arg))
     }
 
     // > Pass 2
@@ -3106,7 +3336,7 @@ impl<'res> TypeChecker<'res> {
                 HirExprKind::ArrayInit { elements },
                 Type::Array {
                     element,
-                    len: Some(len),
+                    len: ArrayLen::Known(len),
                 },
             ) => {
                 *len == elements.len() as u64
@@ -3467,6 +3697,8 @@ impl<'res> TypeChecker<'res> {
         }
 
         match &expr.kind {
+            HirExprKind::ConstParamRef(_) => {}
+
             HirExprKind::VarRef { def, .. } => {
                 if movable.contains(def) && (nested || consumed) {
                     *moved = true;
@@ -3816,6 +4048,18 @@ impl<'res> TypeChecker<'res> {
 
     fn synth_expr_inner(&mut self, expr: &HirExpr) -> TypeId {
         match &expr.kind {
+            HirExprKind::ConstParamRef(def) => {
+                let builtin = self
+                    .def_kind(*def)
+                    .and_then(|kind| match kind {
+                        DefKind::ConstParam(ct) => Some(const_param_runtime_builtin(*ct)),
+                        _ => None,
+                    })
+                    .unwrap_or(BuiltinType::usize);
+
+                self.result.interner.builtin(builtin)
+            }
+
             HirExprKind::Literal(lit) => match lit {
                 Literal::Int(_) => self.result.interner.int_literal(),
                 Literal::Float(_) => self.result.interner.float_literal(),
@@ -3852,7 +4096,7 @@ impl<'res> TypeChecker<'res> {
                     let char_ty = self.result.interner.builtin(BuiltinType::char);
                     self.result.interner.intern(Type::Array {
                         element: char_ty,
-                        len: Some(str_resolved.len() as u64 + 1), // + 1 for null-terminator
+                        len: ArrayLen::Known(str_resolved.len() as u64 + 1), // + 1 for null-terminator
                     })
                 }
                 Literal::Null => {
@@ -4168,12 +4412,21 @@ impl<'res> TypeChecker<'res> {
 
                 self.result.interner.intern(Type::Array {
                     element: first_ty,
-                    len: Some(elements.len() as u64),
+                    len: ArrayLen::Known(elements.len() as u64),
                 })
             }
 
             HirExprKind::ArrayRepeatInit { element, len } => {
-                let len_val = self.eval_const_u64(len);
+                let symbolic_len = match &len.kind {
+                    HirExprKind::ConstParamRef(def_id) => Some(*def_id),
+                    _ => None,
+                };
+
+                let len_val = if symbolic_len.is_some() {
+                    None
+                } else {
+                    self.eval_const_u64(len)
+                };
 
                 if let Some(0) = len_val {
                     self.report(TypeError::EmptyArrayError {
@@ -4183,9 +4436,9 @@ impl<'res> TypeChecker<'res> {
                     return self.result.interner.error();
                 }
 
-                let Some(len_val) = len_val else {
+                if len_val.is_none() && symbolic_len.is_none() {
                     return self.result.interner.error();
-                };
+                }
 
                 let elem_ty = self.synth_expr(element);
                 let elem_ty = self.default_literal_with_value(element, elem_ty);
@@ -4198,9 +4451,15 @@ impl<'res> TypeChecker<'res> {
                     return self.result.interner.error();
                 }
 
+                let array_len = match (len_val, symbolic_len) {
+                    (Some(len_val), _) => ArrayLen::Known(len_val),
+                    (None, Some(def_id)) => ArrayLen::Param(def_id),
+                    (None, None) => unreachable!(),
+                };
+
                 self.result.interner.intern(Type::Array {
                     element: elem_ty,
-                    len: Some(len_val),
+                    len: array_len,
                 })
             }
 
@@ -4772,7 +5031,7 @@ impl<'res> TypeChecker<'res> {
 
                 self.result.interner.intern(Type::Array {
                     element: name_ty,
-                    len: Some(variant_count),
+                    len: ArrayLen::Known(variant_count),
                 })
             }
 
@@ -5401,7 +5660,7 @@ impl<'res> TypeChecker<'res> {
             }
 
             for (g, explicit) in struct_generics.iter().zip(ty_generic_args.iter()) {
-                let ty = self.lower_hir_type(explicit);
+                let ty = self.lower_generic_arg(*g, explicit);
                 bindings.insert(*g, ty);
             }
         }
@@ -5570,9 +5829,28 @@ impl<'res> TypeChecker<'res> {
                 let element_ty = match self.result.interner.get(expected).clone() {
                     Type::Array {
                         element,
-                        len: Some(n),
+                        len: ArrayLen::Known(n),
                         ..
                     } if n == elements.len() as u64 => Some(element),
+                    Type::Array {
+                        element,
+                        len: ArrayLen::Param(def),
+                    } => {
+                        for el in elements {
+                            self.check_expr(el, element, false);
+                        }
+
+                        let expected_len = self.display_array_len(ArrayLen::Param(def));
+
+                        self.report(TypeError::ConstArrayLengthMismatch {
+                            expected: expected_len,
+                            found: elements.len().to_string().into(),
+                            src: expr.source.src(),
+                            span: expr.source.span,
+                        });
+
+                        return self.result.interner.error();
+                    }
                     _ => None,
                 };
                 if let Some(element) = element_ty {
@@ -5587,12 +5865,40 @@ impl<'res> TypeChecker<'res> {
 
             HirExprKind::ArrayRepeatInit { element, len } => {
                 if let Type::Array {
-                    element: elem_ty, ..
+                    element: elem_ty,
+                    len: expected_len,
                 } = self.result.interner.get(expected).clone()
                 {
-                    let int_ty = self.result.interner.builtin(DEFAULT_INT_LITERAL);
                     self.check_expr(element, elem_ty, false);
-                    self.check_expr(len, int_ty, false);
+
+                    match (&len.kind, expected_len) {
+                        (HirExprKind::ConstParamRef(def), ArrayLen::Param(expected_def))
+                            if *def == expected_def =>
+                        {
+                            self.synth_expr(len);
+                        }
+
+                        (HirExprKind::ConstParamRef(_), _) => {
+                            let found = self.synth_expr(len);
+                            let found = self.display_type(found);
+                            let expected_len = self.display_array_len(expected_len);
+
+                            self.report(TypeError::ConstArrayLengthMismatch {
+                                expected: expected_len,
+                                found: found.into(),
+                                src: len.source.src(),
+                                span: len.source.span,
+                            });
+
+                            return self.result.interner.error();
+                        }
+
+                        _ => {
+                            let int_ty = self.result.interner.builtin(DEFAULT_INT_LITERAL);
+                            self.check_expr(len, int_ty, false);
+                        }
+                    }
+
                     self.result.record_expr_type(expr.id, expected);
                     return expected;
                 }
@@ -6718,7 +7024,7 @@ impl<'res> TypeChecker<'res> {
         let mut bindings: HashMap<DefId, TypeId> = HashMap::default();
 
         for (g, explicit) in sig_generics.iter().zip(explicit_generic_args.iter()) {
-            let ty = self.lower_hir_type(explicit);
+            let ty = self.lower_generic_arg(*g, explicit);
             bindings.insert(*g, ty);
         }
 
@@ -6972,7 +7278,7 @@ impl<'res> TypeChecker<'res> {
         }
 
         for (g, explicit) in sig_generics.iter().zip(explicit_generic_args.iter()) {
-            let ty = self.lower_hir_type(explicit);
+            let ty = self.lower_generic_arg(*g, explicit);
             bindings.insert(*g, ty);
         }
 
@@ -7089,7 +7395,7 @@ impl<'res> TypeChecker<'res> {
         }
 
         for (generic, explicit) in sig_generics.iter().zip(explicit_generic_args.iter()) {
-            let ty = self.lower_hir_type(explicit);
+            let ty = self.lower_generic_arg(*generic, explicit);
             bindings.insert(*generic, ty);
         }
 
@@ -7178,7 +7484,7 @@ impl<'res> TypeChecker<'res> {
         let mut bindings: HashMap<DefId, TypeId> = HashMap::default();
 
         for (generic, explicit) in sig_generics.iter().zip(explicit_generic_args.iter()) {
-            let ty = self.lower_hir_type(explicit);
+            let ty = self.lower_generic_arg(*generic, explicit);
             bindings.insert(*generic, ty);
         }
 
@@ -7702,7 +8008,7 @@ impl<'res> TypeChecker<'res> {
         );
 
         for (g, explicit) in sig_generics.iter().zip(explicit_generic_args.iter()) {
-            let ty = self.lower_hir_type(explicit);
+            let ty = self.lower_generic_arg(*g, explicit);
             bindings.insert(*g, ty);
         }
 
@@ -8150,7 +8456,7 @@ impl<'res> TypeChecker<'res> {
             }
 
             for (g, explicit) in enum_generics.iter().zip(explicit_generic_args.iter()) {
-                let ty = self.lower_hir_type(explicit);
+                let ty = self.lower_generic_arg(*g, explicit);
                 bindings.insert(*g, ty);
             }
         }
@@ -8666,7 +8972,7 @@ impl<'res> TypeChecker<'res> {
             .collect();
 
         for (g, explicit) in bind_order.iter().zip(explicit_generic_args.iter()) {
-            let ty = self.lower_hir_type(explicit);
+            let ty = self.lower_generic_arg(*g, explicit);
             bindings.insert(*g, ty);
         }
 
@@ -9007,13 +9313,30 @@ impl<'res> TypeChecker<'res> {
                 }
             }
 
+            (Type::ConstParam(g), Type::ConstArg(_)) => {
+                bindings.entry(g).or_insert(expected);
+            }
+
             (Type::Pointer { inner: p, .. }, Type::Pointer { inner: e, .. })
             | (Type::ManyPointer { inner: p, .. }, Type::ManyPointer { inner: e, .. }) => {
                 self.seed_inference_bindings(p, e, bindings)
             }
 
-            (Type::Array { element: p, .. }, Type::Array { element: e, .. })
-            | (Type::Slice { element: p, .. }, Type::Slice { element: e, .. }) => {
+            (
+                Type::Array {
+                    element: p,
+                    len: p_len,
+                },
+                Type::Array {
+                    element: e,
+                    len: e_len,
+                },
+            ) => {
+                self.seed_array_len_binding(p_len, e_len, bindings);
+                self.seed_inference_bindings(p, e, bindings)
+            }
+
+            (Type::Slice { element: p, .. }, Type::Slice { element: e, .. }) => {
                 self.seed_inference_bindings(p, e, bindings)
             }
 
@@ -9034,6 +9357,36 @@ impl<'res> TypeChecker<'res> {
             }
 
             _ => {}
+        }
+    }
+
+    fn seed_array_len_binding(
+        &mut self,
+        pattern: ArrayLen,
+        expected: ArrayLen,
+        bindings: &mut HashMap<DefId, TypeId>,
+    ) {
+        let (ArrayLen::Param(def), ArrayLen::Known(value)) = (pattern, expected) else {
+            return;
+        };
+
+        let arg = self.const_int_arg(value);
+        bindings.entry(def).or_insert(arg);
+    }
+
+    fn const_int_arg(&mut self, value: u64) -> TypeId {
+        self.result
+            .interner
+            .intern(Type::ConstArg(ConstArg::Int(value as i128)))
+    }
+
+    fn display_array_len(&mut self, len: ArrayLen) -> SmolStr {
+        match len {
+            ArrayLen::Known(n) => n.to_string().into(),
+            ArrayLen::Param(def) => {
+                let param_ty = self.result.interner.intern(Type::ConstParam(def));
+                self.display_type(param_ty).into()
+            }
         }
     }
 
@@ -9164,11 +9517,13 @@ impl<'res> TypeChecker<'res> {
     fn type_contains_generic(&self, ty: TypeId) -> bool {
         match self.result.interner.get(ty) {
             Type::GenericParam(_) => true,
+            Type::ConstParam(_) => true,
             Type::Pointer { inner, .. } => self.type_contains_generic(*inner),
             Type::ManyPointer { inner, .. } => self.type_contains_generic(*inner),
-            Type::Array { element, .. } | Type::Slice { element, .. } => {
-                self.type_contains_generic(*element)
+            Type::Array { element, len } => {
+                matches!(len, ArrayLen::Param(_)) || self.type_contains_generic(*element)
             }
+            Type::Slice { element, .. } => self.type_contains_generic(*element),
             Type::Struct { generic_args, .. } => {
                 generic_args.iter().any(|a| self.type_contains_generic(*a))
             }
@@ -9321,13 +9676,44 @@ impl<'res> TypeChecker<'res> {
                 }
             }
 
+            (Type::ConstParam(g), Type::ConstArg(_)) => match bindings.get(&g).copied() {
+                Some(existing) if existing != arg_ty => {
+                    self.report(TypeError::GenericConflict {
+                        param: self.display_type(param_ty).into(),
+                        first: self.display_type(existing).into(),
+                        second: self.display_type(arg_ty).into(),
+                        src: source.src(),
+                        span: source.span,
+                    });
+                }
+
+                Some(_) => {}
+
+                None => {
+                    bindings.insert(g, arg_ty);
+                }
+            },
+
             (Type::Pointer { inner: pinner, .. }, Type::Pointer { inner: ainner, .. })
             | (Type::ManyPointer { inner: pinner, .. }, Type::ManyPointer { inner: ainner, .. }) => {
                 self.unify_for_inference(pinner, ainner, bindings, source);
             }
 
-            (Type::Array { element: pelem, .. }, Type::Array { element: aelem, .. })
-            | (Type::Slice { element: pelem, .. }, Type::Slice { element: aelem, .. })
+            (
+                Type::Array {
+                    element: pelem,
+                    len: plen,
+                },
+                Type::Array {
+                    element: aelem,
+                    len: alen,
+                },
+            ) => {
+                self.unify_array_len(plen, alen, bindings, source.clone());
+                self.unify_for_inference(pelem, aelem, bindings, source);
+            }
+
+            (Type::Slice { element: pelem, .. }, Type::Slice { element: aelem, .. })
             | (Type::Array { element: pelem, .. }, Type::Slice { element: aelem, .. })
             | (Type::Slice { element: pelem, .. }, Type::Array { element: aelem, .. }) => {
                 self.unify_for_inference(pelem, aelem, bindings, source);
@@ -9410,6 +9796,41 @@ impl<'res> TypeChecker<'res> {
             }
 
             _ => {}
+        }
+    }
+
+    fn unify_array_len(
+        &mut self,
+        param_len: ArrayLen,
+        arg_len: ArrayLen,
+        bindings: &mut HashMap<DefId, TypeId>,
+        source: Source,
+    ) {
+        let (ArrayLen::Param(def), ArrayLen::Known(value)) = (param_len, arg_len) else {
+            return;
+        };
+
+        let arg_ty = self.const_int_arg(value);
+
+        match bindings.get(&def).copied() {
+            Some(existing) if existing != arg_ty => {
+                let param_ty = self.result.interner.intern(Type::ConstParam(def));
+                let param = self.display_type(param_ty);
+
+                self.report(TypeError::GenericConflict {
+                    param: param.into(),
+                    first: self.display_type(existing).into(),
+                    second: self.display_type(arg_ty).into(),
+                    src: source.src(),
+                    span: source.span,
+                });
+            }
+
+            Some(_) => {}
+
+            None => {
+                bindings.insert(def, arg_ty);
+            }
         }
     }
 
@@ -9589,8 +10010,9 @@ impl<'res> TypeChecker<'res> {
 
             let generics = self.type_member_generics(owner);
             let mut bindings: HashMap<DefId, TypeId> = HashMap::default();
+            let mut len_bindings: HashMap<DefId, u64> = HashMap::default();
 
-            if !self.match_builtin_shape(shape, ty, &generics, &mut bindings) {
+            if !self.match_builtin_shape(shape, ty, &generics, &mut bindings, &mut len_bindings) {
                 return false;
             }
 
@@ -10185,17 +10607,21 @@ impl<'res> TypeChecker<'res> {
         let mut found: Option<(TypeId, HashMap<DefId, TypeId>)> = None;
 
         for owner in owners {
-            let Some(entries) = self.result.impl_registry.get(&(owner, interface)) else {
-                continue;
+            let entries = match self.result.impl_registry.get(&(owner, interface)) {
+                Some(entries) => entries.clone(),
+                None => continue,
             };
 
             let shape = self.result.builtin_shapes[&owner].clone();
             let generics = self.type_member_generics(owner);
             let mut matched: HashMap<DefId, TypeId> = HashMap::default();
+            let mut len_matched: HashMap<DefId, u64> = HashMap::default();
 
-            if !self.match_builtin_shape(&shape, base, &generics, &mut matched) {
+            if !self.match_builtin_shape(&shape, base, &generics, &mut matched, &mut len_matched) {
                 continue;
             }
+
+            self.merge_len_bindings(&mut matched, len_matched);
 
             let bound = entries
                 .iter()
@@ -10861,7 +11287,7 @@ impl<'res> TypeChecker<'res> {
                 .collect();
 
             for (g, explicit) in bind_order.iter().zip(explicit_generic_args.iter()) {
-                let ty = self.lower_hir_type(explicit);
+                let ty = self.lower_generic_arg(*g, explicit);
                 bindings.insert(*g, ty);
             }
 
@@ -11073,8 +11499,26 @@ impl<'res> TypeChecker<'res> {
         ty: TypeId,
         generics: &[DefId],
         bindings: &mut HashMap<DefId, TypeId>,
+        len_bindings: &mut HashMap<DefId, u64>,
     ) -> bool {
-        zeen_types::match_builtin_shape(&self.result.interner, shape, ty, generics, bindings)
+        zeen_types::match_builtin_shape(
+            &self.result.interner,
+            shape,
+            ty,
+            generics,
+            bindings,
+            len_bindings,
+        )
+    }
+
+    fn merge_len_bindings(
+        &mut self,
+        bindings: &mut HashMap<DefId, TypeId>,
+        len_bindings: HashMap<DefId, u64>,
+    ) {
+        for (def, len) in len_bindings {
+            bindings.insert(def, self.const_int_arg(len));
+        }
     }
 
     fn report_unknown_shape_field(
@@ -11144,10 +11588,14 @@ impl<'res> TypeChecker<'res> {
             let generics = self.type_member_generics(owner);
 
             let mut matched: HashMap<DefId, TypeId> = HashMap::default();
+            let mut len_matched: HashMap<DefId, u64> = HashMap::default();
 
-            if !self.match_builtin_shape(&shape, recv_ty, &generics, &mut matched) {
+            if !self.match_builtin_shape(&shape, recv_ty, &generics, &mut matched, &mut len_matched)
+            {
                 continue;
             }
+
+            self.merge_len_bindings(&mut matched, len_matched);
 
             let args: Vec<TypeId> = generics
                 .iter()
@@ -11189,6 +11637,10 @@ impl<'res> TypeChecker<'res> {
     ) -> u8 {
         if !shape.has_params() {
             return 0;
+        }
+
+        if shape.has_len_param() {
+            return 3;
         }
 
         let Some(entry) = self.method_impl_entry(owner, method) else {
@@ -11335,7 +11787,7 @@ impl<'res> TypeChecker<'res> {
                 self.impl_method_bindings(struct_def, struct_args, entry.as_ref(), iface_def);
 
             for (generic, explicit) in sig_generics.iter().zip(explicit_generic_args.iter()) {
-                let ty = self.lower_hir_type(explicit);
+                let ty = self.lower_generic_arg(*generic, explicit);
                 bindings.insert(*generic, ty);
             }
 
@@ -12542,7 +12994,7 @@ impl<'res> TypeChecker<'res> {
         let array_element = match &other {
             Type::Array {
                 element,
-                len: Some(_),
+                len: ArrayLen::Known(_),
             } => Some(*element),
             _ => None,
         };
@@ -12570,10 +13022,16 @@ impl<'res> TypeChecker<'res> {
 
     fn array_like_type(&self, ty: TypeId) -> Option<TypeId> {
         match self.result.interner.get(ty) {
-            Type::Array { len: Some(_), .. } => Some(ty),
+            Type::Array {
+                len: ArrayLen::Known(_),
+                ..
+            } => Some(ty),
             Type::Pointer { inner, .. } | Type::ManyPointer { inner, .. } => {
                 match self.result.interner.get(*inner) {
-                    Type::Array { len: Some(_), .. } => Some(*inner),
+                    Type::Array {
+                        len: ArrayLen::Known(_),
+                        ..
+                    } => Some(*inner),
                     _ => None,
                 }
             }
@@ -20011,5 +20469,133 @@ mod tests {
             "#
         ))
         .expect("a generic local must not bind the generic params of another body");
+    }
+
+    #[test]
+    fn const_length_is_inferred_from_array_argument() {
+        typecheck(
+            r#"
+            fn sum_of[N: comptime_uint](values: [N]i32) i32 {
+                return values[0];
+            }
+
+            fn main() i32 {
+                let values: [8]i32 = {1, 2, 3, 4, 5, 6, 7, 8};
+                return sum_of(values);
+            }
+            "#,
+        )
+        .expect("a const length must be inferred from a concrete array argument");
+    }
+
+    #[test]
+    fn array_repeat_init_accepts_symbolic_length() {
+        typecheck(
+            r#"
+            fn zeros[N: comptime_uint]() [N]i32 {
+                return {0; N};
+            }
+
+            fn main() i32 {
+                let values: [8]i32 = zeros();
+                return values[0];
+            }
+            "#,
+        )
+        .expect("a repeat init must accept a const generic length");
+    }
+
+    #[test]
+    fn array_literal_against_symbolic_length_is_reported() {
+        let errors = typecheck(
+            r#"
+            fn literal[N: comptime_uint]() [N]i32 {
+                return {1, 2, 3};
+            }
+
+            fn main() i32 {
+                return 0;
+            }
+            "#,
+        )
+        .expect_err("an element-wise literal cannot fill a symbolic length");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::ConstArrayLengthMismatch { .. })),
+            "expected ConstArrayLengthMismatch, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn zero_const_argument_is_reported() {
+        let errors = typecheck(
+            r#"
+            struct Buffer[N: comptime_uint] {
+                data: [N]u8,
+            }
+
+            fn main() i32 {
+                let buffer: Buffer[0];
+                return 0;
+            }
+            "#,
+        )
+        .expect_err("a zero const argument would produce an empty array");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::ZeroConstArg { .. })),
+            "expected ZeroConstArg, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn zero_const_argument_does_not_cascade_into_array_length_errors() {
+        let errors = typecheck(
+            r#"
+            struct Buffer[N: comptime_uint] {
+                data: [N]u8,
+            }
+
+            fn main() i32 {
+                let buffer = Buffer#[0] { .data = {1} };
+                return 0;
+            }
+            "#,
+        )
+        .expect_err("a zero const argument would produce an empty array");
+
+        assert_eq!(errors.len(), 1, "expected a single error, got: {errors:?}");
+        assert!(
+            matches!(errors[0], TypeError::ZeroConstArg { .. }),
+            "expected ZeroConstArg, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn symbolic_array_does_not_coerce_to_slice() {
+        let errors = typecheck(
+            r#"
+            fn first[N: comptime_uint](values: [N]i32) []i32 {
+                return values;
+            }
+
+            fn main() i32 {
+                let values: [4]i32 = {1, 2, 3, 4};
+                return first(values)[0];
+            }
+            "#,
+        )
+        .expect_err("a symbolic array length cannot coerce to a slice");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::Mismatch { .. })),
+            "expected Mismatch, got: {errors:?}"
+        );
     }
 }

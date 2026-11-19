@@ -42,6 +42,10 @@ pub enum HirTypeKind {
         len: Option<Rc<HirExpr>>,
     },
 
+    ConstValue(Rc<HirExpr>),
+    ConstLiteral(zeen_ast::expressions::Literal),
+    ConstParam(DefId),
+
     Fn {
         params: Vec<Rc<HirTypeExpr>>,
         generics: Vec<HirGenericParam>,

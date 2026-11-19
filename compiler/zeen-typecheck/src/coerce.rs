@@ -142,12 +142,13 @@ pub fn try_coerce(interner: &mut TypeInterner, from: TypeId, to: TypeId) -> Coer
 
         (
             Type::Array {
-                element: from_elem, ..
+                element: from_elem,
+                len,
             },
             Type::Slice {
                 element: to_elem, ..
             },
-        ) if from_elem == to_elem => CoerceResult::ArrayToSlice,
+        ) if from_elem == to_elem && len.known().is_some() => CoerceResult::ArrayToSlice,
 
         (
             Type::ManyPointer {
@@ -183,12 +184,12 @@ pub fn try_coerce(interner: &mut TypeInterner, from: TypeId, to: TypeId) -> Coer
         ) if fe == te => CoerceResult::RemoveConst,
 
         (
-            Type::Array { element: fe, .. },
+            Type::Array { element: fe, len },
             Type::Slice {
                 element: te,
                 is_const: _,
             },
-        ) if fe == te => CoerceResult::ArrayToSlice,
+        ) if fe == te && len.known().is_some() => CoerceResult::ArrayToSlice,
 
         (Type::Array { element: fe, .. }, Type::ManyPointer { inner: te, .. }) if fe == te => {
             CoerceResult::ArrayToManyPointer
@@ -379,6 +380,7 @@ pub fn verify_cast(interner: &mut TypeInterner, from: TypeId, to: TypeId) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeen_types::ArrayLen;
 
     fn coerce(it: &mut TypeInterner, from: Type, to: Type) -> CoerceResult {
         let from = it.intern(from);
@@ -585,7 +587,7 @@ mod tests {
 
         let arr = it.intern(Type::Array {
             element: elem,
-            len: Some(8),
+            len: ArrayLen::Known(8),
         });
         let slice = it.intern(Type::Slice {
             element: elem,
@@ -602,7 +604,7 @@ mod tests {
 
         let arr = it.intern(Type::Array {
             element: elem,
-            len: Some(4),
+            len: ArrayLen::Known(4),
         });
         let many = it.intern(Type::ManyPointer {
             inner: elem,
@@ -663,7 +665,7 @@ mod tests {
         let elem_b = it.intern(builtin(BuiltinType::i64));
         let arr = it.intern(Type::Array {
             element: elem_a,
-            len: Some(2),
+            len: ArrayLen::Known(2),
         });
         let slice = it.intern(Type::Slice {
             element: elem_b,
