@@ -11598,6 +11598,10 @@ impl<'res> TypeChecker<'res> {
             return 0;
         }
 
+        if shape.has_len_param() {
+            return 3;
+        }
+
         let Some(entry) = self.method_impl_entry(owner, method) else {
             return 2;
         };

@@ -178,6 +178,15 @@ impl BuiltinShape {
         }
     }
 
+    pub fn has_len_param(&self) -> bool {
+        match self {
+            Self::Array { element, len } => {
+                matches!(len, ShapeLen::Param(_)) || element.has_len_param()
+            }
+            _ => false,
+        }
+    }
+
     pub fn used_params(&self, out: &mut Vec<u32>) {
         match self {
             Self::Scalar(_) => {}
