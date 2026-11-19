@@ -1762,10 +1762,16 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             _ => None,
         };
 
+        let numeric = matches!(
+            self.typecheck.interner.get(operand_ty),
+            Type::Builtin(b) if builtin_is_integer(*b) || builtin_is_float(*b)
+        );
         let const_expected =
             |other_ty: Option<TypeId>| match other_ty.map(|t| self.typecheck.interner.get(t)) {
                 Some(Type::Pointer { .. } | Type::ManyPointer { .. } | Type::Fn { .. }) => None,
-                _ => other_ty,
+                Some(_) => other_ty,
+                None if numeric => Some(operand_ty),
+                None => None,
             };
 
         let lhs_v = match lhs {

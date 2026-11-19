@@ -1,0 +1,14 @@
+fn main() {
+  const n: usize = 4;
+  const last: usize = n - 1;
+  const wide: u64 = 1 + 2;
+  const scaled: u64 = wide * 1099511627776;
+
+  @println("{} {} {}", last, wide, scaled);
+
+  let values: [4]i32 = {1, 2, 3, 4};
+  values.swap(0, 3);
+  @println("{:?}", values);
+  values.reverse();
+  @println("{:?}", values);
+}
