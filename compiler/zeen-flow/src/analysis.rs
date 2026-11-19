@@ -1407,7 +1407,9 @@ impl<'ctx> DataFlow<'ctx> {
                         let pointee_param = snapshot.params.contains(&root)
                             && matches!(
                                 self.typecheck.interner.get(info.ty),
-                                Type::Pointer { .. } | Type::ManyPointer { .. }
+                                Type::Pointer { .. }
+                                    | Type::ManyPointer { .. }
+                                    | Type::Slice { .. }
                             );
                         if pointee_param {
                             continue;
