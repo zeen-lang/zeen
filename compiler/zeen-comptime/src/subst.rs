@@ -1,5 +1,5 @@
 use lasso::Spur;
-use std::path::PathBuf;
+use zeen_driver::ModuleId;
 
 use zeen_ast::{
     Declaration, DeclarationKind, Expression, ExpressionKind, Statement, StatementKind, TypeExpr,
@@ -16,7 +16,7 @@ impl<'arena> Interp<'arena> {
     pub(crate) fn substitute_program(
         &mut self,
         program: &'arena [&'arena Declaration<'arena>],
-        module_of: &dyn Fn(&Declaration<'_>) -> PathBuf,
+        module_of: &dyn Fn(&Declaration<'_>) -> ModuleId,
     ) -> Result<Vec<&'arena Declaration<'arena>>, Vec<Error>> {
         let mut out = Vec::with_capacity(program.len());
 
@@ -40,7 +40,7 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn substitute_decl(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         decl: &'arena Declaration<'arena>,
     ) -> Result<Option<&'arena Declaration<'arena>>, Vec<Error>> {
         match &decl.kind {
@@ -473,7 +473,7 @@ impl<'arena> Interp<'arena> {
     #[allow(clippy::too_many_arguments)]
     fn substitute_function(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         decl: &'arena Declaration<'arena>,
         name: (Spur, miette::SourceSpan),
         generics: Option<&'arena [GenericType<'arena>]>,
@@ -585,7 +585,7 @@ impl<'arena> Interp<'arena> {
 
     fn substitute_where_clauses(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         clauses: Option<&'arena [WhereClause<'arena>]>,
     ) -> Result<(Option<&'arena [WhereClause<'arena>]>, bool), Vec<Error>> {
         let Some(clauses) = clauses else {
@@ -641,7 +641,7 @@ impl<'arena> Interp<'arena> {
 
     fn substitute_type(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         ty: &'arena TypeExpr<'arena>,
     ) -> Result<Option<&'arena TypeExpr<'arena>>, Vec<Error>> {
         match &ty.kind {
@@ -882,7 +882,7 @@ impl<'arena> Interp<'arena> {
 
     fn substitute_type_args(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         args: &'arena [&'arena TypeExpr<'arena>],
     ) -> Result<Option<Vec<&'arena TypeExpr<'arena>>>, Vec<Error>> {
         let mut new_args: Vec<&'arena TypeExpr<'arena>> = Vec::with_capacity(args.len());
@@ -904,7 +904,7 @@ impl<'arena> Interp<'arena> {
 
     fn substitute_expr(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         expr: &'arena Expression<'arena>,
     ) -> Result<Option<&'arena Expression<'arena>>, Vec<Error>> {
         self.substitute_expr_inner(module, expr)
@@ -912,7 +912,7 @@ impl<'arena> Interp<'arena> {
 
     fn is_comptime_value_expr(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         expr: &'arena Expression<'arena>,
     ) -> bool {
         match &expr.kind {
@@ -967,7 +967,7 @@ impl<'arena> Interp<'arena> {
 
     fn is_comptime_method_receiver(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         expr: &'arena Expression<'arena>,
     ) -> bool {
         if !self.is_comptime_value_expr(module, expr) {
@@ -1007,7 +1007,7 @@ impl<'arena> Interp<'arena> {
 
     fn comptime_fn_returns_struct(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         name: Spur,
         span: miette::SourceSpan,
     ) -> bool {
@@ -1041,7 +1041,7 @@ impl<'arena> Interp<'arena> {
 
     fn is_void_comptime_call(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         expr: &'arena Expression<'arena>,
     ) -> bool {
         let ExpressionKind::Call { callee, .. } = &expr.kind else {
@@ -1081,7 +1081,7 @@ impl<'arena> Interp<'arena> {
 
     fn substitute_expr_inner(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         expr: &'arena Expression<'arena>,
     ) -> Result<Option<&'arena Expression<'arena>>, Vec<Error>> {
         if self.is_comptime_value_expr(module, expr) {
@@ -1707,7 +1707,7 @@ impl<'arena> Interp<'arena> {
 
     fn substitute_arm(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         arm: &'arena Arm<'arena>,
     ) -> Result<Option<Arm<'arena>>, Vec<Error>> {
         let new_pattern = self.substitute_pattern(module, &arm.pattern)?;
@@ -1732,7 +1732,7 @@ impl<'arena> Interp<'arena> {
 
     fn substitute_pattern(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         pattern: &Pattern<'arena>,
     ) -> Result<Option<Pattern<'arena>>, Vec<Error>> {
         match pattern {
@@ -1778,7 +1778,7 @@ impl<'arena> Interp<'arena> {
 
     fn substitute_statement(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         stmt: &'arena Statement<'arena>,
     ) -> Result<Option<&'arena Statement<'arena>>, Vec<Error>> {
         match &stmt.kind {
@@ -1990,7 +1990,7 @@ impl<'arena> Interp<'arena> {
 
     fn substitute_expr_list(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         elements: &'arena [&'arena Expression<'arena>],
         build: impl FnOnce(&'arena bumpalo::Bump, Vec<&'arena Expression<'arena>>) -> Expression<'arena>,
     ) -> Result<Option<&'arena Expression<'arena>>, Vec<Error>> {
@@ -2018,11 +2018,11 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn eval_fresh_expr(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         expr: &'arena Expression<'arena>,
     ) -> crate::interp::EvalResult<'arena> {
         self.frames.push(crate::interp::CallFrame {
-            module: module.clone(),
+            module: *module,
             src: self.scope_src(module),
             scopes: vec![rustc_hash::FxHashMap::default()],
             context: crate::interp::FrameContext::None,
@@ -2048,7 +2048,7 @@ impl<'arena> Interp<'arena> {
 
     fn substitute_string_literal(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         spur: Spur,
         span: miette::SourceSpan,
     ) -> Result<Option<&'arena Expression<'arena>>, Vec<Error>> {
@@ -2074,7 +2074,7 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn value_to_expr(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         value: Value<'arena>,
         span: miette::SourceSpan,
     ) -> Result<Option<&'arena Expression<'arena>>, Vec<Error>> {
@@ -2097,7 +2097,7 @@ impl<'arena> Interp<'arena> {
 
     fn insert_captured_expr(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         captured: &'arena Expression<'arena>,
         span: miette::SourceSpan,
     ) -> Result<&'arena Expression<'arena>, Vec<Error>> {

@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use zeen_driver::ModuleId;
 
 use bumpalo::Bump;
 use lasso::{Rodeo, Spur};
@@ -55,7 +55,7 @@ enum ValueKey {
     Char(char),
     Str(Rc<str>),
     Array(Vec<ValueKey>),
-    Struct(usize, PathBuf, Vec<(Rc<str>, ValueKey)>),
+    Struct(usize, ModuleId, Vec<(Rc<str>, ValueKey)>),
     Type(usize),
     Expr(usize),
     Decl(usize),
@@ -72,7 +72,7 @@ fn value_key(value: &Value<'_>) -> ValueKey {
         Value::Array(items) => ValueKey::Array(items.iter().map(value_key).collect()),
         Value::Struct(value) => ValueKey::Struct(
             value.decl as *const Declaration<'_> as usize,
-            value.module.clone(),
+            value.module,
             value
                 .fields
                 .iter()
@@ -89,15 +89,15 @@ fn value_key(value: &Value<'_>) -> ValueKey {
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct FnCacheKey {
     decl: usize,
-    module: PathBuf,
+    module: ModuleId,
     args: Vec<ValueKey>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct ShapeCacheKey {
-    module: PathBuf,
+    module: ModuleId,
     ty: TypeKey,
-    bindings: Vec<Vec<(Spur, PathBuf, TypeKey)>>,
+    bindings: Vec<Vec<(Spur, ModuleId, TypeKey)>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -158,13 +158,17 @@ fn type_key(ty: &TypeExpr<'_>) -> TypeKey {
     }
 }
 
-fn shape_cache_key(module: &Path, ty: &TypeExpr<'_>, bindings: &[ShapeFrame<'_>]) -> ShapeCacheKey {
+fn shape_cache_key(
+    module: ModuleId,
+    ty: &TypeExpr<'_>,
+    bindings: &[ShapeFrame<'_>],
+) -> ShapeCacheKey {
     let bindings = bindings
         .iter()
         .map(|frame| {
-            let mut entries: Vec<(Spur, PathBuf, TypeKey)> = frame
+            let mut entries: Vec<(Spur, ModuleId, TypeKey)> = frame
                 .iter()
-                .map(|(name, (module, ty))| (*name, module.clone(), type_key(ty)))
+                .map(|(name, (module, ty))| (*name, *module, type_key(ty)))
                 .collect();
             entries.sort_by_key(|entry| entry.0);
             entries
@@ -172,7 +176,7 @@ fn shape_cache_key(module: &Path, ty: &TypeExpr<'_>, bindings: &[ShapeFrame<'_>]
         .collect();
 
     ShapeCacheKey {
-        module: module.to_path_buf(),
+        module,
         ty: type_key(ty),
         bindings,
     }
@@ -181,7 +185,7 @@ fn shape_cache_key(module: &Path, ty: &TypeExpr<'_>, bindings: &[ShapeFrame<'_>]
 pub type EvalResult<'arena> = Result<Value<'arena>, Unwind<'arena>>;
 pub type StmtResult<'arena> = Result<Option<Value<'arena>>, Unwind<'arena>>;
 
-type ShapeFrame<'arena> = FxHashMap<Spur, (PathBuf, &'arena TypeExpr<'arena>)>;
+type ShapeFrame<'arena> = FxHashMap<Spur, (ModuleId, &'arena TypeExpr<'arena>)>;
 type ShapeBindings<'arena> = Vec<ShapeFrame<'arena>>;
 
 #[derive(Debug)]
@@ -224,7 +228,7 @@ pub(crate) enum FrameContext {
 }
 
 pub struct CallFrame<'arena> {
-    pub(crate) module: PathBuf,
+    pub(crate) module: ModuleId,
     pub(crate) src: NamedSource<Arc<String>>,
     pub(crate) scopes: EvalFrame<'arena>,
     pub(crate) context: FrameContext,
@@ -244,8 +248,8 @@ pub struct Interp<'arena> {
     pub(crate) arena: &'arena Bump,
     pub(crate) interner: Rc<RefCell<Rodeo>>,
 
-    pub(crate) scopes: FxHashMap<PathBuf, ModuleScope<'arena>>,
-    pub(crate) visibility: HashMap<PathBuf, Vec<PathBuf>>,
+    pub(crate) scopes: FxHashMap<ModuleId, ModuleScope<'arena>>,
+    pub(crate) visibility: HashMap<ModuleId, Vec<ModuleId>>,
 
     pub(crate) frames: Vec<CallFrame<'arena>>,
 
@@ -260,7 +264,7 @@ pub struct Interp<'arena> {
     pub(crate) capture_depth: usize,
     pub(crate) layout_depth: usize,
 
-    pub(crate) emitted: Vec<(PathBuf, &'arena Declaration<'arena>)>,
+    pub(crate) emitted: Vec<(ModuleId, &'arena Declaration<'arena>)>,
     pub(crate) declared_names: FxHashMap<DeclNameKey, DeclSite>,
     pub(crate) fresh_counter: usize,
 
@@ -281,7 +285,7 @@ impl<'arena> Interp<'arena> {
     pub fn new(
         arena: &'arena Bump,
         interner: Rc<RefCell<Rodeo>>,
-        visibility: HashMap<PathBuf, Vec<PathBuf>>,
+        visibility: HashMap<ModuleId, Vec<ModuleId>>,
         target: &Target,
     ) -> Self {
         Self {
@@ -315,7 +319,7 @@ impl<'arena> Interp<'arena> {
     pub fn evaluate(
         &mut self,
         program: &'arena [&'arena Declaration<'arena>],
-        module_of: impl Fn(&Declaration<'_>) -> PathBuf,
+        module_of: impl Fn(&Declaration<'_>) -> ModuleId,
     ) -> Result<&'arena [&'arena Declaration<'arena>], Vec<Error>> {
         for decl in program {
             if let Some((key, _, site)) = self.declared_key(decl) {
@@ -326,19 +330,16 @@ impl<'arena> Interp<'arena> {
         for decl in program {
             let path = module_of(decl);
 
-            let scope = self
-                .scopes
-                .entry(path.clone())
-                .or_insert_with(|| ModuleScope {
-                    src: decl.source.src(),
-                    consts: HashMap::default(),
-                    pub_consts: FxHashSet::default(),
-                    fns: HashMap::default(),
-                    structs: HashMap::default(),
-                    enums: HashMap::default(),
-                    aliases: HashMap::default(),
-                    comptime_structs: HashMap::default(),
-                });
+            let scope = self.scopes.entry(path).or_insert_with(|| ModuleScope {
+                src: decl.source.src(),
+                consts: HashMap::default(),
+                pub_consts: FxHashSet::default(),
+                fns: HashMap::default(),
+                structs: HashMap::default(),
+                enums: HashMap::default(),
+                aliases: HashMap::default(),
+                comptime_structs: HashMap::default(),
+            });
 
             match &decl.kind {
                 DeclarationKind::ComptimeConst {
@@ -371,7 +372,7 @@ impl<'arena> Interp<'arena> {
                 }
                 DeclarationKind::ComptimeBlock(block) => {
                     self.frames.push(CallFrame {
-                        module: path.clone(),
+                        module: path,
                         src: decl.source.src(),
                         scopes: vec![FxHashMap::default()],
                         context: FrameContext::Block {
@@ -410,7 +411,7 @@ impl<'arena> Interp<'arena> {
 
         let mut index = 0;
         while index < self.emitted.len() {
-            let module = self.emitted[index].0.clone();
+            let module = self.emitted[index].0;
             let decl = self.emitted[index].1;
             index += 1;
 
@@ -495,7 +496,7 @@ impl<'arena> Interp<'arena> {
         }
     }
 
-    pub(crate) fn scope_src(&self, module: &PathBuf) -> NamedSource<Arc<String>> {
+    pub(crate) fn scope_src(&self, module: &ModuleId) -> NamedSource<Arc<String>> {
         self.scopes
             .get(module)
             .map(|scope| scope.src.clone())
@@ -516,7 +517,7 @@ impl<'arena> Interp<'arena> {
         }
     }
 
-    pub(crate) fn is_comptime_const(&mut self, module: &PathBuf, name: Spur) -> bool {
+    pub(crate) fn is_comptime_const(&mut self, module: &ModuleId, name: Spur) -> bool {
         self.top_shadow();
 
         if self.name_shadowed(name) {
@@ -538,7 +539,7 @@ impl<'arena> Interp<'arena> {
         })
     }
 
-    pub(crate) fn is_comptime_fn(&mut self, module: &PathBuf, name: Spur) -> bool {
+    pub(crate) fn is_comptime_fn(&mut self, module: &ModuleId, name: Spur) -> bool {
         self.top_shadow();
 
         if self.name_shadowed(name) {
@@ -560,7 +561,7 @@ impl<'arena> Interp<'arena> {
         })
     }
 
-    fn visible_modules(&self, module: &PathBuf) -> &[PathBuf] {
+    fn visible_modules(&self, module: &ModuleId) -> &[ModuleId] {
         self.visibility
             .get(module)
             .map(|targets| targets.as_slice())
@@ -604,10 +605,10 @@ impl<'arena> Interp<'arena> {
         &mut self,
         name: Spur,
         span: miette::SourceSpan,
-        public: Vec<PathBuf>,
-        private: Vec<PathBuf>,
+        public: Vec<ModuleId>,
+        private: Vec<ModuleId>,
         kind: &str,
-    ) -> Result<Option<PathBuf>, Unwind<'arena>> {
+    ) -> Result<Option<ModuleId>, Unwind<'arena>> {
         match public.len() {
             0 => {
                 if !private.is_empty() {
@@ -642,16 +643,16 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn resolve_comptime_const(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         name: Spur,
         span: miette::SourceSpan,
-    ) -> Result<Option<PathBuf>, Unwind<'arena>> {
+    ) -> Result<Option<ModuleId>, Unwind<'arena>> {
         if self
             .scopes
             .get(module)
             .is_some_and(|scope| scope.consts.contains_key(&name))
         {
-            return Ok(Some(module.clone()));
+            return Ok(Some(*module));
         }
 
         let mut public = Vec::new();
@@ -678,16 +679,16 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn resolve_comptime_fn(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         name: Spur,
         span: miette::SourceSpan,
-    ) -> Result<Option<PathBuf>, Unwind<'arena>> {
+    ) -> Result<Option<ModuleId>, Unwind<'arena>> {
         if self
             .scopes
             .get(module)
             .is_some_and(|scope| scope.fns.contains_key(&name))
         {
-            return Ok(Some(module.clone()));
+            return Ok(Some(*module));
         }
 
         let mut public = Vec::new();
@@ -714,14 +715,14 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn resolve_comptime_type(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         name: Spur,
         span: miette::SourceSpan,
-    ) -> Result<Option<PathBuf>, Unwind<'arena>> {
+    ) -> Result<Option<ModuleId>, Unwind<'arena>> {
         if self.scopes.get(module).is_some_and(|scope| {
             scope.structs.contains_key(&name) || scope.enums.contains_key(&name)
         }) {
-            return Ok(Some(module.clone()));
+            return Ok(Some(*module));
         }
 
         let mut public = Vec::new();
@@ -748,16 +749,16 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn resolve_comptime_struct(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         name: Spur,
         span: miette::SourceSpan,
-    ) -> Result<Option<PathBuf>, Unwind<'arena>> {
+    ) -> Result<Option<ModuleId>, Unwind<'arena>> {
         if self
             .scopes
             .get(module)
             .is_some_and(|scope| scope.comptime_structs.contains_key(&name))
         {
-            return Ok(Some(module.clone()));
+            return Ok(Some(*module));
         }
 
         let mut public = Vec::new();
@@ -784,7 +785,7 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn comptime_struct_decl(
         &self,
-        owner: &PathBuf,
+        owner: &ModuleId,
         name: Spur,
     ) -> Option<&'arena Declaration<'arena>> {
         self.scopes
@@ -795,7 +796,7 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn comptime_const_value(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         name: Spur,
     ) -> Option<Value<'arena>> {
         match self.eval_const(module, name) {
@@ -807,7 +808,7 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn eval_comptime_call(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         name: Spur,
         span: miette::SourceSpan,
         args: &[Value<'arena>],
@@ -838,7 +839,7 @@ impl<'arena> Interp<'arena> {
             }
         };
 
-        self.run_fn(fn_decl, fn_src, module.clone(), name, span, args)
+        self.run_fn(fn_decl, fn_src, *module, name, span, args)
             .map(|outcome| outcome.value)
     }
 
@@ -846,14 +847,14 @@ impl<'arena> Interp<'arena> {
         &mut self,
         fn_decl: &'arena Declaration<'arena>,
         fn_src: NamedSource<Arc<String>>,
-        module: PathBuf,
+        module: ModuleId,
         name: Spur,
         span: miette::SourceSpan,
         args: &[Value<'arena>],
     ) -> Result<CallOutcome<'arena>, Unwind<'arena>> {
         let key = FnCacheKey {
             decl: fn_decl as *const Declaration<'_> as usize,
-            module: module.clone(),
+            module,
             args: args.iter().map(value_key).collect(),
         };
 
@@ -875,7 +876,7 @@ impl<'arena> Interp<'arena> {
         &mut self,
         fn_decl: &'arena Declaration<'arena>,
         fn_src: NamedSource<Arc<String>>,
-        module: PathBuf,
+        module: ModuleId,
         name: Spur,
         span: miette::SourceSpan,
         args: &[Value<'arena>],
@@ -1050,7 +1051,7 @@ impl<'arena> Interp<'arena> {
         }
     }
 
-    pub fn eval_const(&mut self, module: &PathBuf, name: Spur) -> EvalResult<'arena> {
+    pub fn eval_const(&mut self, module: &ModuleId, name: Spur) -> EvalResult<'arena> {
         let scope_src = self.scopes.get(module).map(|scope| scope.src.clone());
 
         if scope_src.is_none() {
@@ -1116,7 +1117,7 @@ impl<'arena> Interp<'arena> {
             scope_src.unwrap_or_else(|| NamedSource::new("comptime", Arc::new(String::new())));
 
         self.frames.push(CallFrame {
-            module: module.clone(),
+            module: *module,
             src: frame_src,
             scopes: vec![FxHashMap::default()],
             context: FrameContext::None,
@@ -1707,10 +1708,10 @@ impl<'arena> Interp<'arena> {
         Err(Unwind::Break)
     }
 
-    pub(crate) fn current_module(&self) -> PathBuf {
+    pub(crate) fn current_module(&self) -> ModuleId {
         self.frames
             .last()
-            .map(|frame| frame.module.clone())
+            .map(|frame| frame.module)
             .unwrap_or_default()
     }
 
@@ -1850,14 +1851,7 @@ impl<'arena> Interp<'arena> {
             values.push(self.eval_expr(arg)?);
         }
 
-        let outcome = self.run_fn(
-            method,
-            fn_src,
-            value.module.clone(),
-            method_name,
-            span,
-            &values,
-        )?;
+        let outcome = self.run_fn(method, fn_src, value.module, method_name, span, &values)?;
 
         if mutates && let Some(receiver) = outcome.receiver {
             self.assign_place(object, receiver, span)?;
@@ -2301,7 +2295,7 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn interpolate_string(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         text: &str,
         span: miette::SourceSpan,
     ) -> std::result::Result<String, Unwind<'arena>> {
@@ -2384,7 +2378,7 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn eval_interpolation_fragment(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         fragment: &str,
         span: miette::SourceSpan,
     ) -> EvalResult<'arena> {
@@ -2421,7 +2415,7 @@ impl<'arena> Interp<'arena> {
 
     fn eval_snippet(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         expr: &'arena Expression<'arena>,
     ) -> EvalResult<'arena> {
         if self.frames.is_empty() {
@@ -3095,7 +3089,7 @@ impl<'arena> Interp<'arena> {
         let ty = self.type_arg(args.first(), span, "@zeen_type")?;
         let module = self.current_module();
 
-        match self.capture_type(&module, ty) {
+        match self.capture_type(module, ty) {
             Ok(captured) => Ok(Value::Type(captured)),
             Err(()) => Err(Unwind::Break),
         }
@@ -3126,7 +3120,7 @@ impl<'arena> Interp<'arena> {
 
         let module = self.current_module();
 
-        match self.capture_expr(&module, arg) {
+        match self.capture_expr(module, arg) {
             Ok(captured) => Ok(Value::Expr(captured)),
             Err(()) => Err(Unwind::Break),
         }
@@ -3160,7 +3154,7 @@ impl<'arena> Interp<'arena> {
 
         let module = self.current_module();
 
-        match self.capture_decl(&module, decl) {
+        match self.capture_decl(module, decl) {
             Ok(captured) => Ok(Value::Decl(captured)),
             Err(()) => Err(Unwind::Break),
         }
@@ -3376,7 +3370,7 @@ impl<'arena> Interp<'arena> {
 
             let value = self.make_struct_value(
                 variant_decl,
-                variant_module.clone(),
+                variant_module,
                 vec![
                     ("index", Value::Int(index as i128)),
                     ("name", Value::Str(self.interned(&variant.name).into())),
@@ -3405,7 +3399,7 @@ impl<'arena> Interp<'arena> {
         for (index, field) in fields.iter().enumerate() {
             let value = self.make_struct_value(
                 decl,
-                module.clone(),
+                module,
                 vec![
                     ("index", Value::Int(index as i128)),
                     ("name", Value::Str(self.interned(&field.name).into())),
@@ -3424,7 +3418,7 @@ impl<'arena> Interp<'arena> {
         &mut self,
         kind: &str,
         span: miette::SourceSpan,
-    ) -> Result<(&'arena Declaration<'arena>, PathBuf), Unwind<'arena>> {
+    ) -> Result<(&'arena Declaration<'arena>, ModuleId), Unwind<'arena>> {
         let module = self.current_module();
         let name = self.interner.borrow_mut().get_or_intern(kind);
 
@@ -3457,7 +3451,7 @@ impl<'arena> Interp<'arena> {
     fn make_struct_value(
         &mut self,
         decl: &'arena Declaration<'arena>,
-        module: PathBuf,
+        module: ModuleId,
         values: Vec<(&'static str, Value<'arena>)>,
         span: miette::SourceSpan,
     ) -> Result<Value<'arena>, Unwind<'arena>> {
@@ -3631,13 +3625,13 @@ impl<'arena> Interp<'arena> {
 
     fn shape_for_type(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         ty: &'arena TypeExpr<'arena>,
         span: miette::SourceSpan,
         macro_name: &str,
         bindings: &[ShapeFrame<'arena>],
     ) -> Result<Shape, Unwind<'arena>> {
-        let key = shape_cache_key(module, ty, bindings);
+        let key = shape_cache_key(*module, ty, bindings);
 
         if let Some(shape) = self.shape_cache.get(&key) {
             return Ok(shape.clone());
@@ -3674,7 +3668,7 @@ impl<'arena> Interp<'arena> {
 
     fn shape_for_type_inner(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         ty: &'arena TypeExpr<'arena>,
         span: miette::SourceSpan,
         macro_name: &str,
@@ -3734,7 +3728,7 @@ impl<'arena> Interp<'arena> {
                         alias.generics,
                         *name,
                         *generic_args,
-                        module,
+                        *module,
                         bindings,
                         span,
                         macro_name,
@@ -3783,7 +3777,7 @@ impl<'arena> Interp<'arena> {
                     generics,
                     *name,
                     *generic_args,
-                    module,
+                    *module,
                     bindings,
                     span,
                     macro_name,
@@ -3809,7 +3803,7 @@ impl<'arena> Interp<'arena> {
         generics: Option<&'arena [GenericType<'arena>]>,
         name: Spur,
         generic_args: Option<&'arena [&'arena TypeExpr<'arena>]>,
-        arg_module: &Path,
+        arg_module: ModuleId,
         parent: &[ShapeFrame<'arena>],
         span: miette::SourceSpan,
         macro_name: &str,
@@ -3848,10 +3842,10 @@ impl<'arena> Interp<'arena> {
         }
 
         let mut bindings = parent.to_vec();
-        let mut frame: FxHashMap<Spur, (PathBuf, &'arena TypeExpr<'arena>)> = FxHashMap::default();
+        let mut frame: FxHashMap<Spur, (ModuleId, &'arena TypeExpr<'arena>)> = FxHashMap::default();
 
         for (generic, arg) in generics.iter().zip(args.iter()) {
-            frame.insert(generic.name.0, (arg_module.to_path_buf(), *arg));
+            frame.insert(generic.name.0, (arg_module, *arg));
         }
 
         bindings.push(frame);
@@ -3861,7 +3855,7 @@ impl<'arena> Interp<'arena> {
 
     fn shape_for_decl(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         decl: &'arena Declaration<'arena>,
         span: miette::SourceSpan,
         macro_name: &str,
@@ -3953,16 +3947,16 @@ impl<'arena> Interp<'arena> {
 
     fn resolve_comptime_alias(
         &mut self,
-        module: &PathBuf,
+        module: &ModuleId,
         name: Spur,
         span: miette::SourceSpan,
-    ) -> Result<Option<PathBuf>, Unwind<'arena>> {
+    ) -> Result<Option<ModuleId>, Unwind<'arena>> {
         if self
             .scopes
             .get(module)
             .is_some_and(|scope| scope.aliases.contains_key(&name))
         {
-            return Ok(Some(module.clone()));
+            return Ok(Some(*module));
         }
 
         let mut public = Vec::new();
@@ -4123,10 +4117,10 @@ impl<'arena> Interp<'arena> {
 fn shape_binding_lookup<'arena>(
     bindings: &[ShapeFrame<'arena>],
     name: &Spur,
-) -> Option<(usize, PathBuf, &'arena TypeExpr<'arena>)> {
+) -> Option<(usize, ModuleId, &'arena TypeExpr<'arena>)> {
     for (frame, entries) in bindings.iter().enumerate().rev() {
         if let Some((module, ty)) = entries.get(name) {
-            return Some((frame, module.clone(), *ty));
+            return Some((frame, *module, *ty));
         }
     }
 
@@ -4181,9 +4175,7 @@ mod tests {
             HashMap::default(),
             &Target::host(),
         );
-        let failed = interp
-            .evaluate(program, |_| PathBuf::from("test.zn"))
-            .is_err();
+        let failed = interp.evaluate(program, |_| ModuleId(0)).is_err();
 
         Stats {
             calls: interp.calls,

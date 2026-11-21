@@ -68,7 +68,7 @@ pub fn resolve<'ctx>(
     let include_resolver = include_resolver;
     let resolved_program = {
         let module_of_decl = |decl: &Declaration<'_>| include_resolver.module_of_decl(decl);
-        let visibility: std::collections::HashMap<std::path::PathBuf, Vec<std::path::PathBuf>> =
+        let visibility: std::collections::HashMap<_, _> =
             include_resolver.comptime_visibility().into_iter().collect();
 
         match zeen_comptime::evaluate(

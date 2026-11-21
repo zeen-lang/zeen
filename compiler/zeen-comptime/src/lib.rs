@@ -13,8 +13,8 @@ pub use value::Value;
 use bumpalo::Bump;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::rc::Rc;
+use zeen_driver::ModuleId;
 
 use lasso::Rodeo;
 
@@ -24,8 +24,8 @@ pub fn evaluate<'arena>(
     program: &'arena [&'arena Declaration<'arena>],
     arena: &'arena Bump,
     interner: Rc<RefCell<Rodeo>>,
-    module_of: impl Fn(&Declaration<'_>) -> PathBuf,
-    visibility: HashMap<PathBuf, Vec<PathBuf>>,
+    module_of: impl Fn(&Declaration<'_>) -> ModuleId,
+    visibility: HashMap<ModuleId, Vec<ModuleId>>,
     target: &zeen_driver::Target,
 ) -> Result<&'arena [&'arena Declaration<'arena>], Vec<Error>> {
     let errors = check::validate_program(program, &interner);

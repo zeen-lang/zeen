@@ -20,7 +20,7 @@ use zeen_ast::{
     statements::{Statement, StatementKind},
     types::{TypeExpr, TypeKind},
 };
-use zeen_driver::{CompilationMode, Target};
+use zeen_driver::{CompilationMode, ModuleId, Target};
 
 #[derive(Debug, Clone)]
 struct RawModule<'arena> {
@@ -30,19 +30,44 @@ struct RawModule<'arena> {
     is_core: bool,
 }
 
+pub(crate) const UNKNOWN_MODULE: ModuleId = ModuleId(u32::MAX);
+
 #[derive(Debug, Clone)]
 pub(crate) struct ModuleUseEdge {
-    pub target: PathBuf,
+    pub target: ModuleId,
     pub is_pub: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ModuleInfo {
+    pub display: String,
+    pub is_core: bool,
 }
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ModuleGraph {
-    pub root: PathBuf,
-    pub display: HashMap<PathBuf, String>,
-    pub display_by_src: HashMap<String, PathBuf>,
-    pub core: HashSet<PathBuf>,
-    pub uses: HashMap<PathBuf, Vec<ModuleUseEdge>>,
+    pub root: ModuleId,
+    pub modules: Vec<ModuleInfo>,
+    pub id_by_src: HashMap<String, ModuleId>,
+    pub uses: HashMap<ModuleId, Vec<ModuleUseEdge>>,
+}
+
+impl ModuleGraph {
+    pub fn info(&self, id: ModuleId) -> Option<&ModuleInfo> {
+        self.modules.get(id.0 as usize)
+    }
+
+    pub fn display(&self, id: ModuleId) -> Option<&str> {
+        self.info(id).map(|info| info.display.as_str())
+    }
+
+    pub fn id_of_src(&self, src_name: &str) -> Option<ModuleId> {
+        self.id_by_src.get(src_name).copied()
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = ModuleId> + '_ {
+        (0..self.modules.len() as u32).map(ModuleId)
+    }
 }
 
 #[derive(Default)]
@@ -62,10 +87,11 @@ pub struct IncludeResolver<'ctx> {
     mode: CompilationMode,
 
     modules: HashMap<PathBuf, RawModule<'ctx>>,
-    root: Option<PathBuf>,
-    edges: HashMap<PathBuf, Vec<ModuleUseEdge>>,
-    decl_owner: HashMap<usize, u32>,
-    module_ids: Vec<PathBuf>,
+    root_id: ModuleId,
+    edges: HashMap<ModuleId, Vec<ModuleUseEdge>>,
+    decl_owner: HashMap<usize, ModuleId>,
+    module_ids: HashMap<PathBuf, ModuleId>,
+    module_paths: Vec<PathBuf>,
 
     primitives: Vec<String>,
     primitives_dir: Option<PathBuf>,
@@ -105,10 +131,11 @@ impl<'ctx> IncludeResolver<'ctx> {
             filename,
 
             modules: HashMap::default(),
-            root: None,
+            root_id: ModuleId::default(),
             edges: HashMap::default(),
             decl_owner: HashMap::default(),
-            module_ids: Vec::new(),
+            module_ids: HashMap::default(),
+            module_paths: Vec::new(),
 
             primitives,
             primitives_dir,
@@ -143,6 +170,19 @@ impl<'ctx> IncludeResolver<'ctx> {
 
     fn get_or_intern(&self, value: &str) -> Spur {
         self.interner.borrow_mut().get_or_intern(value)
+    }
+
+    fn module_id(&mut self, path: &Path) -> ModuleId {
+        if let Some(id) = self.module_ids.get(path) {
+            return *id;
+        }
+
+        let id = ModuleId(self.module_paths.len() as u32);
+
+        self.module_paths.push(path.to_path_buf());
+        self.module_ids.insert(path.to_path_buf(), id);
+
+        id
     }
 
     fn usage_flags(&self, decls: &[&'ctx Declaration<'ctx>]) -> UsageFlags {
@@ -532,7 +572,6 @@ impl<'ctx> IncludeResolver<'ctx> {
         core_files: &[(&'static str, &'static str)],
     ) -> Result<&'ctx [&'ctx Declaration<'ctx>], Vec<ResolveError>> {
         let root_canonical = canonicalize_best_effort(&root_path);
-        self.root = Some(root_canonical.clone());
         let entry_is_core = root_named_src.inner().contains("@zeen-core");
         let entry_core_module = if entry_is_core {
             root_path
@@ -552,6 +591,7 @@ impl<'ctx> IncludeResolver<'ctx> {
                 is_core: false,
             },
         );
+        self.root_id = self.module_id(&root_canonical);
 
         let mut out: Vec<&'ctx Declaration<'ctx>> = Vec::new();
 
@@ -581,6 +621,7 @@ impl<'ctx> IncludeResolver<'ctx> {
                     is_core: true,
                 },
             );
+            self.module_id(Path::new(name));
         }
 
         let usage = self.usage_flags(root_decls);
@@ -702,7 +743,7 @@ impl<'ctx> IncludeResolver<'ctx> {
     fn is_primitive_module(&self, path: &Path) -> bool {
         self.primitives_dir
             .as_deref()
-            .is_some_and(|dir| canonicalize_best_effort(path).starts_with(dir))
+            .is_some_and(|dir| path.starts_with(dir))
     }
 
     fn inject_prelude_uses(&mut self) {
@@ -761,7 +802,6 @@ impl<'ctx> IncludeResolver<'ctx> {
     ) -> Result<&'ctx [&'ctx Declaration<'ctx>], &[ResolveError]> {
         let root_canonical = canonicalize_best_effort(&root_path);
 
-        self.root = Some(root_canonical.clone());
         self.modules.insert(
             root_canonical.clone(),
             RawModule {
@@ -771,6 +811,7 @@ impl<'ctx> IncludeResolver<'ctx> {
                 is_core: false,
             },
         );
+        self.root_id = self.module_id(&root_canonical);
 
         let mut visiting: HashSet<PathBuf> = HashSet::default();
         visiting.insert(root_canonical.clone());
@@ -953,6 +994,7 @@ impl<'ctx> IncludeResolver<'ctx> {
                     is_core: false,
                 },
             );
+            self.module_id(&target_canonical);
 
             visiting.insert(target_canonical.clone());
             self.load_links(&target_canonical, target_decls);
@@ -1026,11 +1068,13 @@ impl<'ctx> IncludeResolver<'ctx> {
                     };
 
                     let target_canonical = canonicalize_best_effort(&target);
+                    let from_id = self.module_id(canonical);
+                    let target_id = self.module_id(&target_canonical);
                     let edge = ModuleUseEdge {
-                        target: target_canonical.clone(),
+                        target: target_id,
                         is_pub,
                     };
-                    let edges = self.edges.entry(canonical.to_path_buf()).or_default();
+                    let edges = self.edges.entry(from_id).or_default();
                     if !edges.iter().any(|e| e.target == edge.target) {
                         edges.push(edge);
                     }
@@ -1167,14 +1211,13 @@ impl<'ctx> IncludeResolver<'ctx> {
         }
     }
 
-    pub fn module_of_decl(&self, decl: &'ctx Declaration<'ctx>) -> PathBuf {
+    pub fn module_of_decl(&self, decl: &'ctx Declaration<'ctx>) -> ModuleId {
         let target_ptr = decl as *const Declaration as usize;
 
         self.decl_owner
             .get(&target_ptr)
-            .and_then(|id| self.module_ids.get(*id as usize))
-            .cloned()
-            .unwrap_or_else(|| self.root.clone().unwrap_or_default())
+            .copied()
+            .unwrap_or(self.root_id)
     }
 
     pub(crate) fn module_graph(&self) -> ModuleGraph {
@@ -1187,12 +1230,18 @@ impl<'ctx> IncludeResolver<'ctx> {
             .map(canonicalize_best_effort);
 
         let mut graph = ModuleGraph {
-            root: self.root.clone().unwrap_or_default(),
+            root: self.root_id,
             ..ModuleGraph::default()
         };
-        for (key, module) in &self.modules {
+
+        for (index, path) in self.module_paths.iter().enumerate() {
+            let module = self
+                .modules
+                .get(path)
+                .expect("module id points at a registered module");
+            let id = ModuleId(index as u32);
             let display = if module.is_core {
-                key.to_string_lossy().into_owned()
+                path.to_string_lossy().into_owned()
             } else {
                 display_for_path(
                     &module.canonical_path,
@@ -1201,23 +1250,25 @@ impl<'ctx> IncludeResolver<'ctx> {
                     &self.context.paths.packages,
                 )
             };
-            graph.display_by_src.insert(
-                module.named_src.name().to_string(),
-                module.canonical_path.clone(),
-            );
-            graph.display.insert(key.clone(), display);
-            if module.is_core {
-                graph.core.insert(key.clone());
-            }
+
+            graph
+                .id_by_src
+                .insert(module.named_src.name().to_string(), id);
+            graph.modules.push(ModuleInfo {
+                display,
+                is_core: module.is_core,
+            });
         }
+
         for (from, edges) in &self.edges {
-            graph.uses.insert(from.clone(), edges.clone());
+            graph.uses.insert(*from, edges.clone());
         }
+
         graph
     }
 
-    pub(crate) fn comptime_visibility(&self) -> HashMap<PathBuf, Vec<PathBuf>> {
-        let mut pub_reach: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::default();
+    pub(crate) fn comptime_visibility(&self) -> HashMap<ModuleId, Vec<ModuleId>> {
+        let mut pub_reach: HashMap<ModuleId, HashSet<ModuleId>> = HashMap::default();
 
         loop {
             let mut changed = false;
@@ -1225,9 +1276,9 @@ impl<'ctx> IncludeResolver<'ctx> {
             for (from, edges) in &self.edges {
                 for edge in edges.iter().filter(|edge| edge.is_pub) {
                     let reachable = pub_reach.get(&edge.target).cloned().unwrap_or_default();
-                    let entry = pub_reach.entry(from.clone()).or_default();
+                    let entry = pub_reach.entry(*from).or_default();
 
-                    changed |= entry.insert(edge.target.clone());
+                    changed |= entry.insert(edge.target);
 
                     for target in reachable {
                         changed |= entry.insert(target);
@@ -1240,29 +1291,31 @@ impl<'ctx> IncludeResolver<'ctx> {
             }
         }
 
-        let core_modules: Vec<PathBuf> = self
-            .modules
+        let core_modules: Vec<ModuleId> = self
+            .module_paths
             .iter()
-            .filter(|(_, module)| module.is_core)
-            .map(|(path, _)| path.clone())
+            .enumerate()
+            .filter(|(_, path)| self.modules.get(*path).is_some_and(|module| module.is_core))
+            .map(|(index, _)| ModuleId(index as u32))
             .collect();
 
-        let mut visibility: HashMap<PathBuf, Vec<PathBuf>> = HashMap::default();
+        let mut visibility: HashMap<ModuleId, Vec<ModuleId>> = HashMap::default();
 
-        for path in self.modules.keys() {
-            let mut visible: HashSet<PathBuf> = core_modules.iter().cloned().collect();
+        for index in 0..self.module_paths.len() {
+            let id = ModuleId(index as u32);
+            let mut visible: HashSet<ModuleId> = core_modules.iter().copied().collect();
 
-            if let Some(edges) = self.edges.get(path) {
+            if let Some(edges) = self.edges.get(&id) {
                 for edge in edges {
-                    visible.insert(edge.target.clone());
+                    visible.insert(edge.target);
 
                     if let Some(reachable) = pub_reach.get(&edge.target) {
-                        visible.extend(reachable.iter().cloned());
+                        visible.extend(reachable.iter().copied());
                     }
                 }
             }
 
-            visibility.insert(path.clone(), visible.into_iter().collect());
+            visibility.insert(id, visible.into_iter().collect());
         }
 
         visibility
@@ -1270,20 +1323,36 @@ impl<'ctx> IncludeResolver<'ctx> {
 
     fn build_decl_index(&mut self) {
         self.decl_owner.clear();
-        self.module_ids.clear();
-        for skip_root in [true, false] {
-            for (path, module) in &self.modules {
-                if skip_root && self.root.as_ref() == Some(&module.canonical_path) {
-                    continue;
-                }
-                let id = self.module_ids.len() as u32;
-                self.module_ids.push(path.clone());
-                for decl in module.decls {
-                    self.decl_owner
-                        .entry(*decl as *const Declaration as usize)
-                        .or_insert(id);
-                }
+
+        let root = self.root_id;
+
+        for (index, path) in self.module_paths.iter().enumerate() {
+            let id = ModuleId(index as u32);
+
+            if id == root {
+                continue;
             }
+
+            let module = self
+                .modules
+                .get(path)
+                .expect("module id points at a registered module");
+
+            for decl in module.decls {
+                self.decl_owner
+                    .entry(*decl as *const Declaration as usize)
+                    .or_insert(id);
+            }
+        }
+
+        let Some(root_module) = self.modules.get(&self.module_paths[root.0 as usize]) else {
+            return;
+        };
+
+        for decl in root_module.decls {
+            self.decl_owner
+                .entry(*decl as *const Declaration as usize)
+                .or_insert(root);
         }
     }
 
@@ -1296,7 +1365,7 @@ impl<'ctx> IncludeResolver<'ctx> {
         let module = self
             .decl_owner
             .get(&target_ptr)
-            .and_then(|id| self.module_ids.get(*id as usize))
+            .and_then(|id| self.module_paths.get(id.0 as usize))
             .and_then(|path| self.modules.get(path));
 
         if let Some(module) = module {
