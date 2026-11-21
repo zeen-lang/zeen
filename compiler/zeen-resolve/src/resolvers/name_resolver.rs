@@ -3,12 +3,7 @@ use miette::{NamedSource, SourceSpan};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use smol_str::SmolStr;
 
-use std::{
-    cell::RefCell,
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use zeen_ast::{
     declarations::{Declaration, DeclarationKind, EnumVariantPayload, GenericType},
@@ -17,10 +12,12 @@ use zeen_ast::{
     types::{BuiltinType, TypeExpr, TypeKind},
 };
 
+use zeen_driver::ModuleId;
+
 use crate::{
     error::ResolveError,
     resolution::{BindingSlotKey, DefId, DefInfo, DefKind, NodeKey, Resolution, ResolutionResult},
-    resolvers::include_resolver::ModuleGraph,
+    resolvers::include_resolver::{ModuleGraph, UNKNOWN_MODULE},
     same_source_file,
     symbol_table::{ScopeContent, ScopeKind, SymbolTable},
 };
@@ -54,14 +51,14 @@ pub struct NameResolver {
 
     graph: ModuleGraph,
     current_module: String,
-    current_canon: PathBuf,
-    def_canon: HashMap<DefId, PathBuf>,
-    own_values: HashMap<PathBuf, HashMap<Spur, DefId>>,
-    own_types: HashMap<PathBuf, HashMap<Spur, DefId>>,
+    current_id: ModuleId,
+    def_module: HashMap<DefId, ModuleId>,
+    own_values: HashMap<ModuleId, HashMap<Spur, DefId>>,
+    own_types: HashMap<ModuleId, HashMap<Spur, DefId>>,
 
-    visible: HashMap<PathBuf, ScopeContent>,
-    ambiguous_values: HashMap<PathBuf, HashSet<Spur>>,
-    ambiguous_types: HashMap<PathBuf, HashSet<Spur>>,
+    visible: HashMap<ModuleId, ScopeContent>,
+    ambiguous_values: HashMap<ModuleId, HashSet<Spur>>,
+    ambiguous_types: HashMap<ModuleId, HashSet<Spur>>,
 }
 
 fn is_self_param(param: &zeen_ast::declarations::FnParam) -> bool {
@@ -102,8 +99,8 @@ impl<'ctx> NameResolver {
 
             graph,
             current_module: String::new(),
-            current_canon: PathBuf::new(),
-            def_canon: HashMap::default(),
+            current_id: UNKNOWN_MODULE,
+            def_module: HashMap::default(),
             own_values: HashMap::default(),
             own_types: HashMap::default(),
 
@@ -118,8 +115,8 @@ impl<'ctx> NameResolver {
             return Err(self.errors);
         }
 
-        if let Some(display) = self.graph.display.get(&self.graph.root) {
-            self.result.root_module = display.clone();
+        if let Some(display) = self.graph.display(self.graph.root) {
+            self.result.root_module = display.to_string();
         }
 
         self.result.rebuild_def_index();
@@ -135,24 +132,19 @@ impl<'ctx> NameResolver {
 
     fn display_of(&self, src_name: &str) -> String {
         self.graph
-            .display_by_src
-            .get(src_name)
-            .and_then(|canon| self.graph.display.get(canon))
-            .cloned()
+            .id_of_src(src_name)
+            .and_then(|id| self.graph.display(id))
+            .map(str::to_string)
             .unwrap_or_else(|| src_name.to_string())
     }
 
-    fn canon_of(&self, src_name: &str) -> PathBuf {
-        self.graph
-            .display_by_src
-            .get(src_name)
-            .cloned()
-            .unwrap_or_else(|| PathBuf::from(src_name))
+    fn module_id_of(&self, src_name: &str) -> ModuleId {
+        self.graph.id_of_src(src_name).unwrap_or(UNKNOWN_MODULE)
     }
 
     fn track_module(&mut self, src_name: &str) {
         self.current_module = self.display_of(src_name);
-        self.current_canon = self.canon_of(src_name);
+        self.current_id = self.module_id_of(src_name);
     }
 
     fn define(&mut self, info: DefInfo) -> DefId {
@@ -161,7 +153,7 @@ impl<'ctx> NameResolver {
         self.result
             .def_modules
             .insert(id, self.current_module.clone());
-        self.def_canon.insert(id, self.current_canon.clone());
+        self.def_module.insert(id, self.current_id);
         id
     }
 
@@ -311,13 +303,13 @@ impl<'ctx> NameResolver {
         )
     }
 
-    fn own_pub_items(&self, canon: &PathBuf, value_ns: bool) -> Vec<(Spur, DefId)> {
+    fn own_pub_items(&self, canon: ModuleId, value_ns: bool) -> Vec<(Spur, DefId)> {
         let table = if value_ns {
             &self.own_values
         } else {
             &self.own_types
         };
-        let Some(items) = table.get(canon) else {
+        let Some(items) = table.get(&canon) else {
             return Vec::new();
         };
         items
@@ -334,10 +326,10 @@ impl<'ctx> NameResolver {
     }
 
     fn build_module_tables(&mut self) {
-        let mut own_values: HashMap<PathBuf, HashMap<Spur, DefId>> = HashMap::default();
-        let mut own_types: HashMap<PathBuf, HashMap<Spur, DefId>> = HashMap::default();
+        let mut own_values: HashMap<ModuleId, HashMap<Spur, DefId>> = HashMap::default();
+        let mut own_types: HashMap<ModuleId, HashMap<Spur, DefId>> = HashMap::default();
         for (id, info) in &self.result.defs {
-            let Some(canon) = self.def_canon.get(id).cloned() else {
+            let Some(canon) = self.def_module.get(id).cloned() else {
                 continue;
             };
             if Self::is_value_kind(&info.kind) {
@@ -352,10 +344,10 @@ impl<'ctx> NameResolver {
         let mut core_values: HashMap<Spur, DefId> = HashMap::default();
         let mut core_types: HashMap<Spur, DefId> = HashMap::default();
         for (id, info) in &self.result.defs {
-            let Some(canon) = self.def_canon.get(id) else {
+            let Some(canon) = self.def_module.get(id) else {
                 continue;
             };
-            if !self.graph.core.contains(canon) {
+            if !self.graph.info(*canon).is_some_and(|info| info.is_core) {
                 continue;
             }
             if Self::is_value_kind(&info.kind) {
@@ -365,15 +357,12 @@ impl<'ctx> NameResolver {
             }
         }
 
-        let mut re_values: HashMap<PathBuf, HashSet<(Spur, DefId)>> = HashMap::default();
-        let mut re_types: HashMap<PathBuf, HashSet<(Spur, DefId)>> = HashMap::default();
-        for canon in self.graph.display.keys() {
-            re_values.insert(
-                canon.clone(),
-                self.own_pub_items(canon, true).into_iter().collect(),
-            );
+        let mut re_values: HashMap<ModuleId, HashSet<(Spur, DefId)>> = HashMap::default();
+        let mut re_types: HashMap<ModuleId, HashSet<(Spur, DefId)>> = HashMap::default();
+        for canon in self.graph.ids() {
+            re_values.insert(canon, self.own_pub_items(canon, true).into_iter().collect());
             re_types.insert(
-                canon.clone(),
+                canon,
                 self.own_pub_items(canon, false).into_iter().collect(),
             );
         }
@@ -408,10 +397,10 @@ impl<'ctx> NameResolver {
             }
         }
 
-        let mut visible: HashMap<PathBuf, ScopeContent> = HashMap::default();
-        let mut ambiguous_values: HashMap<PathBuf, HashSet<Spur>> = HashMap::default();
-        let mut ambiguous_types: HashMap<PathBuf, HashSet<Spur>> = HashMap::default();
-        for canon in self.graph.display.keys() {
+        let mut visible: HashMap<ModuleId, ScopeContent> = HashMap::default();
+        let mut ambiguous_values: HashMap<ModuleId, HashSet<Spur>> = HashMap::default();
+        let mut ambiguous_types: HashMap<ModuleId, HashSet<Spur>> = HashMap::default();
+        for canon in self.graph.ids() {
             let mut content = ScopeContent::default();
             content
                 .values
@@ -422,22 +411,22 @@ impl<'ctx> NameResolver {
 
             let mut own_keys_values: HashSet<Spur> = HashSet::default();
             let mut own_keys_types: HashSet<Spur> = HashSet::default();
-            if let Some(items) = self.own_values.get(canon) {
+            if let Some(items) = self.own_values.get(&canon) {
                 for (name, id) in items {
                     content.values.insert(*name, *id);
                     own_keys_values.insert(*name);
                 }
             }
-            if let Some(items) = self.own_types.get(canon) {
+            if let Some(items) = self.own_types.get(&canon) {
                 for (name, id) in items {
                     content.types.insert(*name, *id);
                     own_keys_types.insert(*name);
                 }
             }
 
-            if let Some(edges) = self.graph.uses.get(canon).cloned() {
+            if let Some(edges) = self.graph.uses.get(&canon).cloned() {
                 for edge in edges {
-                    for (name, id) in self.own_pub_items(&edge.target, true) {
+                    for (name, id) in self.own_pub_items(edge.target, true) {
                         Self::insert_import(
                             &mut content.values,
                             &mut ambiguous_values,
@@ -447,7 +436,7 @@ impl<'ctx> NameResolver {
                             id,
                         );
                     }
-                    for (name, id) in self.own_pub_items(&edge.target, false) {
+                    for (name, id) in self.own_pub_items(edge.target, false) {
                         Self::insert_import(
                             &mut content.types,
                             &mut ambiguous_types,
@@ -484,7 +473,7 @@ impl<'ctx> NameResolver {
                 }
             }
 
-            visible.insert(canon.clone(), content);
+            visible.insert(canon, content);
         }
 
         self.visible = visible;
@@ -494,8 +483,8 @@ impl<'ctx> NameResolver {
 
     fn insert_import(
         table: &mut HashMap<Spur, DefId>,
-        ambiguous: &mut HashMap<PathBuf, HashSet<Spur>>,
-        canon: &Path,
+        ambiguous: &mut HashMap<ModuleId, HashSet<Spur>>,
+        canon: ModuleId,
         own_keys: &HashSet<Spur>,
         name: Spur,
         id: DefId,
@@ -505,10 +494,7 @@ impl<'ctx> NameResolver {
         }
         match table.get(&name) {
             Some(existing) if *existing != id => {
-                ambiguous
-                    .entry(canon.to_path_buf())
-                    .or_default()
-                    .insert(name);
+                ambiguous.entry(canon).or_default().insert(name);
             }
             Some(_) => {}
             None => {
@@ -518,7 +504,7 @@ impl<'ctx> NameResolver {
     }
 
     fn swap_module_scope(&mut self) {
-        if let Some(content) = self.visible.get(&self.current_canon).cloned() {
+        if let Some(content) = self.visible.get(&self.current_id).cloned() {
             self.table.set_module_scope(content);
         }
     }
@@ -526,7 +512,7 @@ impl<'ctx> NameResolver {
     fn check_ambiguous_value(&mut self, name: Spur, span: SourceSpan) -> bool {
         let hit = self
             .ambiguous_values
-            .get(&self.current_canon)
+            .get(&self.current_id)
             .is_some_and(|names| names.contains(&name))
             && !self.table.shadowed_value_above_module(name);
         if hit {
@@ -542,7 +528,7 @@ impl<'ctx> NameResolver {
     fn check_ambiguous_type(&mut self, name: Spur, span: SourceSpan) -> bool {
         let hit = self
             .ambiguous_types
-            .get(&self.current_canon)
+            .get(&self.current_id)
             .is_some_and(|names| names.contains(&name))
             && !self.table.shadowed_type_above_module(name);
         if hit {
@@ -556,7 +542,7 @@ impl<'ctx> NameResolver {
     }
 
     fn is_private_in_used_module(&self, name: Spur, value_ns: bool) -> bool {
-        let Some(edges) = self.graph.uses.get(&self.current_canon) else {
+        let Some(edges) = self.graph.uses.get(&self.current_id) else {
             return false;
         };
         let table = if value_ns {

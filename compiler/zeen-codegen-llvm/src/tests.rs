@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use inkwell::context::Context;
@@ -12,7 +11,7 @@ use zeen_resolve::{DefId, DefKind};
 use zeen_typecheck::format_str::{FormatChunk, FormatSpec};
 use zeen_types::{ConstArg, Type};
 
-use crate::codegen::{CodeGen, CodegenOptions};
+use crate::codegen::{CodeGen, CodeGenNames, CodegenOptions};
 use crate::fixtures::*;
 
 fn compile(fx: &Fixture, mode: CompilationMode) -> String {
@@ -20,19 +19,23 @@ fn compile(fx: &Fixture, mode: CompilationMode) -> String {
 }
 
 fn compile_for(fx: &Fixture, mode: CompilationMode, target: Option<&str>) -> String {
-    let context = Context::create();
     let options = CodegenOptions {
         mode,
         target: target.map(str::to_string),
         main_fn: fx.main_fn,
         ..Default::default()
     };
+    compile_with(fx, options)
+}
+
+fn compile_with(fx: &Fixture, options: CodegenOptions) -> String {
+    let context = Context::create();
     let mut cg = CodeGen::new(
         &context,
         &fx.program,
         &fx.typecheck,
         &fx.resolution,
-        Rc::clone(&fx.rodeo),
+        CodeGenNames::snapshot(&fx.rodeo.borrow()),
         options,
     )
     .unwrap();
@@ -123,6 +126,49 @@ fn main_wrapper_void_returns_zero() {
 
     assert!(ir.contains("define internal void @zeen_main()"), "{ir}");
     assert!(ir.contains("ret i32 0"), "{ir}");
+}
+
+#[test]
+fn codegen_units_split_function_bodies() {
+    let mut fx = Fixture::new();
+    main_returns_i32(&mut fx, 0);
+
+    let helper_def = fx.def("helper", DefKind::Function);
+    let i32_ty = fx.i32();
+    let mut helper = fx.fn_builder("helper", helper_def, i32_ty);
+    let value = helper.temp(i32_ty);
+    helper.entry("bb0");
+    helper.assign(place(value), use_const(const_int(7)));
+    helper.ret(copy_of(value));
+    helper.finish();
+
+    let first = compile_with(
+        &fx,
+        CodegenOptions {
+            units: 2,
+            unit: 0,
+            main_fn: fx.main_fn,
+            ..Default::default()
+        },
+    );
+    let second = compile_with(
+        &fx,
+        CodegenOptions {
+            units: 2,
+            unit: 1,
+            main_fn: fx.main_fn,
+            ..Default::default()
+        },
+    );
+
+    assert!(first.contains("define i32 @zeen_main()"), "{first}");
+    assert!(first.contains("define i32 @main("), "{first}");
+    assert!(!first.contains("define i32 @helper()"), "{first}");
+
+    assert!(second.contains("define i32 @helper()"), "{second}");
+    assert!(!second.contains("define i32 @zeen_main()"), "{second}");
+    assert!(!second.contains("define i32 @main("), "{second}");
+    assert!(!second.contains("define internal"), "{second}");
 }
 
 #[test]

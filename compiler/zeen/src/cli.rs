@@ -99,6 +99,17 @@ pub struct Args {
     )]
     pub pkg: Vec<String>,
 
+    #[arg(long = "timings", action, help = "Print per-stage compilation timings")]
+    pub timings: bool,
+
+    #[arg(
+        long = "codegen-units",
+        value_name = "N|auto",
+        default_value = "1",
+        help = "Split LLVM codegen into N parallel units (`auto` sizes them by program size; binary output only)"
+    )]
+    pub codegen_units: zeen_codegen_llvm::CodegenUnits,
+
     /// `--targets-list` flag to print all supported target triples
     #[arg(long = "targets-list", action, help = "List supported target triples")]
     pub targets_list: bool,

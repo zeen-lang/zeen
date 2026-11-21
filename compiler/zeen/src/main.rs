@@ -31,6 +31,77 @@ fn with_default_extension(path: &Path, ext: &str) -> std::path::PathBuf {
 
 const COMPILER_THREAD_STACK: usize = 256 * 1024 * 1024;
 
+struct StageTimer {
+    enabled: bool,
+    last: std::time::Instant,
+}
+
+impl StageTimer {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            last: std::time::Instant::now(),
+        }
+    }
+
+    fn mark(&mut self, label: &str) {
+        if !self.enabled {
+            return;
+        }
+
+        let now = std::time::Instant::now();
+
+        cli::println_info(
+            "Timing",
+            format!(
+                "{label:<12} {:>9.3} ms",
+                (now - self.last).as_secs_f64() * 1000.0
+            ),
+        );
+
+        self.last = now;
+    }
+
+    fn mark_elapsed(&mut self, label: &str, elapsed: std::time::Duration) {
+        if !self.enabled {
+            return;
+        }
+
+        cli::println_info(
+            "Timing",
+            format!("{label:<12} {:>9.3} ms", elapsed.as_secs_f64() * 1000.0),
+        );
+
+        self.last = std::time::Instant::now();
+    }
+}
+
+fn run_codegen_unit<T>(
+    program: &zeen_mir::MirProgram,
+    typecheck: &zeen_typecheck::result::TypeCheckResult,
+    resolution: &zeen_resolve::ResolutionResult,
+    names: &zeen_codegen_llvm::CodeGenNames,
+    options: zeen_codegen_llvm::CodegenOptions,
+    emit: impl FnOnce(&zeen_codegen_llvm::CodeGen<'_, '_>) -> Result<T, zeen_codegen_llvm::CodegenError>,
+) -> Result<T, zeen_codegen_llvm::CodegenError> {
+    let context = inkwell::context::Context::create();
+    let mut codegen = zeen_codegen_llvm::CodeGen::new(
+        &context,
+        program,
+        typecheck,
+        resolution,
+        names.clone(),
+        options,
+    )?;
+    codegen.generate()?;
+
+    if cfg!(not(target_os = "windows")) {
+        codegen.verify()?;
+    }
+
+    emit(&codegen)
+}
+
 fn parse_pkg_flags(flags: &[String]) -> Vec<(String, std::path::PathBuf)> {
     let mut out = Vec::new();
     for flag in flags {
@@ -199,6 +270,7 @@ fn main() {
 
 fn compile(args: cli::Args) {
     let compilation_start = std::time::Instant::now();
+    let mut timer = StageTimer::new(args.timings);
     let target_triple = args.target.clone().unwrap_or_else(targets::host_target);
 
     let path = args
@@ -255,6 +327,8 @@ fn compile(args: cli::Args) {
 
         Arc::new(src)
     };
+
+    timer.mark("read");
 
     let filename = Rc::new(filename.to_string());
     let project_root = std::fs::canonicalize(&path)
@@ -324,10 +398,14 @@ fn compile(args: cli::Args) {
         exit(1);
     });
 
+    timer.mark("parse");
+
     // cli::println_info("Preprocessing", "conditional declarations for target");
 
     let target = zeen_driver::Target::parse(&target_triple);
     let program = zeen_preprocessor::resolve(program, &bump, &rodeo, &target, context.mode);
+
+    timer.mark("preprocess");
 
     // cli::println_info(
     //     "Resolving",
@@ -354,10 +432,14 @@ fn compile(args: cli::Args) {
         exit(1);
     });
 
+    timer.mark("resolve");
+
     let mut hir_lowering = zeen_hir::HirLowering::new(&resolution_result, Rc::clone(&rodeo));
     let hir_module = hir_lowering.lower_module(resolved_program);
 
     drop(bump);
+
+    timer.mark("hir");
 
     if !args.no_warns {
         for warning in &context.warnings {
@@ -388,6 +470,8 @@ fn compile(args: cli::Args) {
         exit(1);
     });
 
+    timer.mark("typecheck");
+
     let mut lowered_mir = zeen_mir::lowering::lower_program(
         Rc::clone(&rodeo),
         &mut typechecker_result,
@@ -406,12 +490,16 @@ fn compile(args: cli::Args) {
         exit(1);
     });
 
+    timer.mark("mir");
+
     let flow_result = zeen_flow::run_dataflow(
         &mut lowered_mir.program,
         &mut typechecker_result,
         &resolution_result,
         Rc::clone(&rodeo),
     );
+
+    timer.mark("flow");
 
     match flow_result {
         Ok(result) => {
@@ -509,54 +597,45 @@ fn compile(args: cli::Args) {
         target: Some(target_triple.clone()),
         main_fn: lowered_mir.main_fn,
         source_file_name: filename.to_string(),
+        ..Default::default()
     };
 
     let mut linked_files: Vec<std::path::PathBuf> = context.paths.linked.iter().cloned().collect();
     linked_files.sort();
 
-    let context = inkwell::context::Context::create();
+    let units = match args.emit {
+        CompilationOutput::Binary if !zeen_driver::Target::parse(&target_triple).is_wasm() => args
+            .codegen_units
+            .resolve(lowered_mir.program.functions.len()),
+        _ => 1,
+    };
 
-    let mut codegen = zeen_codegen_llvm::CodeGen::new(
-        &context,
-        &lowered_mir.program,
-        &typechecker_result,
-        &resolution_result,
-        Rc::clone(&rodeo),
-        codegen_options,
-    )
-    .unwrap_or_else(|err| {
-        let report_string = driver.report(&err).unwrap_or_default();
-        eprintln!("{}", report_string);
-        cli::println_error("Codegen failed");
-        exit(1);
-    });
-
-    if let Err(err) = codegen.generate() {
-        let report_string = driver.report(&err).unwrap_or_default();
-        eprintln!("{}", report_string);
-        cli::println_error("Codegen failed");
-        exit(1);
-    }
-
-    if cfg!(not(target_os = "windows"))
-        && let Err(err) = codegen.verify()
-    {
-        let report_string = driver.report(&err).unwrap_or_default();
-        eprintln!("{}", report_string);
-        cli::println_error("Codegen failed");
-        exit(1);
-    }
+    let names = zeen_codegen_llvm::CodeGenNames::snapshot(&rodeo.borrow());
 
     match args.emit {
         CompilationOutput::EmitIR => {
             let output_path = with_default_extension(&output, "ll");
 
-            if let Err(err) = codegen.emit_ir(&output_path) {
+            let result = run_codegen_unit(
+                &lowered_mir.program,
+                &typechecker_result,
+                &resolution_result,
+                &names,
+                codegen_options.clone(),
+                |codegen| {
+                    timer.mark("codegen");
+                    codegen.emit_ir(&output_path)
+                },
+            );
+
+            if let Err(err) = result {
                 let report_string = driver.report(&err).unwrap_or_default();
                 eprintln!("{}", report_string);
                 cli::println_error("Codegen failed");
                 exit(1);
             }
+
+            timer.mark("emit");
 
             cli::println_info(
                 "Emitted",
@@ -580,12 +659,26 @@ fn compile(args: cli::Args) {
                 zeen_linker::ObjectLinker::object_extension_for(&target_triple),
             );
 
-            if let Err(err) = codegen.emit_object(&output_path) {
+            let result = run_codegen_unit(
+                &lowered_mir.program,
+                &typechecker_result,
+                &resolution_result,
+                &names,
+                codegen_options.clone(),
+                |codegen| {
+                    timer.mark("codegen");
+                    codegen.emit_object(&output_path)
+                },
+            );
+
+            if let Err(err) = result {
                 let report_string = driver.report(&err).unwrap_or_default();
                 eprintln!("{}", report_string);
                 cli::println_error("Codegen failed");
                 exit(1);
             }
+
+            timer.mark("emit");
 
             cli::println_info(
                 "Emitted",
@@ -629,24 +722,122 @@ fn compile(args: cli::Args) {
                 gc_sections: matches!(args.mode, CompilationMode::Debug),
             });
 
-            let object_file = tempfile::Builder::new()
-                .prefix("zeen-")
-                .suffix(&format!(".{}", linker.object_extension()))
-                .tempfile()
-                .unwrap_or_else(|err| {
-                    cli::println_error(format!("Failed to create temporary file: {err}"));
-                    exit(1);
+            let object_files: Vec<tempfile::TempPath> = (0..units)
+                .map(|_| {
+                    tempfile::Builder::new()
+                        .prefix("zeen-")
+                        .suffix(&format!(".{}", linker.object_extension()))
+                        .tempfile()
+                        .unwrap_or_else(|err| {
+                            cli::println_error(format!("Failed to create temporary file: {err}"));
+                            exit(1);
+                        })
+                        .into_temp_path()
+                })
+                .collect();
+            let object_paths: Vec<std::path::PathBuf> =
+                object_files.iter().map(|path| path.to_path_buf()).collect();
+
+            let mut codegen_time = std::time::Duration::ZERO;
+            let mut emit_time = std::time::Duration::ZERO;
+
+            if units == 1 {
+                let started = std::time::Instant::now();
+                let result = run_codegen_unit(
+                    &lowered_mir.program,
+                    &typechecker_result,
+                    &resolution_result,
+                    &names,
+                    codegen_options.clone(),
+                    |codegen| {
+                        let generated = started.elapsed();
+                        let emit_started = std::time::Instant::now();
+                        codegen.emit_object(&object_paths[0])?;
+                        Ok((generated, emit_started.elapsed()))
+                    },
+                );
+
+                match result {
+                    Ok((generated, emit)) => {
+                        codegen_time = generated;
+                        emit_time = emit;
+                    }
+                    Err(err) => {
+                        let report_string = driver.report(&err).unwrap_or_default();
+                        eprintln!("{}", report_string);
+                        cli::println_error("Codegen failed");
+                        exit(1);
+                    }
+                }
+            } else {
+                let mut failures = Vec::new();
+
+                std::thread::scope(|scope| {
+                    let mut handles = Vec::new();
+
+                    for (index, path) in object_paths.iter().enumerate() {
+                        let options = zeen_codegen_llvm::CodegenOptions {
+                            units,
+                            unit: index as u32,
+                            ..codegen_options.clone()
+                        };
+                        let names = &names;
+                        let program = &lowered_mir.program;
+                        let typecheck = &typechecker_result;
+                        let resolution = &resolution_result;
+
+                        let handle = std::thread::Builder::new()
+                            .stack_size(COMPILER_THREAD_STACK)
+                            .spawn_scoped(scope, move || {
+                                let started = std::time::Instant::now();
+                                run_codegen_unit(
+                                    program,
+                                    typecheck,
+                                    resolution,
+                                    names,
+                                    options,
+                                    |codegen| {
+                                        let generated = started.elapsed();
+                                        let emit_started = std::time::Instant::now();
+                                        codegen.emit_object(path)?;
+                                        Ok((generated, emit_started.elapsed()))
+                                    },
+                                )
+                            })
+                            .unwrap_or_else(|err| {
+                                cli::println_error(format!(
+                                    "Failed to spawn codegen thread: {err}"
+                                ));
+                                exit(1);
+                            });
+
+                        handles.push(handle);
+                    }
+
+                    for handle in handles {
+                        match handle.join() {
+                            Ok(Ok((generated, emit))) => {
+                                codegen_time = codegen_time.max(generated);
+                                emit_time = emit_time.max(emit);
+                            }
+                            Ok(Err(err)) => failures.push(err),
+                            Err(_) => cli::println_error("Codegen thread panicked"),
+                        }
+                    }
                 });
 
-            let object_path = object_file.into_temp_path();
-
-            if let Err(err) = codegen.emit_object(&object_path) {
-                let report_string = driver.report(&err).unwrap_or_default();
-                eprintln!("{}", report_string);
-                drop(object_path);
-                cli::println_error("Codegen failed");
-                exit(1);
+                if !failures.is_empty() {
+                    for err in &failures {
+                        let report_string = driver.report(err).unwrap_or_default();
+                        eprintln!("{}", report_string);
+                    }
+                    cli::println_error("Codegen failed");
+                    exit(1);
+                }
             }
+
+            timer.mark_elapsed("codegen", codegen_time);
+            timer.mark_elapsed("emit", emit_time);
 
             let extra: Vec<std::path::PathBuf> = if linker.accepts_c_sources() {
                 linked_files.clone()
@@ -659,11 +850,9 @@ fn compile(args: cli::Args) {
                 Vec::new()
             };
 
-            let result = linker.link(
-                std::slice::from_ref(&object_path.to_path_buf()),
-                &output,
-                &extra,
-            );
+            let result = linker.link(&object_paths, &output, &extra);
+
+            timer.mark("link");
 
             match result {
                 Ok(output_path) => {
@@ -692,7 +881,7 @@ fn compile(args: cli::Args) {
                         linker.name()
                     ));
                     eprintln!("\n{err}\n");
-                    drop(object_path);
+                    drop(object_files);
                     exit(1);
                 }
             }

@@ -1,5 +1,5 @@
 use lasso::Spur;
-use std::path::PathBuf;
+use zeen_driver::ModuleId;
 
 use zeen_ast::{
     Declaration, DeclarationKind, Expression, ExpressionKind, Statement, StatementKind, TypeExpr,
@@ -20,7 +20,7 @@ pub(crate) const CAPTURE_DEPTH_LIMIT: usize = 64;
 impl<'arena> Interp<'arena> {
     pub(crate) fn capture_expr(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         expr: &'arena Expression<'arena>,
     ) -> Result<&'arena Expression<'arena>, ()> {
         if let ExpressionKind::Splice { expr: inner } = &expr.kind {
@@ -435,7 +435,7 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn capture_type(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         ty: &'arena TypeExpr<'arena>,
     ) -> Result<&'arena TypeExpr<'arena>, ()> {
         if let TypeKind::Splice(inner) = &ty.kind {
@@ -608,7 +608,7 @@ impl<'arena> Interp<'arena> {
 
     pub(crate) fn capture_decl(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         decl: &'arena Declaration<'arena>,
     ) -> Result<&'arena Declaration<'arena>, ()> {
         match decl.kind {
@@ -1011,7 +1011,7 @@ impl<'arena> Interp<'arena> {
 
     fn capture_decl_name(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         name: (Spur, miette::SourceSpan),
     ) -> Result<((Spur, miette::SourceSpan), bool), ()> {
         let text = self.interned(&name.0);
@@ -1024,7 +1024,7 @@ impl<'arena> Interp<'arena> {
         };
 
         let fragment = inner.to_owned();
-        let value = match self.eval_interpolation_fragment(module, &fragment, name.1) {
+        let value = match self.eval_interpolation_fragment(&module, &fragment, name.1) {
             Ok(value) => value,
             Err(_) => return Err(()),
         };
@@ -1053,7 +1053,7 @@ impl<'arena> Interp<'arena> {
 
     fn splice_type(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         inner: &'arena Expression<'arena>,
         span: miette::SourceSpan,
     ) -> Result<&'arena TypeExpr<'arena>, ()> {
@@ -1098,7 +1098,7 @@ impl<'arena> Interp<'arena> {
 
     fn splice_expr(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         inner: &'arena Expression<'arena>,
         span: miette::SourceSpan,
     ) -> Result<&'arena Expression<'arena>, ()> {
@@ -1146,7 +1146,7 @@ impl<'arena> Interp<'arena> {
 
     fn capture_statement(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         stmt: &'arena Statement<'arena>,
     ) -> Result<&'arena Statement<'arena>, ()> {
         match stmt.kind {
@@ -1355,7 +1355,7 @@ impl<'arena> Interp<'arena> {
 
     fn capture_statement_list(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         stmts: &'arena [&'arena Statement<'arena>],
     ) -> Result<(&'arena [&'arena Statement<'arena>], bool), ()> {
         let mut rebuilt: Vec<&'arena Statement<'arena>> = Vec::with_capacity(stmts.len());
@@ -1381,7 +1381,7 @@ impl<'arena> Interp<'arena> {
 
     fn capture_expr_list(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         exprs: &'arena [&'arena Expression<'arena>],
     ) -> Result<(&'arena [&'arena Expression<'arena>], bool), ()> {
         let mut rebuilt: Vec<&'arena Expression<'arena>> = Vec::with_capacity(exprs.len());
@@ -1407,7 +1407,7 @@ impl<'arena> Interp<'arena> {
 
     fn capture_type_list(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         types: &'arena [&'arena TypeExpr<'arena>],
     ) -> Result<(&'arena [&'arena TypeExpr<'arena>], bool), ()> {
         let mut rebuilt: Vec<&'arena TypeExpr<'arena>> = Vec::with_capacity(types.len());
@@ -1433,7 +1433,7 @@ impl<'arena> Interp<'arena> {
 
     fn capture_where_clauses(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         clauses: Option<&'arena [WhereClause<'arena>]>,
     ) -> Result<(Option<&'arena [WhereClause<'arena>]>, bool), ()> {
         let Some(clauses) = clauses else {
@@ -1489,7 +1489,7 @@ impl<'arena> Interp<'arena> {
 
     fn capture_closure_params(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         params: &'arena [ClosureParam<'arena>],
     ) -> Result<&'arena [ClosureParam<'arena>], ()> {
         let mut rebuilt: Vec<ClosureParam<'arena>> = Vec::with_capacity(params.len());
@@ -1522,7 +1522,7 @@ impl<'arena> Interp<'arena> {
 
     fn capture_params(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         params: &'arena [FnParam<'arena>],
     ) -> Result<&'arena [FnParam<'arena>], ()> {
         let mut rebuilt: Vec<FnParam<'arena>> = Vec::with_capacity(params.len());
@@ -1552,7 +1552,7 @@ impl<'arena> Interp<'arena> {
 
     fn capture_fields(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         fields: &'arena [StructField<'arena>],
     ) -> Result<(&'arena [StructField<'arena>], bool), ()> {
         let mut rebuilt: Vec<StructField<'arena>> = Vec::with_capacity(fields.len());
@@ -1582,7 +1582,7 @@ impl<'arena> Interp<'arena> {
 
     fn capture_decl_list(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         decls: &'arena [&'arena Declaration<'arena>],
     ) -> Result<(&'arena [&'arena Declaration<'arena>], bool), ()> {
         let mut rebuilt: Vec<&'arena Declaration<'arena>> = Vec::with_capacity(decls.len());
@@ -1608,7 +1608,7 @@ impl<'arena> Interp<'arena> {
 
     fn capture_arm_list(
         &mut self,
-        module: &PathBuf,
+        module: ModuleId,
         arms: &'arena [&'arena Arm<'arena>],
     ) -> Result<(&'arena [&'arena Arm<'arena>], bool), ()> {
         let mut rebuilt: Vec<&'arena Arm<'arena>> = Vec::with_capacity(arms.len());

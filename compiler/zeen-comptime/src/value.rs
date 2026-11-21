@@ -1,12 +1,12 @@
-use std::path::PathBuf;
 use std::rc::Rc;
+use zeen_driver::ModuleId;
 
 use zeen_ast::{Declaration, Expression, TypeExpr};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructValue<'arena> {
     pub decl: &'arena Declaration<'arena>,
-    pub module: PathBuf,
+    pub module: ModuleId,
     pub name: Rc<str>,
     pub fields: Vec<(Rc<str>, Value<'arena>)>,
 }

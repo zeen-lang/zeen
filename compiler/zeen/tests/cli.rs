@@ -115,6 +115,34 @@ fn explicit_host_target_compiles_and_runs() {
 }
 
 #[test]
+fn codegen_units_compile_and_run() {
+    let triple = host_triple();
+    if zeen_linker::ObjectLinker::detect(&triple).is_err() {
+        eprintln!("skipping: no host toolchain found for `{triple}`");
+        return;
+    }
+
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/test_cases/hello_world.zn");
+    let binary = std::env::temp_dir().join(format!("zeen-cli-units-{}.bin", std::process::id()));
+
+    Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .arg(&source)
+        .arg(&binary)
+        .args(["--codegen-units", "4"])
+        .assert()
+        .success();
+
+    let output = ProcessCommand::new(zeen_linker::ObjectLinker::output_path_for(&triple, &binary))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "");
+    assert_eq!(stdout, "Hello, World!\n");
+
+    let _ = fs::remove_file(zeen_linker::ObjectLinker::output_path_for(&triple, &binary));
+}
+
+#[test]
 fn std_flag_with_missing_directory_fails() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/test_cases/hello_world.zn");
 
@@ -184,6 +212,32 @@ fn check_accepts_library_without_main() {
         .args(["--check", "--emit", "OBJ"])
         .assert()
         .success();
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn timings_flag_prints_stage_times() {
+    let dir = std::env::temp_dir().join(format!("zeen_timings_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src_path = dir.join("ok.zn");
+    std::fs::write(&src_path, "fn main() i32 {\n  return 0;\n}\n").unwrap();
+
+    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .arg(&src_path)
+        .arg("--check")
+        .arg("--timings")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(stderr.contains("Timing"), "{stderr}");
+    assert!(stderr.contains("parse"), "{stderr}");
+    assert!(stderr.contains("typecheck"), "{stderr}");
 
     let _ = std::fs::remove_dir_all(&dir);
 }

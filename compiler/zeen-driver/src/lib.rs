@@ -49,6 +49,9 @@ impl MietteDriver {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ModuleId(pub u32);
+
 pub struct CompilationContext {
     pub paths: PathsConfig,
     pub core_files: Vec<(&'static str, &'static str)>,
