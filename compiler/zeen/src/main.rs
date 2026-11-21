@@ -31,6 +31,38 @@ fn with_default_extension(path: &Path, ext: &str) -> std::path::PathBuf {
 
 const COMPILER_THREAD_STACK: usize = 256 * 1024 * 1024;
 
+struct StageTimer {
+    enabled: bool,
+    last: std::time::Instant,
+}
+
+impl StageTimer {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            last: std::time::Instant::now(),
+        }
+    }
+
+    fn mark(&mut self, label: &str) {
+        if !self.enabled {
+            return;
+        }
+
+        let now = std::time::Instant::now();
+
+        cli::println_info(
+            "Timing",
+            format!(
+                "{label:<12} {:>9.3} ms",
+                (now - self.last).as_secs_f64() * 1000.0
+            ),
+        );
+
+        self.last = now;
+    }
+}
+
 fn parse_pkg_flags(flags: &[String]) -> Vec<(String, std::path::PathBuf)> {
     let mut out = Vec::new();
     for flag in flags {
@@ -199,6 +231,7 @@ fn main() {
 
 fn compile(args: cli::Args) {
     let compilation_start = std::time::Instant::now();
+    let mut timer = StageTimer::new(args.timings);
     let target_triple = args.target.clone().unwrap_or_else(targets::host_target);
 
     let path = args
@@ -255,6 +288,8 @@ fn compile(args: cli::Args) {
 
         Arc::new(src)
     };
+
+    timer.mark("read");
 
     let filename = Rc::new(filename.to_string());
     let project_root = std::fs::canonicalize(&path)
@@ -324,10 +359,14 @@ fn compile(args: cli::Args) {
         exit(1);
     });
 
+    timer.mark("parse");
+
     // cli::println_info("Preprocessing", "conditional declarations for target");
 
     let target = zeen_driver::Target::parse(&target_triple);
     let program = zeen_preprocessor::resolve(program, &bump, &rodeo, &target, context.mode);
+
+    timer.mark("preprocess");
 
     // cli::println_info(
     //     "Resolving",
@@ -354,10 +393,14 @@ fn compile(args: cli::Args) {
         exit(1);
     });
 
+    timer.mark("resolve");
+
     let mut hir_lowering = zeen_hir::HirLowering::new(&resolution_result, Rc::clone(&rodeo));
     let hir_module = hir_lowering.lower_module(resolved_program);
 
     drop(bump);
+
+    timer.mark("hir");
 
     if !args.no_warns {
         for warning in &context.warnings {
@@ -388,6 +431,8 @@ fn compile(args: cli::Args) {
         exit(1);
     });
 
+    timer.mark("typecheck");
+
     let mut lowered_mir = zeen_mir::lowering::lower_program(
         Rc::clone(&rodeo),
         &mut typechecker_result,
@@ -406,12 +451,16 @@ fn compile(args: cli::Args) {
         exit(1);
     });
 
+    timer.mark("mir");
+
     let flow_result = zeen_flow::run_dataflow(
         &mut lowered_mir.program,
         &mut typechecker_result,
         &resolution_result,
         Rc::clone(&rodeo),
     );
+
+    timer.mark("flow");
 
     match flow_result {
         Ok(result) => {
@@ -538,6 +587,8 @@ fn compile(args: cli::Args) {
         exit(1);
     }
 
+    timer.mark("codegen");
+
     if cfg!(not(target_os = "windows"))
         && let Err(err) = codegen.verify()
     {
@@ -557,6 +608,8 @@ fn compile(args: cli::Args) {
                 cli::println_error("Codegen failed");
                 exit(1);
             }
+
+            timer.mark("emit");
 
             cli::println_info(
                 "Emitted",
@@ -586,6 +639,8 @@ fn compile(args: cli::Args) {
                 cli::println_error("Codegen failed");
                 exit(1);
             }
+
+            timer.mark("emit");
 
             cli::println_info(
                 "Emitted",
@@ -648,6 +703,8 @@ fn compile(args: cli::Args) {
                 exit(1);
             }
 
+            timer.mark("emit");
+
             let extra: Vec<std::path::PathBuf> = if linker.accepts_c_sources() {
                 linked_files.clone()
             } else {
@@ -664,6 +721,8 @@ fn compile(args: cli::Args) {
                 &output,
                 &extra,
             );
+
+            timer.mark("link");
 
             match result {
                 Ok(output_path) => {

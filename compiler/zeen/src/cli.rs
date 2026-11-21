@@ -99,6 +99,9 @@ pub struct Args {
     )]
     pub pkg: Vec<String>,
 
+    #[arg(long = "timings", action, help = "Print per-stage compilation timings")]
+    pub timings: bool,
+
     /// `--targets-list` flag to print all supported target triples
     #[arg(long = "targets-list", action, help = "List supported target triples")]
     pub targets_list: bool,

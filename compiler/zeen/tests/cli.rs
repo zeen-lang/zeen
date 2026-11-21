@@ -189,6 +189,32 @@ fn check_accepts_library_without_main() {
 }
 
 #[test]
+fn timings_flag_prints_stage_times() {
+    let dir = std::env::temp_dir().join(format!("zeen_timings_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src_path = dir.join("ok.zn");
+    std::fs::write(&src_path, "fn main() i32 {\n  return 0;\n}\n").unwrap();
+
+    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .arg(&src_path)
+        .arg("--check")
+        .arg("--timings")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(stderr.contains("Timing"), "{stderr}");
+    assert!(stderr.contains("parse"), "{stderr}");
+    assert!(stderr.contains("typecheck"), "{stderr}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn check_rejects_invalid_program() {
     let dir = std::env::temp_dir().join(format!("zeen_check_bad_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
