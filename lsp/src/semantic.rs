@@ -96,7 +96,7 @@ fn collect_with(text: &str, analysis: &Analysis) -> Vec<RawToken> {
         });
     }
 
-    let mut items = collect(text);
+    let mut items = collect(text, !analysis.occurrences.is_empty());
 
     items.retain(|item| {
         !overlay.iter().any(|cover| {
@@ -137,7 +137,7 @@ fn is_comptime_type(text: &str) -> bool {
     )
 }
 
-fn collect(text: &str) -> Vec<RawToken> {
+fn collect(text: &str, idents: bool) -> Vec<RawToken> {
     let starts = line_starts(text);
     let mut items: Vec<RawToken> = Vec::new();
 
@@ -145,7 +145,7 @@ fn collect(text: &str) -> Vec<RawToken> {
         let start = token.span.offset().min(text.len());
         let end = start.saturating_add(token.span.len()).min(text.len());
         let slice = &text[start..end];
-        let Some(token_type) = token_kind_index(token.kind, slice) else {
+        let Some(token_type) = token_kind_index(token.kind, slice, idents) else {
             continue;
         };
 
@@ -213,7 +213,7 @@ fn encode(items: Vec<RawToken>) -> Vec<SemanticToken> {
     out
 }
 
-fn token_kind_index(kind: TokenKind, text: &str) -> Option<TokenType> {
+fn token_kind_index(kind: TokenKind, text: &str, idents: bool) -> Option<TokenType> {
     match kind {
         TokenKind::Keyword(_) => Some(TokenType::Keyword),
         TokenKind::Type(_) => Some(TokenType::Type),
@@ -227,8 +227,10 @@ fn token_kind_index(kind: TokenKind, text: &str) -> Option<TokenType> {
         TokenKind::Ident => {
             if is_comptime_type(text) {
                 Some(TokenType::Type)
-            } else {
+            } else if idents {
                 Some(TokenType::Variable)
+            } else {
+                None
             }
         }
         TokenKind::MacroIdent => Some(TokenType::Macro),
@@ -315,6 +317,101 @@ mod tests {
     fn offset_position(text: &str, offset: usize) -> (u32, u32) {
         let starts = line_starts(text);
         offset_to_line_col(&starts, offset)
+    }
+
+    const INCOMPLETE_USE_SAMPLE: &str = "use std.c\n\nfn main() {\n    let x: i32 = 1;\n}\n";
+
+    #[test]
+    fn incomplete_use_leaves_identifiers_to_grammar() {
+        let uri: Uri = "file:///tmp/zeen-lsp-semantic-use.zn".parse().unwrap();
+        let output = crate::diagnostics::check(&uri, INCOMPLETE_USE_SAMPLE, &[]);
+        let tokens = decoded(
+            INCOMPLETE_USE_SAMPLE,
+            &tokens_for(INCOMPLETE_USE_SAMPLE, &output.analysis),
+        );
+
+        for name in ["std", "c", "main"] {
+            let offset = INCOMPLETE_USE_SAMPLE.find(name).unwrap();
+            let (line, start) = offset_position(INCOMPLETE_USE_SAMPLE, offset);
+
+            assert!(
+                !tokens
+                    .iter()
+                    .any(|token| token.0 == line && token.1 == start),
+                "{name} should fall back to the grammar while the use is unfinished"
+            );
+        }
+
+        let use_offset = INCOMPLETE_USE_SAMPLE.find("use").unwrap();
+        let (use_line, use_start) = offset_position(INCOMPLETE_USE_SAMPLE, use_offset);
+
+        assert!(
+            tokens
+                .iter()
+                .any(|token| token.0 == use_line && token.1 == use_start)
+        );
+    }
+
+    const STRUCT_INIT_SAMPLE: &str = "struct Foo {\n    x: i32,\n}\n\nfn main() {\n    const _: Foo = .{\n        .x = 123,\n    };\n}\n";
+
+    #[test]
+    fn struct_init_field_name_covers_only_the_name() {
+        let uri: Uri = "file:///tmp/zeen-lsp-semantic-struct-init.zn"
+            .parse()
+            .unwrap();
+        let output = crate::diagnostics::check(&uri, STRUCT_INIT_SAMPLE, &[]);
+        assert!(crate::diagnostics::only_errors(&output.diagnostics).is_empty());
+
+        let tokens = decoded(
+            STRUCT_INIT_SAMPLE,
+            &tokens_for(STRUCT_INIT_SAMPLE, &output.analysis),
+        );
+
+        let field = STRUCT_INIT_SAMPLE.find("x = 123").unwrap();
+        let (field_line, field_start) = offset_position(STRUCT_INIT_SAMPLE, field);
+        let field_token = tokens
+            .iter()
+            .find(|token| token.0 == field_line && token.1 == field_start)
+            .unwrap();
+
+        assert_eq!(field_token.2, 1);
+        assert_eq!(field_token.3, TokenType::Property as u32);
+
+        let value = STRUCT_INIT_SAMPLE.find("123").unwrap();
+        let (value_line, value_start) = offset_position(STRUCT_INIT_SAMPLE, value);
+        let value_token = tokens
+            .iter()
+            .find(|token| token.0 == value_line && token.1 == value_start)
+            .unwrap();
+
+        assert_eq!(value_token.3, TokenType::Number as u32);
+    }
+
+    const COMPLETE_SAMPLE: &str = "fn main() {\n    let value: i32 = 1;\n    value;\n}\n";
+
+    #[test]
+    fn complete_code_keeps_variable_tokens() {
+        let uri: Uri = "file:///tmp/zeen-lsp-semantic-complete.zn".parse().unwrap();
+        let output = crate::diagnostics::check(&uri, COMPLETE_SAMPLE, &[]);
+        assert!(crate::diagnostics::only_errors(&output.diagnostics).is_empty());
+
+        let tokens = decoded(
+            COMPLETE_SAMPLE,
+            &tokens_for(COMPLETE_SAMPLE, &output.analysis),
+        );
+
+        for offset in COMPLETE_SAMPLE
+            .match_indices("value")
+            .map(|(index, _)| index)
+        {
+            let (line, start) = offset_position(COMPLETE_SAMPLE, offset);
+            let token = tokens
+                .iter()
+                .find(|token| token.0 == line && token.1 == start)
+                .unwrap();
+
+            assert_eq!(token.3, TokenType::Variable as u32, "offset {offset}");
+        }
     }
 
     #[test]

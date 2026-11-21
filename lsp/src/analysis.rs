@@ -1095,6 +1095,22 @@ impl<'ctx> Walker<'ctx> {
         self.push(offset, len, role, (None, None, None), None, def)
     }
 
+    fn field_init_name(&self, span: SourceSpan, name: Spur) -> (usize, usize) {
+        let name = self.interner.resolve(&name);
+        let start = span.offset().min(self.text.len());
+        let end = span_end(span).min(self.text.len());
+
+        let Some(slice) = self.text.get(start..end) else {
+            return (start, 0);
+        };
+
+        let Some(position) = slice.find(name) else {
+            return (start, 0);
+        };
+
+        (start + position, name.len())
+    }
+
     fn emit_target(
         &mut self,
         offset: usize,
@@ -2183,14 +2199,15 @@ impl<'ctx> Walker<'ctx> {
                 }
 
                 for init in fields {
-                    self.emit_def(init.span.offset(), init.span.len(), Role::Property, None);
+                    let (offset, len) = self.field_init_name(init.span, init.name);
+                    self.emit_def(offset, len, Role::Property, None);
 
                     if let Some(def_id) = ty.0 {
                         self.analysis.raw_fields.push(RawFieldInit {
                             struct_def: def_id,
                             name: init.name,
-                            offset: init.span.offset(),
-                            len: init.span.len(),
+                            offset,
+                            len,
                         });
                     }
 
@@ -2200,7 +2217,8 @@ impl<'ctx> Walker<'ctx> {
 
             HirExprKind::AnonymousStructInit { fields } => {
                 for init in fields {
-                    self.emit_def(init.span.offset(), init.span.len(), Role::Property, None);
+                    let (offset, len) = self.field_init_name(init.span, init.name);
+                    self.emit_def(offset, len, Role::Property, None);
 
                     self.walk_expr(&init.value);
                 }
