@@ -115,6 +115,34 @@ fn explicit_host_target_compiles_and_runs() {
 }
 
 #[test]
+fn codegen_units_compile_and_run() {
+    let triple = host_triple();
+    if zeen_linker::ObjectLinker::detect(&triple).is_err() {
+        eprintln!("skipping: no host toolchain found for `{triple}`");
+        return;
+    }
+
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/test_cases/hello_world.zn");
+    let binary = std::env::temp_dir().join(format!("zeen-cli-units-{}.bin", std::process::id()));
+
+    Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .arg(&source)
+        .arg(&binary)
+        .args(["--codegen-units", "4"])
+        .assert()
+        .success();
+
+    let output = ProcessCommand::new(zeen_linker::ObjectLinker::output_path_for(&triple, &binary))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "");
+    assert_eq!(stdout, "Hello, World!\n");
+
+    let _ = fs::remove_file(zeen_linker::ObjectLinker::output_path_for(&triple, &binary));
+}
+
+#[test]
 fn std_flag_with_missing_directory_fails() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/test_cases/hello_world.zn");
 

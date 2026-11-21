@@ -1,5 +1,5 @@
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use std::{cell::RefCell, path::Path, rc::Rc};
+use std::{path::Path, str::FromStr};
 
 use inkwell::{
     AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel,
@@ -50,6 +50,8 @@ pub struct CodegenOptions {
     pub target: Option<String>,
     pub main_fn: Option<MirFunctionId>,
     pub source_file_name: String,
+    pub units: u32,
+    pub unit: u32,
 }
 
 impl Default for CodegenOptions {
@@ -59,7 +61,62 @@ impl Default for CodegenOptions {
             target: None,
             main_fn: None,
             source_file_name: "test.zn".to_string(),
+            units: 1,
+            unit: 0,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodegenUnits {
+    Count(u32),
+    Auto,
+}
+
+const AUTO_UNIT_FUNCTIONS: usize = 16;
+
+impl CodegenUnits {
+    pub fn resolve(self, function_count: usize) -> u32 {
+        match self {
+            Self::Count(count) => count.min(function_count.max(1) as u32).max(1),
+            Self::Auto => {
+                let threads = std::thread::available_parallelism()
+                    .map(|threads| threads.get())
+                    .unwrap_or(1);
+                threads.min(function_count / AUTO_UNIT_FUNCTIONS).max(1) as u32
+            }
+        }
+    }
+}
+
+impl FromStr for CodegenUnits {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value == "auto" {
+            return Ok(Self::Auto);
+        }
+
+        match value.parse::<u32>() {
+            Ok(count) if count > 0 => Ok(Self::Count(count)),
+            _ => Err(format!(
+                "expected a positive integer or `auto`, got `{value}`"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CodeGenNames(HashMap<Spur, String>);
+
+impl CodeGenNames {
+    pub fn snapshot(rodeo: &Rodeo) -> Self {
+        Self(
+            rodeo
+                .iter()
+                .map(|(spur, value)| (spur, value.to_string()))
+                .collect(),
+        )
     }
 }
 
@@ -76,7 +133,7 @@ pub struct CodeGen<'ctx, 'prog> {
     program: &'prog MirProgram,
     typecheck: &'prog TypeCheckResult,
     resolution: &'prog ResolutionResult,
-    rodeo: Rc<RefCell<Rodeo>>,
+    names: CodeGenNames,
 
     options: CodegenOptions,
 
@@ -102,9 +159,13 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         program: &'prog MirProgram,
         typecheck: &'prog TypeCheckResult,
         resolution: &'prog ResolutionResult,
-        rodeo: Rc<RefCell<Rodeo>>,
+        names: CodeGenNames,
         options: CodegenOptions,
     ) -> Result<Self, CodegenError> {
+        let mut options = options;
+        options.units = options.units.max(1);
+        options.unit = options.unit.min(options.units - 1);
+
         let initialization = InitializationConfig::default();
         Target::initialize_x86(&initialization);
         Target::initialize_arm(&initialization);
@@ -170,7 +231,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             program,
             typecheck,
             resolution,
-            rodeo,
+            names,
             options,
             functions: HashMap::default(),
             struct_types: HashMap::default(),
@@ -204,20 +265,31 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
     }
 
     pub fn generate(&mut self) -> Result<(), CodegenError> {
-        if self.options.mode == CompilationMode::Debug {
-            self.emit_panic_stack_globals();
+        let owner = self.is_owner();
+        let debug = self.options.mode == CompilationMode::Debug;
+
+        if debug {
+            if owner {
+                self.emit_panic_stack_globals();
+            } else {
+                self.declare_panic_stack();
+            }
         }
         self.register_enum_layouts();
         self.register_struct_layouts();
         self.fill_enum_layouts();
         self.emit_globals();
         self.declare_externs();
-        self.emit_stdout_write_runtime();
+        if owner {
+            self.emit_stdout_write_runtime();
+        }
         self.declare_functions();
         self.emit_function_bodies();
-        self.emit_main_wrapper();
-        if self.options.mode == CompilationMode::Debug {
-            self.emit_panic_runtime();
+        if owner {
+            self.emit_main_wrapper();
+            if debug {
+                self.emit_panic_runtime();
+            }
         }
 
         if self.options.mode == CompilationMode::Release {
@@ -225,6 +297,22 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         }
 
         Ok(())
+    }
+
+    fn is_owner(&self) -> bool {
+        self.options.unit == 0
+    }
+
+    fn emits_function(&self, id: MirFunctionId) -> bool {
+        id.0 % self.options.units == self.options.unit
+    }
+
+    fn definition_linkage(&self) -> inkwell::module::Linkage {
+        if self.options.units > 1 {
+            inkwell::module::Linkage::External
+        } else {
+            inkwell::module::Linkage::Internal
+        }
     }
 
     pub fn emit_object(&self, path: &Path) -> Result<(), CodegenError> {
@@ -469,25 +557,27 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             if gv.is_extern {
                 global.set_linkage(inkwell::module::Linkage::External);
             } else {
-                global.set_linkage(inkwell::module::Linkage::Internal);
+                global.set_linkage(self.definition_linkage());
                 global.set_constant(false);
-                match llvm_ty {
-                    BasicTypeEnum::IntType(t) => {
-                        global.set_initializer(&t.const_zero());
+                if self.is_owner() {
+                    match llvm_ty {
+                        BasicTypeEnum::IntType(t) => {
+                            global.set_initializer(&t.const_zero());
+                        }
+                        BasicTypeEnum::FloatType(t) => {
+                            global.set_initializer(&t.const_zero());
+                        }
+                        BasicTypeEnum::PointerType(t) => {
+                            global.set_initializer(&t.const_null());
+                        }
+                        BasicTypeEnum::ArrayType(t) => {
+                            global.set_initializer(&t.const_zero());
+                        }
+                        BasicTypeEnum::StructType(t) => {
+                            global.set_initializer(&t.const_zero());
+                        }
+                        _ => {}
                     }
-                    BasicTypeEnum::FloatType(t) => {
-                        global.set_initializer(&t.const_zero());
-                    }
-                    BasicTypeEnum::PointerType(t) => {
-                        global.set_initializer(&t.const_null());
-                    }
-                    BasicTypeEnum::ArrayType(t) => {
-                        global.set_initializer(&t.const_zero());
-                    }
-                    BasicTypeEnum::StructType(t) => {
-                        global.set_initializer(&t.const_zero());
-                    }
-                    _ => {}
                 }
             }
             self.global_vars.insert(MirGlobalVarId(id as u32), global);
@@ -637,10 +727,10 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             let fn_type = self.make_fn_type(ret, &param_types, false);
 
             let function = self.module.add_function(&name, fn_type, None);
-            if self.options.mode == CompilationMode::Debug {
+            if self.options.mode == CompilationMode::Debug && self.emits_function(id) {
                 function.set_section(Some(&format!(".text.{}", name)));
             }
-            if !self.fn_is_exported(id, func) {
+            if !self.fn_is_exported(id, func) && self.options.units == 1 {
                 function.set_linkage(inkwell::module::Linkage::Internal);
             }
             self.functions.insert(id, function);
@@ -652,7 +742,9 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         ids.sort_by_key(|id| id.0);
 
         for id in ids {
-            self.emit_function(id);
+            if self.emits_function(id) {
+                self.emit_function(id);
+            }
         }
     }
 
@@ -740,8 +832,8 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         {
             argc_global.set_initializer(&i32_ty.const_zero());
             argv_global.set_initializer(&ptr_ty.const_null());
-            argc_global.set_linkage(inkwell::module::Linkage::Internal);
-            argv_global.set_linkage(inkwell::module::Linkage::Internal);
+            argc_global.set_linkage(self.definition_linkage());
+            argv_global.set_linkage(self.definition_linkage());
             self.builder
                 .build_store(argc_global.as_pointer_value(), argc)
                 .unwrap();
@@ -3775,14 +3867,34 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         let arr_ty = ptr_ty.array_type(PANIC_STACK_DEPTH);
 
         let frames = self.module.add_global(arr_ty, None, "zeen.panic.frames");
-        frames.set_linkage(inkwell::module::Linkage::Internal);
+        frames.set_linkage(self.definition_linkage());
         frames.set_initializer(&arr_ty.const_zero());
 
         let depth = self
             .module
             .add_global(self.context.i32_type(), None, "zeen.panic.depth");
-        depth.set_linkage(inkwell::module::Linkage::Internal);
+        depth.set_linkage(self.definition_linkage());
         depth.set_initializer(&self.context.i32_type().const_zero());
+    }
+
+    fn declare_panic_stack(&mut self) {
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let arr_ty = ptr_ty.array_type(PANIC_STACK_DEPTH);
+
+        let frames = self.module.add_global(arr_ty, None, "zeen.panic.frames");
+        frames.set_linkage(inkwell::module::Linkage::External);
+
+        let depth = self
+            .module
+            .add_global(self.context.i32_type(), None, "zeen.panic.depth");
+        depth.set_linkage(inkwell::module::Linkage::External);
+
+        let fn_type = self.context.void_type().fn_type(&[], false);
+        self.module.add_function(
+            "zeen.panic_stack",
+            fn_type,
+            Some(inkwell::module::Linkage::External),
+        );
     }
 
     fn emit_panic_prologue(&mut self, func: &MirFunction, fn_id: MirFunctionId) {
@@ -3899,7 +4011,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             None => self.module.add_function(
                 "zeen.panic_stack",
                 fn_type,
-                Some(inkwell::module::Linkage::Internal),
+                Some(self.definition_linkage()),
             ),
         };
 
@@ -4807,7 +4919,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
     }
 
     fn resolve_spur(&self, spur: Spur) -> String {
-        self.rodeo.borrow().resolve(&spur).to_string()
+        self.names.0.get(&spur).cloned().unwrap_or_default()
     }
 
     fn fn_is_exported(&self, id: MirFunctionId, func: &MirFunction) -> bool {
