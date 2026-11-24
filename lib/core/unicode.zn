@@ -1,11 +1,11 @@
 // @zeen-core
 
-/// Unicode scalar value stored as a 32 bit code point
+/// Unicode scalar value stored as a 32 bit code point.
 pub struct Rune {
   inner: u32,
 }
 
-/// Iterator over the code points of an UTF-8 byte sequence
+/// Iterator over the code points of an UTF-8 byte sequence.
 pub struct RuneIter {
   ptr: [*]const char,
   len: usize,
@@ -15,12 +15,12 @@ pub struct RuneIter {
 implement Copy : Rune {}
 
 implement RuneIter {
-  /// Creates iterator over the bytes of a slice
+  /// Creates iterator over the bytes of a slice.
   pub fn new(bytes: []const char) RuneIter {
     return RuneIter.from_parts(bytes.ptr, bytes.len);
   }
 
-  /// Creates iterator from raw bytes
+  /// Creates iterator from raw bytes.
   pub fn from_parts(ptr: [*]const char, len: usize) RuneIter {
     return RuneIter {
       .ptr = ptr,
@@ -33,7 +33,7 @@ implement RuneIter {
 implement Iterator : RuneIter {
   alias Item = Rune;
 
-  /// Returns the next code point of the sequence
+  /// Returns the next code point of the sequence.
   pub fn next(*self) Option[Rune] {
     if (self.index >= self.len) {
       return Option.None;
@@ -44,22 +44,22 @@ implement Iterator : RuneIter {
 }
 
 implement Rune {
-  /// Returns the replacement character `U+FFFD`
+  /// Returns the replacement character `U+FFFD`.
   pub fn replacement() Rune {
     return Rune { .inner = 0xFFFD };
   }
 
-  /// Returns the highest scalar value `U+10FFFF`
+  /// Returns the highest scalar value `U+10FFFF`.
   pub fn max() Rune {
     return Rune { .inner = 0x10FFFF };
   }
 
-  /// Checks that the value is a valid Unicode scalar value
+  /// Checks that the value is a valid Unicode scalar value.
   pub fn is_scalar(value: u32) bool {
     return value <= 0x10FFFF && (value < 0xD800 || value > 0xDFFF);
   }
 
-  /// Creates a rune from a checked code point
+  /// Creates a rune from a checked code point.
   pub fn from_u32(value: u32) Option[Rune] {
     if (!Rune.is_scalar(value)) {
       return Option.None;
@@ -68,12 +68,12 @@ implement Rune {
     return Option.Some(Rune { .inner = value });
   }
 
-  /// Creates a rune without validation
+  /// Creates a rune without validation.
   pub fn from_u32_unchecked(value: u32) Rune {
     return Rune { .inner = value };
   }
 
-  /// Creates a rune from an ASCII byte
+  /// Creates a rune from an ASCII byte.
   pub fn from_ascii(byte: char) Option[Rune] {
     const code = @as(u32, byte);
 
@@ -84,7 +84,7 @@ implement Rune {
     return Option.Some(Rune { .inner = code });
   }
 
-  /// Decodes a single rune from the whole slice
+  /// Decodes a single rune from the whole slice.
   pub fn from_utf8(bytes: []const char) Option[Rune] {
     let index: usize = 0;
     const decoded = Rune.decode(bytes, &index);
@@ -100,12 +100,12 @@ implement Rune {
     return decoded;
   }
 
-  /// Decodes a rune at the position and advances the index
+  /// Decodes a rune at the position and advances the index.
   pub fn decode(bytes: []const char, index: *usize) Option[Rune] {
     return Rune.decode_ptr(bytes.ptr, bytes.len, index);
   }
 
-  /// Decodes a rune from raw bytes and advances the index
+  /// Decodes a rune from raw bytes and advances the index.
   pub fn decode_ptr(ptr: [*]const char, len: usize, index: *usize) Option[Rune] {
     const offset = *index;
 
@@ -182,12 +182,12 @@ implement Rune {
     return Option.Some(Rune.from_u32_unchecked(value));
   }
 
-  /// Decodes a rune and replaces invalid bytes with `U+FFFD`
+  /// Decodes a rune and replaces invalid bytes with `U+FFFD`.
   pub fn decode_lossy(bytes: []const char, index: *usize) Rune {
     return Rune.decode_ptr_lossy(bytes.ptr, bytes.len, index);
   }
 
-  /// Decodes a rune from raw bytes and replaces invalid ones with `U+FFFD`
+  /// Decodes a rune from raw bytes and replaces invalid ones with `U+FFFD`.
   pub fn decode_ptr_lossy(ptr: [*]const char, len: usize, index: *usize) Rune {
     const decoded = Rune.decode_ptr(ptr, len, index);
 
@@ -200,12 +200,12 @@ implement Rune {
     return Rune.replacement();
   }
 
-  /// Counts code points in the byte sequence
+  /// Counts code points in the byte sequence.
   pub fn count(bytes: []const char) usize {
     return Rune.count_ptr(bytes.ptr, bytes.len);
   }
 
-  /// Counts code points in raw bytes
+  /// Counts code points in raw bytes.
   pub fn count_ptr(ptr: [*]const char, len: usize) usize {
     let index: usize = 0;
     let total: usize = 0;
@@ -218,7 +218,7 @@ implement Rune {
     return total;
   }
 
-  /// Returns the start offset of the code point that ends at the offset
+  /// Returns the start offset of the code point that ends at the offset.
   pub fn prev_start(ptr: [*]const char, end: usize) usize {
     if (end < 1) {
       return 0;
@@ -241,12 +241,12 @@ implement Rune {
     return start;
   }
 
-  /// Returns the code point value
+  /// Returns the code point value.
   pub fn to_u32(self) u32 {
     return self.inner;
   }
 
-  /// Returns the ASCII byte of the rune
+  /// Returns the ASCII byte of the rune.
   pub fn to_ascii(self) Option[char] {
     if (!self.is_ascii()) {
       return Option.None;
@@ -255,7 +255,7 @@ implement Rune {
     return Option.Some(@as(char, self.inner));
   }
 
-  /// Returns the length of the UTF-8 encoding
+  /// Returns the length of the UTF-8 encoding.
   pub fn utf8_len(self) usize {
     const code = self.valid();
 
@@ -274,7 +274,7 @@ implement Rune {
     return 4;
   }
 
-  /// Encodes the rune as UTF-8 into the buffer
+  /// Encodes the rune as UTF-8 into the buffer.
   pub fn encode_utf8(self, out: *[4]u8) usize {
     const code = self.valid();
 
@@ -307,7 +307,7 @@ implement Rune {
     return 4;
   }
 
-  /// Returns the length of the UTF-16 encoding
+  /// Returns the length of the UTF-16 encoding.
   pub fn utf16_len(self) usize {
     if (self.valid() < 0x10000) {
       return 1;
@@ -316,7 +316,7 @@ implement Rune {
     return 2;
   }
 
-  /// Encodes the rune as UTF-16 into the buffer
+  /// Encodes the rune as UTF-16 into the buffer.
   pub fn encode_utf16(self, out: *[2]u16) usize {
     const code = self.valid();
 
@@ -334,37 +334,37 @@ implement Rune {
     return 2;
   }
 
-  /// Checks that the rune is ASCII
+  /// Checks that the rune is ASCII.
   pub fn is_ascii(self) bool {
     return self.inner < 0x80;
   }
 
-  /// Checks that the rune is an ASCII digit
+  /// Checks that the rune is an ASCII digit.
   pub fn is_ascii_digit(self) bool {
     return self.inner >= 48 && self.inner <= 57;
   }
 
-  /// Checks that the rune is an ASCII letter
+  /// Checks that the rune is an ASCII letter.
   pub fn is_ascii_alphabetic(self) bool {
     return (self.inner >= 65 && self.inner <= 90) || (self.inner >= 97 && self.inner <= 122);
   }
 
-  /// Checks that the rune is an ASCII digit or letter
+  /// Checks that the rune is an ASCII digit or letter.
   pub fn is_ascii_alphanumeric(self) bool {
     return self.is_ascii_digit() || self.is_ascii_alphabetic();
   }
 
-  /// Checks that the rune is an ASCII whitespace
+  /// Checks that the rune is an ASCII whitespace.
   pub fn is_ascii_whitespace(self) bool {
     return self.inner == 32 || (self.inner >= 9 && self.inner <= 13);
   }
 
-  /// Checks that the rune is an ASCII control character
+  /// Checks that the rune is an ASCII control character.
   pub fn is_ascii_control(self) bool {
     return self.inner < 32 || self.inner == 127;
   }
 
-  /// Returns the rune as an ASCII uppercase letter
+  /// Returns the rune as an ASCII uppercase letter.
   pub fn to_ascii_uppercase(self) Rune {
     if (self.inner >= 97 && self.inner <= 122) {
       return Rune { .inner = self.inner - 32 };
@@ -373,7 +373,7 @@ implement Rune {
     return self;
   }
 
-  /// Returns the rune as an ASCII lowercase letter
+  /// Returns the rune as an ASCII lowercase letter.
   pub fn to_ascii_lowercase(self) Rune {
     if (self.inner >= 65 && self.inner <= 90) {
       return Rune { .inner = self.inner + 32 };
@@ -408,14 +408,14 @@ implement Rune {
 }
 
 implement Eq : Rune {
-  /// Compares code points
+  /// Compares code points.
   pub fn eq(*const self, other: *const Self) bool {
     return self.inner == other.inner;
   }
 }
 
 implement Ord : Rune {
-  /// Compares code points by value
+  /// Compares code points by value.
   pub fn cmp(*const self, other: *const Self) Ordering {
     if (self.inner < other.inner) {
       return Ordering.Less;
@@ -430,14 +430,14 @@ implement Ord : Rune {
 }
 
 implement Hash : Rune {
-  /// Hashes the code point value
+  /// Hashes the code point value.
   pub fn hash(*const self) u64 {
     return self.inner.hash();
   }
 }
 
 implement Display : Rune {
-  /// Writes the rune as UTF-8
+  /// Writes the rune as UTF-8.
   pub fn display[W: StrWriter](*const self, out: *W) void {
     let buffer: [4]u8 = {0; 4};
     let len = (*self).encode_utf8(&buffer);
@@ -447,7 +447,7 @@ implement Display : Rune {
 }
 
 implement Debug : Rune {
-  /// Writes the rune as a quoted literal
+  /// Writes the rune as a quoted literal.
   pub fn debug[W: StrWriter](*const self, out: *W) void {
     (*out).write_str_single('\'');
 

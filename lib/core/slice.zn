@@ -13,10 +13,12 @@ pub struct Range {
 }
 
 implement Range {
+  /// Lower bound, `None` means an open start.
   pub fn first(*const self) Option[usize] {
     self.start
   }
 
+  /// Upper bound, `None` means an open end.
   pub fn last(*const self) Option[usize] {
     self.end
   }
@@ -27,6 +29,7 @@ implement Copy : Range {}
 implement Iterator : Range {
   alias Item = usize;
 
+  /// Yields the next index in the range.
   pub fn next(*self) Option[usize] {
     const start = self.start.unwrap_or(0);
     const done = self.end.is_some() && start >= self.end.unwrap_or(0);
@@ -40,6 +43,8 @@ implement Iterator : Range {
   }
 }
 
+/// Container that supports `container[range]` slicing.
 pub interface[T] Sliceable {
+  /// Borrows `range` of the container.
   pub fn slice(*const self, range: Range) []T;
 }

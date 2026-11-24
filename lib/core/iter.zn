@@ -1,35 +1,44 @@
 // @zeen-core
 
+/// Container that `Iterator.collect` can build.
 pub interface FromIterator {
   alias Item;
 
+  /// Empty container with `Item` already fixed.
   pub fn empty() Self;
 
+  /// Appends one item.
   pub fn push(*self, item: Item);
 }
 
-/// Main Iterator interface
+/// Main Iterator interface.
 pub interface Iterator {
   alias Item;
 
+  /// Yields the next item.
   pub fn next(*self) Option[Item];
 
+  /// Transforms every item with `f`.
   pub fn map[U, F: Callable(Item) U](self, f: F) MapIter[Self, U, F] {
     return MapIter#[Self, U, F] { .inner = self, .f = f };
   }
 
+  /// Yields only items accepted by `pred`.
   pub fn filter[P: Callable(Item) bool](self, pred: P) FilterIter[Self, P] {
     return FilterIter#[Self, P] { .inner = self, .pred = pred };
   }
 
+  /// Yields at most `count` items.
   pub fn take(self, count: usize) TakeIter[Self] {
     return TakeIter#[Self] { .inner = self, .remaining = count };
   }
 
+  /// Drops the first `count` items.
   pub fn skip(self, count: usize) SkipIter[Self] {
     return SkipIter#[Self] { .inner = self, .remaining = count };
   }
 
+  /// Checks that some item is accepted by `pred`.
   pub fn any[P: Callable(Item) bool](self, pred: P) bool {
     while (true) {
       switch (self.next()) {
@@ -45,6 +54,7 @@ pub interface Iterator {
     return false;
   }
 
+  /// Checks that every item is accepted by `pred`.
   pub fn all[P: Callable(Item) bool](self, pred: P) bool {
     while (true) {
       switch (self.next()) {
@@ -60,6 +70,7 @@ pub interface Iterator {
     return true;
   }
 
+  /// Consumes the iterator and returns its last item.
   pub fn last_item(self) Option[Item] {
     let last: Option[Item] = Option.None;
 
@@ -73,6 +84,7 @@ pub interface Iterator {
     return last;
   }
 
+  /// Consumes items up to `index` and returns that one.
   pub fn nth(self, index: usize) Option[Item] {
     let current: usize = 0;
 
@@ -92,6 +104,7 @@ pub interface Iterator {
     return Option.None;
   }
 
+  /// Drains the iterator into a `FromIterator` container.
   pub fn collect[C: FromIterator](self) C
     where C.Item = Item {
     let out = C.empty();
@@ -106,6 +119,7 @@ pub interface Iterator {
     return out;
   }
 
+  /// Consumes the iterator and counts its items.
   pub fn count(self) usize {
     let total: usize = 0;
 
@@ -119,6 +133,7 @@ pub interface Iterator {
     return total;
   }
 
+  /// Calls `f` for every item.
   pub fn for_each[F: Callable(Item) void](self, f: F) {
     while (true) {
       switch (self.next()) {
@@ -128,6 +143,7 @@ pub interface Iterator {
     }
   }
 
+  /// Folds the items into one value with `f`.
   pub fn fold[Acc, F: Callable(Acc, Item) Acc](self, init: Acc, f: F) Acc {
     let acc = init;
 
@@ -142,11 +158,13 @@ pub interface Iterator {
   }
 }
 
+/// Iterator returned by `Iterator.map`.
 pub struct MapIter[I: Iterator, U, F] {
   inner: I,
   f: F,
 }
 
+/// Iterator returned by `Iterator.filter`.
 pub struct FilterIter[I: Iterator, P] {
   inner: I,
   pred: P,
@@ -182,6 +200,7 @@ implement[I: Iterator, P: Callable(I.Item) bool] Iterator : FilterIter[I, P] {
   }
 }
 
+/// Iterator returned by `Iterator.take`.
 pub struct TakeIter[I: Iterator] {
   inner: I,
   remaining: usize,
@@ -201,6 +220,7 @@ implement[I: Iterator] Iterator : TakeIter[I] {
   }
 }
 
+/// Iterator returned by `Iterator.skip`.
 pub struct SkipIter[I: Iterator] {
   inner: I,
   remaining: usize,
@@ -223,22 +243,26 @@ implement[I: Iterator] Iterator : SkipIter[I] {
   }
 }
 
-/// Returns struct that implements `Iterator` with pointer access
+/// Returns struct that implements `Iterator` with pointer access.
 pub interface PtrIterator {
   alias Iter: Iterator;
 
+  /// Borrows an iterator over the items.
   pub fn iter(*const self) Iter;
 }
 
+/// Mutable borrowed iteration over a container.
 pub interface MutPtrIterator {
   alias Iter: Iterator;
 
+  /// Borrows an iterator with writable items.
   pub fn iter_mut(*self) Iter;
 }
 
-/// Converter from ownership `self` to struct with `Iterator` implementation
+/// Converter from ownership `self` to struct with `Iterator` implementation.
 pub interface OwnedIterator {
   alias Iter: Iterator;
 
+  /// Takes the items out as an iterator.
   pub fn into_iter(self) Iter;
 }

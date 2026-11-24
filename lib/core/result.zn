@@ -1,19 +1,23 @@
 // @zeen-core
 
+/// Fallible value, either `Ok` or `Err`.
 pub enum Result[T, E] {
   Ok: T,
   Err: E,
 }
 
 implement[T, E] Result[T, E] {
+  /// Checks that the result holds `Ok`.
   pub fn is_ok(*const self) bool {
     @enumTag(self) == 0
   }
 
+  /// Checks that the result holds `Err`.
   pub fn is_err(*const self) bool {
     @enumTag(self) == 1
   }
 
+  /// Returns the `Ok` value or panics on `Err`.
   pub fn unwrap(self) T {
     switch (self) {
       .Ok(value) => value,
@@ -21,6 +25,7 @@ implement[T, E] Result[T, E] {
     }
   }
 
+  /// Returns the `Err` value or panics on `Ok`.
   pub fn unwrap_err(self) E {
     switch (self) {
       .Ok(_value) => @panic("Called `unwrap_err()` on `Ok` result"),
@@ -28,6 +33,7 @@ implement[T, E] Result[T, E] {
     }
   }
 
+  /// Returns the `Ok` value or `default`.
   pub fn unwrap_or(self, default: T) T {
     switch (self) {
       .Ok(value) => value,
@@ -35,6 +41,7 @@ implement[T, E] Result[T, E] {
     }
   }
 
+  /// Returns the `Ok` value or the result of `f`.
   pub fn unwrap_or_else[F: CallableOnce() T](self, f: F) T {
     switch (self) {
       .Ok(value) => value,
@@ -42,6 +49,7 @@ implement[T, E] Result[T, E] {
     }
   }
 
+  /// Returns the `Ok` value or panics with `msg`.
   pub fn expect(self, msg: []const char) T {
     switch (self) {
       .Ok(value) => value,
@@ -49,6 +57,7 @@ implement[T, E] Result[T, E] {
     }
   }
 
+  /// Returns the `Err` value or panics with `msg`.
   pub fn expect_err(self, msg: []const char) E {
     switch (self) {
       .Ok(_value) => @panic("{}", msg),
@@ -56,6 +65,7 @@ implement[T, E] Result[T, E] {
     }
   }
 
+  /// Converts the `Ok` value into `Option`.
   pub fn ok(self) Option[T] {
     switch (self) {
       .Ok(value) => Option.Some(value),
@@ -63,6 +73,7 @@ implement[T, E] Result[T, E] {
     }
   }
 
+  /// Converts the `Err` value into `Option`.
   pub fn err(self) Option[E] {
     switch (self) {
       .Ok(_value) => Option.None,
@@ -70,6 +81,7 @@ implement[T, E] Result[T, E] {
     }
   }
 
+  /// Transforms the `Ok` value with `f`.
   pub fn map[U, F: CallableOnce(T) U](self, f: F) Result[U, E] {
     switch (self) {
       .Ok(value) => Result.Ok(f(value)),
@@ -77,6 +89,7 @@ implement[T, E] Result[T, E] {
     }
   }
 
+  /// Transforms the `Ok` value with `f` and wraps `default` on error.
   pub fn map_or[U, F: CallableOnce(T) U](self, f: F, default: U) Result[U, E] {
     switch (self) {
       .Ok(value) => Result.Ok(f(value)),
@@ -84,6 +97,7 @@ implement[T, E] Result[T, E] {
     }
   }
 
+  /// Transforms the `Err` value with `f`.
   pub fn map_err[G, F: CallableOnce(E) G](self, f: F) Result[T, G] {
     switch (self) {
       .Ok(value) => Result.Ok(value),
@@ -91,6 +105,7 @@ implement[T, E] Result[T, E] {
     }
   }
 
+  /// Chains another fallible step with `f`.
   pub fn and_then[U, F: CallableOnce(T) Result[U, E]](self, f: F) Result[U, E] {
     switch (self) {
       .Ok(value) => f(value),
@@ -98,6 +113,7 @@ implement[T, E] Result[T, E] {
     }
   }
 
+  /// Calls `f` with a pointer to the `Ok` value and keeps the result.
   pub fn inspect[F: CallableOnce(*T) void](self, f: F) Self {
     switch (self) {
       .Ok(&value) => f(value),
@@ -107,6 +123,7 @@ implement[T, E] Result[T, E] {
     self
   }
 
+  /// Calls `f` with a pointer to the `Err` value and keeps the result.
   pub fn inspect_err[F: CallableOnce(*E) void](self, f: F) Self {
     switch (self) {
       .Ok(_value) => {},

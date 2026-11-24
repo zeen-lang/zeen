@@ -1,19 +1,23 @@
 // @zeen-core
 
+/// Optional value, either `None` or `Some`.
 pub enum Option[T] {
   None,
   Some: T,
 }
 
 implement[T] Option[T] {
+  /// Checks that a value is present.
   pub fn is_some(*const self) bool {
     @enumTag(self) == 1
   }
 
+  /// Checks that no value is present.
   pub fn is_none(*const self) bool {
     @enumTag(self) == 0
   }
 
+  /// Returns the value or panics on `None`.
   pub fn unwrap(self) T {
     switch (self) {
       .None => @panic("Called `unwrap()` on `None` option"),
@@ -21,6 +25,7 @@ implement[T] Option[T] {
     }
   }
 
+  /// Returns the value or `default`.
   pub fn unwrap_or(self, default: T) T {
     switch (self) {
       .None => default,
@@ -28,6 +33,7 @@ implement[T] Option[T] {
     }
   }
 
+  /// Returns the value or the result of `f`.
   pub fn unwrap_or_else[F: CallableOnce() T](self, f: F) T {
     switch (self) {
       .None => f(),
@@ -35,6 +41,7 @@ implement[T] Option[T] {
     }
   }
 
+  /// Returns the value or panics with `msg`.
   pub fn expect(self, msg: []const char) T {
     switch (self) {
       .Some(value) => value,
@@ -42,6 +49,7 @@ implement[T] Option[T] {
     }
   }
 
+  /// Transforms the value with `f`.
   pub fn map[U, F: CallableOnce(T) U](self, f: F) Option[U] {
     switch (self) {
       .Some(value) => Option.Some(f(value)),
@@ -49,6 +57,7 @@ implement[T] Option[T] {
     }
   }
 
+  /// Transforms the value with `f` and wraps `default` when empty.
   pub fn map_or[U, F: CallableOnce(T) U](self, f: F, default: U) Option[U] {
     switch (self) {
       .Some(value) => Option.Some(f(value)),
@@ -56,6 +65,7 @@ implement[T] Option[T] {
     }
   }
 
+  /// Calls `f` with a pointer to the value and keeps the option.
   pub fn inspect[F: CallableOnce(*T) void](self, f: F) Option[T] {
     switch (self) {
       .Some(&value) => f(value),
@@ -65,6 +75,7 @@ implement[T] Option[T] {
     self
   }
 
+  /// Converts into `Result` with `err` for `None`.
   pub fn ok_or[E](self, err: E) Result[T, E] {
     switch (self) {
       .Some(value) => Result.Ok(value),
@@ -72,6 +83,7 @@ implement[T] Option[T] {
     }
   }
 
+  /// Converts into `Result` with the result of `f` for `None`.
   pub fn ok_or_else[E, F: CallableOnce() E](self, f: F) Result[T, E] {
     switch (self) {
       .Some(value) => Result.Ok(value),
@@ -79,6 +91,7 @@ implement[T] Option[T] {
     }
   }
 
+  /// Chains another optional step with `f`.
   pub fn and_then[U, F: CallableOnce(T) Option[U]](self, f: F) Option[U] {
     switch (self) {
       .Some(value) => f(value),
@@ -86,6 +99,7 @@ implement[T] Option[T] {
     }
   }
 
+  /// Keeps the value only when `predicate` accepts it.
   pub fn filter[P: CallableOnce(*T) bool](self, predicate: P) Option[T] {
     switch (self) {
       .Some(value) => if (predicate(&value)) self else Option.None,

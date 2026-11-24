@@ -1,9 +1,11 @@
+/// Field record produced by `@fields`.
 pub comptime struct Field {
   index: comptime_int,
   name: comptime_str,
   ty: zeen_type,
 }
 
+/// Variant record produced by `@variants`.
 pub comptime struct Variant {
   index: comptime_int,
   name: comptime_str,

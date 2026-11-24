@@ -1,40 +1,48 @@
 // @zeen-core
 
-/// String slice writer interface for the buffers
+/// Text sink for the format macros.
 pub interface StrWriter {
+  /// Writes the whole slice.
   pub fn write_str(*self, value: []const char) void;
+  /// Writes `len` bytes from `ptr`.
   pub fn write_str_raw(*self, ptr: [*]const char, len: usize) void;
+  /// Writes one byte.
   pub fn write_str_single(*self, value: char) void;
 }
 
-/// Compiler provided stdout writer function
+/// Compiler provided stdout writer function.
 extern fn __zeen_stdout_write(ptr: [*]const char, len: usize) void;
 
-/// Compiler-reserved output stream
+/// Compiler-reserved output stream.
 pub struct OutStream {}
 
 implement Copy : OutStream {}
 
 implement StrWriter : OutStream {
+  /// Writes the whole slice to stdout.
   pub fn write_str(*self, value: []const char) void {
     __zeen_stdout_write(value.ptr, value.len);
   }
 
+  /// Writes `len` bytes to stdout.
   pub fn write_str_raw(*self, ptr: [*]const char, len: usize) void {
     __zeen_stdout_write(ptr, len);
   }
 
+  /// Writes one byte to stdout.
   pub fn write_str_single(*self, value: char) void {
     __zeen_stdout_write(@as([*]const char, &value), 1);
   }
 }
 
-/// Format macros renderer for structure (`{}` specifier)
+/// Renderer for the `{}` specifier.
 pub interface Display {
+  /// Writes the display form into `out`.
   pub fn display[T: StrWriter](*const self, out: *T) void;
 }
 
-/// Format macros debugger for structure (`{:?}` specifier, `@dbg(expr)` macro)
+/// Renderer for the `{:?}` specifier and the `@dbg(expr)` macro.
 pub interface Debug {
+  /// Writes the debug form into `out`.
   pub fn debug[T: StrWriter](*const self, out: *T) void;
 }

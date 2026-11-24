@@ -5,20 +5,21 @@ pub interface Copy {}
 
 /// Clone structure method (simply interface without compiler markers).
 pub interface Clone {
+  /// Returns a deep copy of the value.
   pub fn clone(*const self) Self
 }
 
-/// Automatic function to free struct resources after it goes out of scope
+/// Automatic function to free struct resources after it goes out of scope.
 pub interface Drop {
   fn drop(self) void;
 }
 
-/// Comparison interface between Self structs
+/// Comparison interface between Self structs.
 pub interface Ord {
   fn cmp(*const self, other: *const Self) Ordering;
 }
 
-/// An ordering result between two values
+/// An ordering result between two values.
 pub enum Ordering {
   Less,
   Equal,
@@ -30,91 +31,91 @@ pub interface Eq {
   fn eq(*const self, other: *const Self) bool;
 }
 
-/// `+` operator
+/// `+` operator.
 pub interface[Rhs] Add {
   alias Output = Self;
 
   fn add(self, other: Rhs) Output;
 }
 
-/// `-` operator
+/// `-` operator.
 pub interface[Rhs] Sub {
   alias Output = Self;
 
   fn sub(self, other: Rhs) Output;
 }
 
-/// `*` operator
+/// `*` operator.
 pub interface[Rhs] Mul {
   alias Output = Self;
 
   fn mul(self, other: Rhs) Output;
 }
 
-/// `/` operator
+/// `/` operator.
 pub interface[Rhs] Div {
   alias Output = Self;
 
   fn div(self, other: Rhs) Output;
 }
 
-/// `%` operator
+/// `%` operator.
 pub interface[Rhs] Mod {
   alias Output = Self;
 
   fn mod(self, other: Rhs) Output;
 }
 
-/// `&` operator
+/// `&` operator.
 pub interface[Rhs] BitAnd {
   alias Output = Self;
 
   fn bit_and(self, other: Rhs) Output;
 }
 
-/// `|` operator
+/// `|` operator.
 pub interface[Rhs] BitOr {
   alias Output = Self;
 
   fn bit_or(self, other: Rhs) Output;
 }
 
-/// `^` operator
+/// `^` operator.
 pub interface[Rhs] BitXor {
   alias Output = Self;
 
   fn bit_xor(self, other: Rhs) Output;
 }
 
-/// `<<` operator
+/// `<<` operator.
 pub interface[Rhs] BitShl {
   alias Output = Self;
 
   fn bit_shl(self, other: Rhs) Output;
 }
 
-/// `>>` operator
+/// `>>` operator.
 pub interface[Rhs] BitShr {
   alias Output = Self;
 
   fn bit_shr(self, other: Rhs) Output;
 }
 
-/// `~` operator
+/// `~` operator.
 pub interface BitNot {
   alias Output = Self;
 
   fn bit_not(self) Output;
 }
 
-/// `-` operator
+/// `-` operator.
 pub interface Neg {
   alias Output = Self;
 
   fn neg(self) Output;
 }
 
-/// `!` operator
+/// `!` operator.
 pub interface Not {
   alias Output = Self;
 
@@ -135,14 +136,14 @@ pub interface DerefPtr {
   fn deref_ptr(*self) *Target;
 }
 
-/// Index operation (`expr[index] -> T`)
+/// Index operation (`expr[index] -> T`).
 pub interface Index {
   alias Output;
 
   fn index(*const self, index: usize) Output;
 }
 
-/// Index operation with pointer access (`lvalue[index] = rvalue`)
+/// Index operation with pointer access (`lvalue[index] = rvalue`).
 pub interface IndexPtr {
   alias Output;
 
