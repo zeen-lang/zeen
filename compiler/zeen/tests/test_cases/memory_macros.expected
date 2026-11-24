@@ -1,0 +1,10 @@
+ptr memset: {0, 0, 0, 0, 0, 0, 0, 0}
+ptr memcpy: {9, 8, 7, 6}
+generic ptr memcpy: {9, 8, 7, 6}
+slice memset: {42, 42, 42, 42, 42, 42, 42, 42}
+head memcpy: {9, 8, 7, 6, 42, 42, 42, 42}
+tail memcpy: {9, 8, 7, 6, 9, 8, 7, 6}
+middle memcpy: {9, 8, 9, 8, 7, 6, 7, 6}
+field memset: {7, 7, 7, 7, 7, 7}
+runtime byte: {3, 3, 3, 3, 3, 3}
+direct slice memset: {9, 9, 9, 9, 9, 9, 9, 9}

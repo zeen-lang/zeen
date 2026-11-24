@@ -1,0 +1,58 @@
+struct Buffer {
+  pub bytes: [6]u8,
+}
+
+fn fill(dest: []u8, byte: u8) {
+  @memset(dest, byte);
+}
+
+fn copy(dest: []u8, src: []const u8) {
+  @memcpy(dest, src);
+}
+
+fn copy_ptr_arrays[N: comptime_uint](dest: *[N]u8, src: *[N]u8) {
+  @memcpy(dest, src);
+}
+
+fn main() {
+  let buf: [8]u8 = {1, 2, 3, 4, 5, 6, 7, 8};
+  @memset(&buf, 0);
+  @println("ptr memset: {:?}", buf);
+
+  let src: [4]u8 = {9, 8, 7, 6};
+  let dst: [4]u8 = {0; 4};
+  @memcpy(&dst, &src);
+  @println("ptr memcpy: {:?}", dst);
+
+  copy_ptr_arrays(&dst, &src);
+  @println("generic ptr memcpy: {:?}", dst);
+
+  const s = buf[..];
+  fill(s, 42);
+  @println("slice memset: {:?}", buf);
+
+  const word: []const u8 = src[..];
+  const head = s[0..4];
+  copy(head, word);
+  @println("head memcpy: {:?}", buf);
+
+  const tail = s[4..];
+  copy(tail, word);
+  @println("tail memcpy: {:?}", buf);
+
+  const middle = s[2..6];
+  copy(middle, word);
+  @println("middle memcpy: {:?}", buf);
+
+  let b = Buffer { .bytes = {1, 2, 3, 4, 5, 6} };
+  @memset(&b.bytes, 7);
+  @println("field memset: {:?}", b.bytes);
+
+  const byte: u8 = 3;
+  fill(b.bytes[..], byte);
+  @println("runtime byte: {:?}", b.bytes);
+
+  let view = buf[..];
+  @memset(view, 9);
+  @println("direct slice memset: {:?}", buf);
+}
