@@ -171,7 +171,7 @@ implement String {
 
     self.__capacity_extend();
 
-    let _ = memcpy(@as(*void, &self.ptr[start]), @as([*]const void, value.ptr), value.len);
+    @memcpy(self.ptr[start..start + value.len], value);
     self.ptr[self._len] = '\0';
   }
 
@@ -186,7 +186,7 @@ implement String {
 
     self.__capacity_extend();
 
-    let _ = memcpy(@as(*void, &self.ptr[start]), @as([*]const void, value.ptr), value._len);
+    @memcpy(self.ptr[start..start + value._len], value.ptr[0..value._len]);
     self.ptr[self._len] = '\0';
   }
 
