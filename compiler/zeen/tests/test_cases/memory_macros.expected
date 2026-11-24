@@ -8,3 +8,5 @@ middle memcpy: {9, 8, 9, 8, 7, 6, 7, 6}
 field memset: {7, 7, 7, 7, 7, 7}
 runtime byte: {3, 3, 3, 3, 3, 3}
 direct slice memset: {9, 9, 9, 9, 9, 9, 9, 9}
+char memset: azzd
+char memcpy: wxyz

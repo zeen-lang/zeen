@@ -4728,7 +4728,7 @@ impl<'res> TypeChecker<'res> {
 
         let is_byte = matches!(
             self.result.interner.get(element),
-            Type::Builtin(BuiltinType::u8) | Type::Error
+            Type::Builtin(BuiltinType::u8 | BuiltinType::char) | Type::Error
         );
 
         if !is_byte || (mutable && is_const) {
@@ -20679,6 +20679,10 @@ mod tests {
                 fill(values[..], 1);
                 const view: []const u8 = more[..];
                 @memcpy(values[..], view);
+
+                let chars: [4]char = {'a', 'b', 'c', 'd'};
+                @memset(&chars, 0);
+                @memcpy(chars[..], view[0..4]);
             }
             "#,
         )

@@ -55,4 +55,12 @@ fn main() {
   let view = buf[..];
   @memset(view, 9);
   @println("direct slice memset: {:?}", buf);
+
+  let name: [4]char = {'a', 'b', 'c', 'd'};
+  @memset(name[1..3], 122);
+  @println("char memset: {}", name);
+
+  const letters: [4]char = {'w', 'x', 'y', 'z'};
+  @memcpy(name[..], letters[..]);
+  @println("char memcpy: {}", name);
 }
