@@ -6,6 +6,7 @@ use miette::{Diagnostic, Severity};
 use smol_str::SmolStr;
 use zeen_ast::Source;
 use zeen_ast::expressions::UnaryOp;
+use zeen_hir::HirMacroKind;
 use zeen_mir::{
     BasicBlock, BlockId, CallTarget, LocalId, LocalKind, MirFunctionId, MirProgram, MirStatement,
     Mutability, Operand, Place, PlaceElem, Rvalue, Terminator, place_is_global,
@@ -825,6 +826,16 @@ impl<'ctx> DataFlow<'ctx> {
                 } else {
                     mutated.insert(place.local);
                 }
+            }
+
+            if let Terminator::MacroCall {
+                kind: HirMacroKind::MemSet | HirMacroKind::MemCpy,
+                args,
+                ..
+            } = &block.terminator
+                && let Some(Operand::Copy(place, _) | Operand::Move(place, _)) = args.first()
+            {
+                mutated.insert(place.local);
             }
         }
 

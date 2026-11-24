@@ -1357,6 +1357,22 @@ pub enum TypeError {
         #[label]
         span: SourceSpan,
     },
+    #[error("`@{name}` cannot use `{ty_name}` as a byte buffer")]
+    #[diagnostic(
+        severity(Error),
+        code(zeen::typechecker::invalid_memory_operand),
+        url("https://zeen-lang.tech/diagnostics/#zeen-typechecker-invalid_memory_operand")
+    )]
+    InvalidMemoryOperand {
+        name: SmolStr,
+        ty_name: SmolStr,
+
+        #[source_code]
+        src: NamedSource<Arc<String>>,
+        #[label]
+        span: SourceSpan,
+    },
+
     #[error("type `{name}` is used as a value")]
     #[diagnostic(
         severity(Error),

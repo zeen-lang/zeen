@@ -1662,7 +1662,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                 .unwrap();
 
             self.builder.position_at_end(fail);
-            self.emit_array_div_zero_panic();
+            self.emit_runtime_panic("attempt to divide by zero\n");
 
             self.builder.position_at_end(ok);
         }
@@ -1689,14 +1689,14 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         }
     }
 
-    fn emit_array_div_zero_panic(&mut self) {
+    fn emit_runtime_panic(&mut self, message: &str) {
         let printf = self.get_or_declare_runtime_fn(
             "printf",
             self.context.i32_type().into(),
             &[self.context.ptr_type(AddressSpace::default()).into()],
             true,
         );
-        let message = self.get_str_global("attempt to divide by zero\n");
+        let message = self.get_str_global(message);
         self.builder
             .build_call(printf, &[message.as_pointer_value().into()], "")
             .unwrap();
@@ -3764,7 +3764,103 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                 self.builder.build_unreachable().unwrap();
             }
 
+            HirMacroKind::MemSet => {
+                let (ptr, len) = self.memory_region(&args[0], arg_types[0], func);
+                let byte = self
+                    .operand_value(&args[1], Some(arg_types[1]), func)
+                    .into_int_value();
+                let byte = self
+                    .builder
+                    .build_int_truncate(byte, self.context.i8_type(), "")
+                    .unwrap();
+
+                self.builder.build_memset(ptr, 1, byte, len).unwrap();
+
+                if let Some(next) = target {
+                    let block = self.blocks[&next];
+                    self.builder.build_unconditional_branch(block).unwrap();
+                }
+            }
+
+            HirMacroKind::MemCpy => {
+                let (dest_ptr, len) = self.memory_region(&args[0], arg_types[0], func);
+                let (src_ptr, src_len) = self.memory_region(&args[1], arg_types[1], func);
+
+                if self.options.mode == CompilationMode::Debug {
+                    let equal = self
+                        .builder
+                        .build_int_compare(IntPredicate::EQ, len, src_len, "")
+                        .unwrap();
+                    let current = self.builder.get_insert_block().unwrap();
+                    let function = current.get_parent().unwrap();
+                    let mismatch = self.context.append_basic_block(function, "memcpy.mismatch");
+                    let ok = self.context.append_basic_block(function, "memcpy.ok");
+                    self.builder
+                        .build_conditional_branch(equal, ok, mismatch)
+                        .unwrap();
+
+                    self.builder.position_at_end(mismatch);
+                    self.emit_runtime_panic(
+                        "attempt to copy between buffers of different lengths\n",
+                    );
+
+                    self.builder.position_at_end(ok);
+                }
+
+                self.builder
+                    .build_memcpy(dest_ptr, 1, src_ptr, 1, len)
+                    .unwrap();
+
+                if let Some(next) = target {
+                    let block = self.blocks[&next];
+                    self.builder.build_unconditional_branch(block).unwrap();
+                }
+            }
+
             _ => unreachable!("macro {kind:?} is lowered to a plain rvalue by MIR"),
+        }
+    }
+
+    fn memory_region(
+        &mut self,
+        operand: &Operand,
+        ty: TypeId,
+        func: &MirFunction,
+    ) -> (PointerValue<'ctx>, IntValue<'ctx>) {
+        let size_ty = self.context.ptr_sized_int_type(&self.target_data, None);
+
+        match self.typecheck.interner.get(ty).clone() {
+            Type::Slice { .. } => {
+                let value = self
+                    .operand_value(operand, Some(ty), func)
+                    .into_struct_value();
+                let ptr = self
+                    .builder
+                    .build_extract_value(value, 0, "mem.ptr")
+                    .unwrap()
+                    .into_pointer_value();
+                let len = self
+                    .builder
+                    .build_extract_value(value, 1, "mem.len")
+                    .unwrap()
+                    .into_int_value();
+
+                (ptr, len)
+            }
+
+            Type::Pointer { inner, .. } => {
+                let ptr = self
+                    .operand_value(operand, Some(ty), func)
+                    .into_pointer_value();
+                let len = match self.typecheck.interner.get(inner).clone() {
+                    Type::Array { len, .. } => size_ty.const_int(len.expect_known(), false),
+                    _ => unreachable!("typechecker validated memory operand"),
+                };
+
+                (ptr, len)
+            }
+
+            _ => unreachable!("typechecker validated memory operand"),
         }
     }
 

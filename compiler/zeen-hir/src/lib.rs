@@ -151,6 +151,9 @@ impl<'res> HirLowering<'res> {
             "variantNames" => HirMacroKind::VariantNames,
             "variantCount" => HirMacroKind::VariantCount,
 
+            "memset" => HirMacroKind::MemSet,
+            "memcpy" => HirMacroKind::MemCpy,
+
             _ => HirMacroKind::Unknown,
         }
     }

@@ -15,6 +15,7 @@ thiserror = "2.0.18"
 smol_str = "0.3.6"
 
 zeen-ast = {path = "../zeen-ast"}
+zeen-hir = {path = "../zeen-hir"}
 zeen-mir = {path = "../zeen-mir"}
 zeen-resolve = {path = "../zeen-resolve"}
 zeen-typecheck = {path = "../zeen-typecheck"}
@@ -23,6 +24,5 @@ zeen-types = {path = "../zeen-types"}
 [dev-dependencies]
 bumpalo = "3.20.2"
 zeen-driver = {path = "../zeen-driver"}
-zeen-hir = {path = "../zeen-hir"}
 zeen-lexer = {path = "../zeen-lexer"}
 zeen-parser = {path = "../zeen-parser"}

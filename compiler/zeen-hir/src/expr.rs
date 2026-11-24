@@ -175,6 +175,9 @@ pub enum HirMacroKind {
     VariantNames,
     VariantCount,
 
+    MemSet,
+    MemCpy,
+
     Unknown, // Unknown macro fallback
 }
 
@@ -200,6 +203,9 @@ impl HirMacroKind {
 
             HirMacroKind::VariantNames => Some("variantNames"),
             HirMacroKind::VariantCount => Some("variantCount"),
+
+            HirMacroKind::MemSet => Some("memset"),
+            HirMacroKind::MemCpy => Some("memcpy"),
 
             HirMacroKind::Unknown => None,
         }

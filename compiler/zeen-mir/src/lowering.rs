@@ -5226,6 +5226,43 @@ impl<'ctx> MirLowering<'ctx> {
 
                 HirMacroKind::Uninit => (block, Operand::Constant(ConstValue::Void, None)),
 
+                HirMacroKind::MemSet | HirMacroKind::MemCpy => {
+                    let kind = kind.0;
+                    let mut block = block;
+                    let mut operands = Vec::with_capacity(args.len());
+                    let mut arg_types = Vec::with_capacity(args.len());
+
+                    for arg in args {
+                        let ty = self.expr_type(fb, arg);
+                        let (next_block, operand) = self.lower_expr_to_operand(fb, arg, block);
+                        block = next_block;
+                        operands.push(operand);
+                        arg_types.push(ty);
+                    }
+
+                    let void_ty = self.typecheck.interner.intern(Type::Void);
+                    let dest = fb.new_temp(void_ty);
+                    let next = fb.new_block();
+
+                    fb.set_terminator(
+                        block,
+                        Terminator::MacroCall {
+                            kind,
+                            format_chunks: None,
+                            args: operands,
+                            arg_types,
+                            destination: Place::from_local(dest),
+                            target: Some(next),
+                            source: Some(expr.source.clone()),
+                        },
+                    );
+
+                    (
+                        next,
+                        Operand::Constant(ConstValue::Void, Some(expr.source.clone())),
+                    )
+                }
+
                 HirMacroKind::Unknown => panic!("unknown macro reached MIR lowering"),
             },
 

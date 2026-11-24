@@ -4710,6 +4710,55 @@ impl<'res> TypeChecker<'res> {
         }))
     }
 
+    fn memory_region(
+        &mut self,
+        ty: TypeId,
+        kind: HirMacroKind,
+        mutable: bool,
+        source: &Source,
+    ) -> Option<Option<u64>> {
+        let (element, is_const, len) = match self.result.interner.get(ty).clone() {
+            Type::Slice { element, is_const } => (element, is_const, None),
+            Type::Pointer { inner, is_const } => match self.result.interner.get(inner).clone() {
+                Type::Array { element, len } => (element, is_const, len.known()),
+                _ => return self.invalid_memory_region(ty, kind, source),
+            },
+            _ => return self.invalid_memory_region(ty, kind, source),
+        };
+
+        let is_byte = matches!(
+            self.result.interner.get(element),
+            Type::Builtin(BuiltinType::u8) | Type::Error
+        );
+
+        if !is_byte || (mutable && is_const) {
+            return self.invalid_memory_region(ty, kind, source);
+        }
+
+        Some(len)
+    }
+
+    fn invalid_memory_region(
+        &mut self,
+        ty: TypeId,
+        kind: HirMacroKind,
+        source: &Source,
+    ) -> Option<Option<u64>> {
+        let name = match kind {
+            HirMacroKind::MemSet => "memset",
+            _ => "memcpy",
+        };
+
+        self.report(TypeError::InvalidMemoryOperand {
+            name: name.into(),
+            ty_name: self.display_type(ty).into(),
+            src: source.src(),
+            span: source.span,
+        });
+
+        None
+    }
+
     fn check_macro_call(
         &mut self,
         call_id: HirId,
@@ -5033,6 +5082,45 @@ impl<'res> TypeChecker<'res> {
                     element: name_ty,
                     len: ArrayLen::Known(variant_count),
                 })
+            }
+
+            HirMacroKind::MemSet | HirMacroKind::MemCpy => {
+                if args.len() != 2 {
+                    self.report(TypeError::ArgCountMismatch {
+                        expected: 2,
+                        found: args.len(),
+                        src: source.src(),
+                        span: source.span,
+                    });
+
+                    return self.result.interner.error();
+                }
+
+                let dest_ty = self.synth_expr(&args[0]);
+                let dest_len = self.memory_region(dest_ty, kind.0, true, &source);
+
+                if kind.0 == HirMacroKind::MemSet {
+                    let byte_ty = self.result.interner.builtin(BuiltinType::u8);
+                    self.check_expr(&args[1], byte_ty, false);
+
+                    return self.result.interner.void();
+                }
+
+                let src_ty = self.synth_expr(&args[1]);
+                let src_len = self.memory_region(src_ty, kind.0, false, &source);
+
+                if let (Some(dest_len), Some(src_len)) = (dest_len, src_len)
+                    && dest_len != src_len
+                {
+                    self.report(TypeError::Mismatch {
+                        expected: self.display_type(dest_ty).into(),
+                        found: self.display_type(src_ty).into(),
+                        src: source.src(),
+                        span: source.span,
+                    });
+                }
+
+                self.result.interner.void()
             }
 
             HirMacroKind::Unknown => {
@@ -20572,6 +20660,123 @@ mod tests {
         assert!(
             matches!(errors[0], TypeError::ZeroConstArg { .. }),
             "expected ZeroConstArg, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn mem_macros_accept_byte_buffers() {
+        typecheck_full(
+            r#"
+            fn fill(dest: []u8, byte: u8) {
+                @memset(dest, byte);
+            }
+
+            fn main() {
+                let values: [4]u8 = {1, 2, 3, 4};
+                let more: [4]u8 = {5, 6, 7, 8};
+                @memset(&values, 0);
+                @memcpy(&values, &more);
+                fill(values[..], 1);
+                const view: []const u8 = more[..];
+                @memcpy(values[..], view);
+            }
+            "#,
+        )
+        .expect("byte buffers must be accepted by @memset and @memcpy");
+    }
+
+    #[test]
+    fn mem_macros_reject_non_byte_buffers() {
+        let errors = typecheck(
+            r#"
+            fn main() {
+                let values: [4]i32 = {1, 2, 3, 4};
+                @memset(&values, 0);
+                @memcpy(&values, &values);
+            }
+            "#,
+        )
+        .expect_err("only byte buffers are valid memory regions");
+
+        assert!(
+            errors.iter().any(|err| matches!(
+                err,
+                TypeError::InvalidMemoryOperand { name, .. } if name.as_str() == "memset"
+            )),
+            "expected InvalidMemoryOperand for @memset, got: {errors:?}"
+        );
+        assert!(
+            errors.iter().any(|err| matches!(
+                err,
+                TypeError::InvalidMemoryOperand { name, .. } if name.as_str() == "memcpy"
+            )),
+            "expected InvalidMemoryOperand for @memcpy, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn mem_macros_reject_const_destinations() {
+        let errors = typecheck_full(
+            r#"
+            fn main() {
+                let values: [4]u8 = {1, 2, 3, 4};
+                const view: []const u8 = values[..];
+                @memset(view, 0);
+            }
+            "#,
+        )
+        .expect_err("a const destination must not be writable");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::InvalidMemoryOperand { .. })),
+            "expected InvalidMemoryOperand, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn memcpy_rejects_pointer_length_mismatch() {
+        let errors = typecheck(
+            r#"
+            fn main() {
+                let four: [4]u8 = {1, 2, 3, 4};
+                let five: [5]u8 = {1, 2, 3, 4, 5};
+                @memcpy(&four, &five);
+            }
+            "#,
+        )
+        .expect_err("pointer buffers of different lengths must not be copied");
+
+        assert!(
+            errors
+                .iter()
+                .any(|err| matches!(err, TypeError::Mismatch { .. })),
+            "expected Mismatch, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn mem_macros_require_two_arguments() {
+        let errors = typecheck(
+            r#"
+            fn main() {
+                let values: [4]u8 = {1, 2, 3, 4};
+                @memset(&values);
+                @memcpy(&values);
+            }
+            "#,
+        )
+        .expect_err("@memset and @memcpy take two arguments");
+
+        let count = errors
+            .iter()
+            .filter(|err| matches!(err, TypeError::ArgCountMismatch { .. }))
+            .count();
+
+        assert_eq!(
+            count, 2,
+            "expected two ArgCountMismatch errors, got: {errors:?}"
         );
     }
 
