@@ -863,364 +863,454 @@ pub interface Float {
 }
 
 implement Float : builtin f64 {
+  /// Absolute value.
   pub fn abs(*const self) f64 {
     return Math.abs(*self);
   }
 
+  /// Square root.
   pub fn sqrt(*const self) f64 {
     return Math.sqrt(*self);
   }
 
+  /// Cube root.
   pub fn cbrt(*const self) f64 {
     return Math.cbrt(*self);
   }
 
+  /// Length of the hypotenuse of a right triangle.
   pub fn hypot(*const self, other: f64) f64 {
     return Math.hypot(*self, other);
   }
 
+  /// `x` raised to the power `y`.
   pub fn pow(*const self, exp: f64) f64 {
     return Math.pow(*self, exp);
   }
 
+  /// `x` raised to the integer power `n`.
   pub fn powi(*const self, exp: i32) f64 {
     return Math.powi(*self, exp);
   }
 
+  /// `e` raised to the power `x`.
   pub fn exp(*const self) f64 {
     return Math.exp(*self);
   }
 
+  /// `2` raised to the power `x`.
   pub fn exp2(*const self) f64 {
     return Math.exp2(*self);
   }
 
+  /// `e` raised to the power `x` minus one.
   pub fn exp_m1(*const self) f64 {
     return Math.exp_m1(*self);
   }
 
+  /// Natural logarithm.
   pub fn ln(*const self) f64 {
     return Math.ln(*self);
   }
 
+  /// Natural logarithm of `x + 1`.
   pub fn ln_1p(*const self) f64 {
     return Math.ln_1p(*self);
   }
 
+  /// Base two logarithm.
   pub fn log2(*const self) f64 {
     return Math.log2(*self);
   }
 
+  /// Base ten logarithm.
   pub fn log10(*const self) f64 {
     return Math.log10(*self);
   }
 
+  /// Logarithm of `x` in `base`.
   pub fn log(*const self, base: f64) f64 {
     return Math.log(*self, base);
   }
 
+  /// Floating point remainder of `x` divided by `y`.
   pub fn rem(*const self, other: f64) f64 {
     return Math.rem(*self, other);
   }
 
+  /// Sine.
   pub fn sin(*const self) f64 {
     return Math.sin(*self);
   }
 
+  /// Cosine.
   pub fn cos(*const self) f64 {
     return Math.cos(*self);
   }
 
+  /// Tangent.
   pub fn tan(*const self) f64 {
     return Math.tan(*self);
   }
 
+  /// Arcsine.
   pub fn asin(*const self) f64 {
     return Math.asin(*self);
   }
 
+  /// Arccosine.
   pub fn acos(*const self) f64 {
     return Math.acos(*self);
   }
 
+  /// Arctangent.
   pub fn atan(*const self) f64 {
     return Math.atan(*self);
   }
 
+  /// Arctangent of `y / x` using the signs of both values.
   pub fn atan2(*const self, x: f64) f64 {
     return Math.atan2(*self, x);
   }
 
+  /// Hyperbolic sine.
   pub fn sinh(*const self) f64 {
     return Math.sinh(*self);
   }
 
+  /// Hyperbolic cosine.
   pub fn cosh(*const self) f64 {
     return Math.cosh(*self);
   }
 
+  /// Hyperbolic tangent.
   pub fn tanh(*const self) f64 {
     return Math.tanh(*self);
   }
 
+  /// Inverse hyperbolic sine.
   pub fn asinh(*const self) f64 {
     return Math.asinh(*self);
   }
 
+  /// Inverse hyperbolic cosine.
   pub fn acosh(*const self) f64 {
     return Math.acosh(*self);
   }
 
+  /// Inverse hyperbolic tangent.
   pub fn atanh(*const self) f64 {
     return Math.atanh(*self);
   }
 
+  /// Largest integer not greater than `x`.
   pub fn floor(*const self) f64 {
     return Math.floor(*self);
   }
 
+  /// Smallest integer not less than `x`.
   pub fn ceil(*const self) f64 {
     return Math.ceil(*self);
   }
 
+  /// Nearest integer, halfway cases away from zero.
   pub fn round(*const self) f64 {
     return Math.round(*self);
   }
 
+  /// Integer part of `x`.
   pub fn trunc(*const self) f64 {
     return Math.trunc(*self);
   }
 
+  /// Fractional part of `x`.
   pub fn fract(*const self) f64 {
     return Math.fract(*self);
   }
 
+  /// Reciprocal of `x`.
   pub fn recip(*const self) f64 {
     return Math.recip(*self);
   }
 
+  /// Sign of `x` as `-1`, `0` or `1`.
   pub fn signum(*const self) f64 {
     return Math.signum(*self);
   }
 
+  /// Magnitude of `x` with the sign of `sign`.
   pub fn copysign(*const self, sign: f64) f64 {
     return Math.copysign(*self, sign);
   }
 
+  /// Fused multiply add, `x * a + b`.
   pub fn mul_add(*const self, a: f64, b: f64) f64 {
     return Math.mul_add(*self, a, b);
   }
 
+  /// Linear interpolation between `a` and `b`.
   pub fn lerp(*const self, b: f64, t: f64) f64 {
     return Math.lerp(*self, b, t);
   }
 
+  /// Radians converted to degrees.
   pub fn to_degrees(*const self) f64 {
     return Math.to_degrees(*self);
   }
 
+  /// Degrees converted to radians.
   pub fn to_radians(*const self) f64 {
     return Math.to_radians(*self);
   }
 
+  /// `true` for NaN values.
   pub fn is_nan(*const self) bool {
     return Math.is_nan(*self);
   }
 
+  /// `true` for infinite values.
   pub fn is_inf(*const self) bool {
     return Math.is_inf(*self);
   }
 
+  /// `true` for finite values.
   pub fn is_finite(*const self) bool {
     return Math.is_finite(*self);
   }
 
+  /// `true` when the sign bit is clear.
   pub fn is_sign_positive(*const self) bool {
     return Math.is_sign_positive(*self);
   }
 
+  /// `true` when the sign bit is set.
   pub fn is_sign_negative(*const self) bool {
     return Math.is_sign_negative(*self);
   }
 }
 
 implement Float : builtin f32 {
+  /// Absolute value.
   pub fn abs(*const self) f32 {
     return Math.abs(*self);
   }
 
+  /// Square root.
   pub fn sqrt(*const self) f32 {
     return Math.sqrt(*self);
   }
 
+  /// Cube root.
   pub fn cbrt(*const self) f32 {
     return Math.cbrt(*self);
   }
 
+  /// Length of the hypotenuse of a right triangle.
   pub fn hypot(*const self, other: f32) f32 {
     return Math.hypot(*self, other);
   }
 
+  /// `x` raised to the power `y`.
   pub fn pow(*const self, exp: f32) f32 {
     return Math.pow(*self, exp);
   }
 
+  /// `x` raised to the integer power `n`.
   pub fn powi(*const self, exp: i32) f32 {
     return Math.powi(*self, exp);
   }
 
+  /// `e` raised to the power `x`.
   pub fn exp(*const self) f32 {
     return Math.exp(*self);
   }
 
+  /// `2` raised to the power `x`.
   pub fn exp2(*const self) f32 {
     return Math.exp2(*self);
   }
 
+  /// `e` raised to the power `x` minus one.
   pub fn exp_m1(*const self) f32 {
     return Math.exp_m1(*self);
   }
 
+  /// Natural logarithm.
   pub fn ln(*const self) f32 {
     return Math.ln(*self);
   }
 
+  /// Natural logarithm of `x + 1`.
   pub fn ln_1p(*const self) f32 {
     return Math.ln_1p(*self);
   }
 
+  /// Base two logarithm.
   pub fn log2(*const self) f32 {
     return Math.log2(*self);
   }
 
+  /// Base ten logarithm.
   pub fn log10(*const self) f32 {
     return Math.log10(*self);
   }
 
+  /// Logarithm of `x` in `base`.
   pub fn log(*const self, base: f32) f32 {
     return Math.log(*self, base);
   }
 
+  /// Floating point remainder of `x` divided by `y`.
   pub fn rem(*const self, other: f32) f32 {
     return Math.rem(*self, other);
   }
 
+  /// Sine.
   pub fn sin(*const self) f32 {
     return Math.sin(*self);
   }
 
+  /// Cosine.
   pub fn cos(*const self) f32 {
     return Math.cos(*self);
   }
 
+  /// Tangent.
   pub fn tan(*const self) f32 {
     return Math.tan(*self);
   }
 
+  /// Arcsine.
   pub fn asin(*const self) f32 {
     return Math.asin(*self);
   }
 
+  /// Arccosine.
   pub fn acos(*const self) f32 {
     return Math.acos(*self);
   }
 
+  /// Arctangent.
   pub fn atan(*const self) f32 {
     return Math.atan(*self);
   }
 
+  /// Arctangent of `y / x` using the signs of both values.
   pub fn atan2(*const self, x: f32) f32 {
     return Math.atan2(*self, x);
   }
 
+  /// Hyperbolic sine.
   pub fn sinh(*const self) f32 {
     return Math.sinh(*self);
   }
 
+  /// Hyperbolic cosine.
   pub fn cosh(*const self) f32 {
     return Math.cosh(*self);
   }
 
+  /// Hyperbolic tangent.
   pub fn tanh(*const self) f32 {
     return Math.tanh(*self);
   }
 
+  /// Inverse hyperbolic sine.
   pub fn asinh(*const self) f32 {
     return Math.asinh(*self);
   }
 
+  /// Inverse hyperbolic cosine.
   pub fn acosh(*const self) f32 {
     return Math.acosh(*self);
   }
 
+  /// Inverse hyperbolic tangent.
   pub fn atanh(*const self) f32 {
     return Math.atanh(*self);
   }
 
+  /// Largest integer not greater than `x`.
   pub fn floor(*const self) f32 {
     return Math.floor(*self);
   }
 
+  /// Smallest integer not less than `x`.
   pub fn ceil(*const self) f32 {
     return Math.ceil(*self);
   }
 
+  /// Nearest integer, halfway cases away from zero.
   pub fn round(*const self) f32 {
     return Math.round(*self);
   }
 
+  /// Integer part of `x`.
   pub fn trunc(*const self) f32 {
     return Math.trunc(*self);
   }
 
+  /// Fractional part of `x`.
   pub fn fract(*const self) f32 {
     return Math.fract(*self);
   }
 
+  /// Reciprocal of `x`.
   pub fn recip(*const self) f32 {
     return Math.recip(*self);
   }
 
+  /// Sign of `x` as `-1`, `0` or `1`.
   pub fn signum(*const self) f32 {
     return Math.signum(*self);
   }
 
+  /// Magnitude of `x` with the sign of `sign`.
   pub fn copysign(*const self, sign: f32) f32 {
     return Math.copysign(*self, sign);
   }
 
+  /// Fused multiply add, `x * a + b`.
   pub fn mul_add(*const self, a: f32, b: f32) f32 {
     return Math.mul_add(*self, a, b);
   }
 
+  /// Linear interpolation between `a` and `b`.
   pub fn lerp(*const self, b: f32, t: f32) f32 {
     return Math.lerp(*self, b, t);
   }
 
+  /// Radians converted to degrees.
   pub fn to_degrees(*const self) f32 {
     return Math.to_degrees(*self);
   }
 
+  /// Degrees converted to radians.
   pub fn to_radians(*const self) f32 {
     return Math.to_radians(*self);
   }
 
+  /// `true` for NaN values.
   pub fn is_nan(*const self) bool {
     return Math.is_nan(*self);
   }
 
+  /// `true` for infinite values.
   pub fn is_inf(*const self) bool {
     return Math.is_inf(*self);
   }
 
+  /// `true` for finite values.
   pub fn is_finite(*const self) bool {
     return Math.is_finite(*self);
   }
 
+  /// `true` when the sign bit is clear.
   pub fn is_sign_positive(*const self) bool {
     return Math.is_sign_positive(*self);
   }
 
+  /// `true` when the sign bit is set.
   pub fn is_sign_negative(*const self) bool {
     return Math.is_sign_negative(*self);
   }

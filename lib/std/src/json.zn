@@ -91,6 +91,7 @@ implement JsonValue {
     };
   }
 
+  /// Checks the `null` value.
   pub fn is_null(*const self) bool {
     return switch (*self) {
       .Null => true,
@@ -98,6 +99,7 @@ implement JsonValue {
     };
   }
 
+  /// Checks a boolean.
   pub fn is_bool(*const self) bool {
     return switch (*self) {
       .Bool(&_) => true,
@@ -105,6 +107,7 @@ implement JsonValue {
     };
   }
 
+  /// Checks a number.
   pub fn is_num(*const self) bool {
     return switch (*self) {
       .Num(&_) => true,
@@ -112,6 +115,7 @@ implement JsonValue {
     };
   }
 
+  /// Checks a string.
   pub fn is_str(*const self) bool {
     return switch (*self) {
       .Str(&_) => true,
@@ -119,6 +123,7 @@ implement JsonValue {
     };
   }
 
+  /// Checks an array.
   pub fn is_array(*const self) bool {
     return switch (*self) {
       .Array(&_) => true,
@@ -126,6 +131,7 @@ implement JsonValue {
     };
   }
 
+  /// Checks an object.
   pub fn is_object(*const self) bool {
     return switch (*self) {
       .Object(&_) => true,
@@ -133,6 +139,7 @@ implement JsonValue {
     };
   }
 
+  /// Boolean value, `None` for other kinds.
   pub fn as_bool(*const self) Option[bool] {
     return switch (*self) {
       .Bool(value) => Option.Some(value),
@@ -140,6 +147,7 @@ implement JsonValue {
     };
   }
 
+  /// Number text, `None` for other kinds.
   pub fn as_num(*const self) Option[String] {
     return switch (*self) {
       .Num(&text) => Option.Some(text.clone()),
@@ -147,6 +155,7 @@ implement JsonValue {
     };
   }
 
+  /// Integer value, `None` when the text is no integer.
   pub fn as_i64(*const self) Option[i64] {
     const text = self.as_num();
     if (text.is_none()) {
@@ -155,6 +164,7 @@ implement JsonValue {
     return text.unwrap().parse_i64();
   }
 
+  /// Floating point value, `None` when the text is no number.
   pub fn as_f64(*const self) Option[f64] {
     const text = self.as_num();
     if (text.is_none()) {
@@ -163,6 +173,7 @@ implement JsonValue {
     return text.unwrap().parse_f64();
   }
 
+  /// String value, `None` for other kinds.
   pub fn as_str(*const self) Option[String] {
     return switch (*self) {
       .Str(&text) => Option.Some(text.clone()),
@@ -170,6 +181,7 @@ implement JsonValue {
     };
   }
 
+  /// Writes compact JSON text into `out`.
   pub fn write_into(*const self, out: *String) {
     switch (*self) {
       .Null => {
@@ -207,6 +219,7 @@ implement JsonValue {
     };
   }
 
+  /// Writes `text` as a quoted JSON string into `out`.
   pub fn write_string(out: *String, text: *String) {
     const hex: []const char = "0123456789abcdef";
     const backslash = @as(char, 92);
@@ -260,10 +273,12 @@ struct JsonObject {
 }
 
 implement JsonObject {
+  /// Empty object.
   pub fn new() Self {
     return JsonObject { .map = HashMap#[String, JsonValue].new(), .keys = List#[String].new() };
   }
 
+  /// Stores the value and keeps the key order.
   pub fn insert(*self, key: String, value: JsonValue) {
     if (!self.map.contains_key(&key)) {
       self.keys.push(key.clone());
@@ -271,24 +286,29 @@ implement JsonObject {
     let _ = self.map.insert(key, value);
   }
 
+  /// Borrow of the value under `key`.
   pub fn get(*const self, key: []const char) Option[*const JsonValue] {
     const owned = String.from(key);
     return self.map.get(&owned);
   }
 
+  /// Key at `index`, panics out of range.
   pub fn key_at(*const self, index: usize) *String {
     return self.keys.get_ptr(index).unwrap();
   }
 
+  /// Value at `index`, panics out of range.
   pub fn get_at(*const self, index: usize) *const JsonValue {
     const key = self.key_at(index);
     return self.map.get(key).unwrap();
   }
 
+  /// Number of entries.
   pub fn len(*const self) usize {
     return self.keys.len();
   }
 
+  /// Writes the object as JSON text.
   pub fn write_into(*const self, out: *String) {
     out.push('{');
     let i: usize = 0;
@@ -340,6 +360,7 @@ implement JsonParser {
     return false;
   }
 
+  /// Skips whitespace at the current position.
   pub fn skip_ws(*self) {
     while (self.pos < self.text.len) {
       const ch = self.text[self.pos];
@@ -351,6 +372,7 @@ implement JsonParser {
     }
   }
 
+  /// Parses one value at the current position.
   pub fn parse_value(*self, depth: usize) Result[JsonValue, JsonError] {
     if (depth > MaxJsonDepth) {
       return Result.Err(JsonError { .kind = JsonErrorKind.DepthExceeded, .pos = self.pos });

@@ -29,10 +29,12 @@ pub struct Headers {
 }
 
 implement Headers {
+  /// Adds one header field.
   pub fn push(*self, name: String, value: String) {
     self.inner.push(Header { .name = name, .value = value });
   }
 
+  /// Value of the first header with `name`.
   pub fn get(*const self, name: []const char) Option[String] {
     let i: usize = 0;
 
@@ -88,6 +90,7 @@ pub struct Request {
 }
 
 implement Request {
+  /// Value of the first header with `name`.
   pub fn header(*const self, name: []const char) Option[String] {
     self.headers.get(name)
   }
@@ -100,6 +103,7 @@ pub struct Response {
 }
 
 implement Response {
+  /// Response with `status` and `body`.
   pub fn new(status: u16, body: []const char) Self {
     Self {
       .status = status,
@@ -107,6 +111,7 @@ implement Response {
     }
   }
 
+  /// Response with `status` and an empty body.
   pub fn empty(status: u16) Self {
     Self {
       .status = status,
@@ -114,14 +119,17 @@ implement Response {
     }
   }
 
+  /// Status code.
   pub fn status_code(*const self) u16 {
     self.status
   }
 
+  /// Changes the status code.
   pub fn set_status_code(*self, code: u16) {
     self.status = code;
   }
 
+  /// `200 OK` response.
   pub fn ok(body: []const char) Self {
     Self {
       .status = 200,
@@ -129,6 +137,7 @@ implement Response {
     }
   }
 
+  /// `404 Not Found` response.
   pub fn not_found() Self {
     Self {
       .status = 404,
@@ -136,6 +145,7 @@ implement Response {
     }
   }
 
+  /// `100 Continue` response.
   pub fn continue_() Self {
     Self {
       .status = 100,
@@ -143,6 +153,7 @@ implement Response {
     }
   }
 
+  /// `101 Switching Protocols` response.
   pub fn switching_protocols() Self {
     Self {
       .status = 101,
@@ -150,6 +161,7 @@ implement Response {
     }
   }
 
+  /// `102 Processing` response.
   pub fn processing() Self {
     Self {
       .status = 102,
@@ -157,6 +169,7 @@ implement Response {
     }
   }
 
+  /// `103 Early Hints` response.
   pub fn early_hints() Self {
     Self {
       .status = 103,
@@ -164,6 +177,7 @@ implement Response {
     }
   }
 
+  /// `201 Created` response.
   pub fn created(body: []const char) Self {
     Self {
       .status = 201,
@@ -171,6 +185,7 @@ implement Response {
     }
   }
 
+  /// `202 Accepted` response.
   pub fn accepted(body: []const char) Self {
     Self {
       .status = 202,
@@ -178,6 +193,7 @@ implement Response {
     }
   }
 
+  /// `203 Non-Authoritative Information` response.
   pub fn non_authoritative_information(body: []const char) Self {
     Self {
       .status = 203,
@@ -185,6 +201,7 @@ implement Response {
     }
   }
 
+  /// `204 No Content` response.
   pub fn no_content() Self {
     Self {
       .status = 204,
@@ -192,6 +209,7 @@ implement Response {
     }
   }
 
+  /// `205 Reset Content` response.
   pub fn reset_content() Self {
     Self {
       .status = 205,
@@ -199,6 +217,7 @@ implement Response {
     }
   }
 
+  /// `206 Partial Content` response.
   pub fn partial_content(body: []const char) Self {
     Self {
       .status = 206,
@@ -206,6 +225,7 @@ implement Response {
     }
   }
 
+  /// `207 Multi-Status` response.
   pub fn multi_status(body: []const char) Self {
     Self {
       .status = 207,
@@ -213,6 +233,7 @@ implement Response {
     }
   }
 
+  /// `208 Already Reported` response.
   pub fn already_reported(body: []const char) Self {
     Self {
       .status = 208,
@@ -220,6 +241,7 @@ implement Response {
     }
   }
 
+  /// `226 IM Used` response.
   pub fn im_used(body: []const char) Self {
     Self {
       .status = 226,
@@ -227,6 +249,7 @@ implement Response {
     }
   }
 
+  /// `300 Multiple Choices` response.
   pub fn multiple_choices(body: []const char) Self {
     Self {
       .status = 300,
@@ -234,6 +257,7 @@ implement Response {
     }
   }
 
+  /// `301 Moved Permanently` response.
   pub fn moved_permanently(body: []const char) Self {
     Self {
       .status = 301,
@@ -241,6 +265,7 @@ implement Response {
     }
   }
 
+  /// `302 Found` response.
   pub fn found(body: []const char) Self {
     Self {
       .status = 302,
@@ -248,6 +273,7 @@ implement Response {
     }
   }
 
+  /// `303 See Other` response.
   pub fn see_other(body: []const char) Self {
     Self {
       .status = 303,
@@ -255,6 +281,7 @@ implement Response {
     }
   }
 
+  /// `304 Not Modified` response.
   pub fn not_modified() Self {
     Self {
       .status = 304,
@@ -262,6 +289,7 @@ implement Response {
     }
   }
 
+  /// `305 Use Proxy` response.
   pub fn use_proxy(body: []const char) Self {
     Self {
       .status = 305,
@@ -269,6 +297,7 @@ implement Response {
     }
   }
 
+  /// `307 Temporary Redirect` response.
   pub fn temporary_redirect(body: []const char) Self {
     Self {
       .status = 307,
@@ -276,6 +305,7 @@ implement Response {
     }
   }
 
+  /// `308 Permanent Redirect` response.
   pub fn permanent_redirect(body: []const char) Self {
     Self {
       .status = 308,
@@ -283,6 +313,7 @@ implement Response {
     }
   }
 
+  /// `400 Bad Request` response.
   pub fn bad_request(body: []const char) Self {
     Self {
       .status = 400,
@@ -290,6 +321,7 @@ implement Response {
     }
   }
 
+  /// `401 Unauthorized` response.
   pub fn unauthorized(body: []const char) Self {
     Self {
       .status = 401,
@@ -297,6 +329,7 @@ implement Response {
     }
   }
 
+  /// `402 Payment Required` response.
   pub fn payment_required(body: []const char) Self {
     Self {
       .status = 402,
@@ -304,6 +337,7 @@ implement Response {
     }
   }
 
+  /// `403 Forbidden` response.
   pub fn forbidden(body: []const char) Self {
     Self {
       .status = 403,
@@ -311,6 +345,7 @@ implement Response {
     }
   }
 
+  /// `405 Method Not Allowed` response.
   pub fn method_not_allowed(body: []const char) Self {
     Self {
       .status = 405,
@@ -318,6 +353,7 @@ implement Response {
     }
   }
 
+  /// `406 Not Acceptable` response.
   pub fn not_acceptable(body: []const char) Self {
     Self {
       .status = 406,
@@ -325,6 +361,7 @@ implement Response {
     }
   }
 
+  /// `407 Proxy Authentication Required` response.
   pub fn proxy_authentication_required(body: []const char) Self {
     Self {
       .status = 407,
@@ -332,6 +369,7 @@ implement Response {
     }
   }
 
+  /// `408 Request Timeout` response.
   pub fn request_timeout(body: []const char) Self {
     Self {
       .status = 408,
@@ -339,6 +377,7 @@ implement Response {
     }
   }
 
+  /// `409 Conflict` response.
   pub fn conflict(body: []const char) Self {
     Self {
       .status = 409,
@@ -346,6 +385,7 @@ implement Response {
     }
   }
 
+  /// `410 Gone` response.
   pub fn gone(body: []const char) Self {
     Self {
       .status = 410,
@@ -353,6 +393,7 @@ implement Response {
     }
   }
 
+  /// `411 Length Required` response.
   pub fn length_required(body: []const char) Self {
     Self {
       .status = 411,
@@ -360,6 +401,7 @@ implement Response {
     }
   }
 
+  /// `412 Precondition Failed` response.
   pub fn precondition_failed(body: []const char) Self {
     Self {
       .status = 412,
@@ -367,6 +409,7 @@ implement Response {
     }
   }
 
+  /// `413 Payload Too Large` response.
   pub fn payload_too_large(body: []const char) Self {
     Self {
       .status = 413,
@@ -374,6 +417,7 @@ implement Response {
     }
   }
 
+  /// `414 URI Too Long` response.
   pub fn uri_too_long(body: []const char) Self {
     Self {
       .status = 414,
@@ -381,6 +425,7 @@ implement Response {
     }
   }
 
+  /// `415 Unsupported Media Type` response.
   pub fn unsupported_media_type(body: []const char) Self {
     Self {
       .status = 415,
@@ -388,6 +433,7 @@ implement Response {
     }
   }
 
+  /// `416 Range Not Satisfiable` response.
   pub fn range_not_satisfiable(body: []const char) Self {
     Self {
       .status = 416,
@@ -395,6 +441,7 @@ implement Response {
     }
   }
 
+  /// `417 Expectation Failed` response.
   pub fn expectation_failed(body: []const char) Self {
     Self {
       .status = 417,
@@ -402,6 +449,7 @@ implement Response {
     }
   }
 
+  /// `418 I Am A Teapot` response.
   pub fn im_a_teapot(body: []const char) Self {
     Self {
       .status = 418,
@@ -409,6 +457,7 @@ implement Response {
     }
   }
 
+  /// `421 Misdirected Request` response.
   pub fn misdirected_request(body: []const char) Self {
     Self {
       .status = 421,
@@ -416,6 +465,7 @@ implement Response {
     }
   }
 
+  /// `422 Unprocessable Content` response.
   pub fn unprocessable_content(body: []const char) Self {
     Self {
       .status = 422,
@@ -423,6 +473,7 @@ implement Response {
     }
   }
 
+  /// `423 Locked` response.
   pub fn locked(body: []const char) Self {
     Self {
       .status = 423,
@@ -430,6 +481,7 @@ implement Response {
     }
   }
 
+  /// `424 Failed Dependency` response.
   pub fn failed_dependency(body: []const char) Self {
     Self {
       .status = 424,
@@ -437,6 +489,7 @@ implement Response {
     }
   }
 
+  /// `425 Too Early` response.
   pub fn too_early(body: []const char) Self {
     Self {
       .status = 425,
@@ -444,6 +497,7 @@ implement Response {
     }
   }
 
+  /// `426 Upgrade Required` response.
   pub fn upgrade_required(body: []const char) Self {
     Self {
       .status = 426,
@@ -451,6 +505,7 @@ implement Response {
     }
   }
 
+  /// `428 Precondition Required` response.
   pub fn precondition_required(body: []const char) Self {
     Self {
       .status = 428,
@@ -458,6 +513,7 @@ implement Response {
     }
   }
 
+  /// `429 Too Many Requests` response.
   pub fn too_many_requests(body: []const char) Self {
     Self {
       .status = 429,
@@ -465,6 +521,7 @@ implement Response {
     }
   }
 
+  /// `431 Request Header Fields Too Large` response.
   pub fn request_header_fields_too_large(body: []const char) Self {
     Self {
       .status = 431,
@@ -472,6 +529,7 @@ implement Response {
     }
   }
 
+  /// `451 Unavailable For Legal Reasons` response.
   pub fn unavailable_for_legal_reasons(body: []const char) Self {
     Self {
       .status = 451,
@@ -479,6 +537,7 @@ implement Response {
     }
   }
 
+  /// `500 Internal Server Error` response.
   pub fn internal_server_error(body: []const char) Self {
     Self {
       .status = 500,
@@ -486,6 +545,7 @@ implement Response {
     }
   }
 
+  /// `501 Not Implemented` response.
   pub fn not_implemented(body: []const char) Self {
     Self {
       .status = 501,
@@ -493,6 +553,7 @@ implement Response {
     }
   }
 
+  /// `502 Bad Gateway` response.
   pub fn bad_gateway(body: []const char) Self {
     Self {
       .status = 502,
@@ -500,6 +561,7 @@ implement Response {
     }
   }
 
+  /// `503 Service Unavailable` response.
   pub fn service_unavailable(body: []const char) Self {
     Self {
       .status = 503,
@@ -507,6 +569,7 @@ implement Response {
     }
   }
 
+  /// `504 Gateway Timeout` response.
   pub fn gateway_timeout(body: []const char) Self {
     Self {
       .status = 504,
@@ -514,6 +577,7 @@ implement Response {
     }
   }
 
+  /// `505 HTTP Version Not Supported` response.
   pub fn http_version_not_supported(body: []const char) Self {
     Self {
       .status = 505,
@@ -521,6 +585,7 @@ implement Response {
     }
   }
 
+  /// `506 Variant Also Negotiates` response.
   pub fn variant_also_negotiates(body: []const char) Self {
     Self {
       .status = 506,
@@ -528,6 +593,7 @@ implement Response {
     }
   }
 
+  /// `507 Insufficient Storage` response.
   pub fn insufficient_storage(body: []const char) Self {
     Self {
       .status = 507,
@@ -535,6 +601,7 @@ implement Response {
     }
   }
 
+  /// `508 Loop Detected` response.
   pub fn loop_detected(body: []const char) Self {
     Self {
       .status = 508,
@@ -542,6 +609,7 @@ implement Response {
     }
   }
 
+  /// `510 Not Extended` response.
   pub fn not_extended(body: []const char) Self {
     Self {
       .status = 510,
@@ -549,6 +617,7 @@ implement Response {
     }
   }
 
+  /// `511 Network Authentication Required` response.
   pub fn network_authentication_required(body: []const char) Self {
     Self {
       .status = 511,
@@ -556,6 +625,7 @@ implement Response {
     }
   }
 
+  /// Writes the response into the stream.
   pub fn send(*self, stream: *TcpStream) Result[void, IoError] {
     let head = @format(
       "HTTP/1.1 {} {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -645,6 +715,7 @@ pub struct HttpServer {
 }
 
 implement HttpServer {
+  /// Listener for the address.
   pub fn bind(addr: *const SocketAddr) Result[Self, IoError] {
     switch (TcpListener.bind(addr)) {
       .Ok(listener) => Result.Ok(Self { .listener = listener }),
@@ -654,6 +725,7 @@ implement HttpServer {
     };
   }
 
+  /// Next incoming connection, waits until one arrives.
   pub fn accept(*const self) Result[TcpStream, IoError] {
     self.listener.accept()
   }
