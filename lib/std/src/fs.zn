@@ -381,6 +381,7 @@ pub struct OpenOptions {
 }
 
 implement OpenOptions {
+  /// Options for a readonly open.
   pub fn new() Self {
     Self {
       ._read = false,
@@ -393,42 +394,49 @@ implement OpenOptions {
     }
   }
 
+  /// Sets the read flag.
   pub fn read(self, value: bool) Self {
     let opts = self;
     opts._read = value;
     opts
   }
 
+  /// Sets the write flag.
   pub fn write(self, value: bool) Self {
     let opts = self;
     opts._write = value;
     opts
   }
 
+  /// Sets the append flag.
   pub fn append(self, value: bool) Self {
     let opts = self;
     opts._append = value;
     opts
   }
 
+  /// Sets the truncate flag.
   pub fn truncate(self, value: bool) Self {
     let opts = self;
     opts._truncate = value;
     opts
   }
 
+  /// Sets the create flag.
   pub fn create(self, value: bool) Self {
     let opts = self;
     opts._create = value;
     opts
   }
 
+  /// Sets the create flag that fails on an existing file.
   pub fn create_new(self, value: bool) Self {
     let opts = self;
     opts._create_new = value;
     opts
   }
 
+  /// Sets the permission bits for a new file.
   pub fn mode(self, value: u32) Self {
     let opts = self;
     opts._mode = value;
@@ -533,26 +541,32 @@ pub struct Metadata {
 }
 
 implement Metadata {
+  /// File size in bytes.
   pub fn len(*const self) u64 {
     self._len
   }
 
+  /// Checks that the size is zero.
   pub fn is_empty(*const self) bool {
     self._len == 0
   }
 
+  /// Checks a directory.
   pub fn is_dir(*const self) bool {
     self._is_dir
   }
 
+  /// Checks a regular file.
   pub fn is_file(*const self) bool {
     self._is_file
   }
 
+  /// Checks a symlink.
   pub fn is_symlink(*const self) bool {
     self._is_symlink
   }
 
+  /// Permission bits.
   pub fn mode(*const self) u32 {
     self._mode
   }
@@ -582,22 +596,27 @@ pub struct DirEntry {
 }
 
 implement DirEntry {
+  /// Entry name without the directory part.
   pub fn into_name(self) String {
     self._name
   }
 
+  /// Full path of the entry.
   pub fn into_path(self) String {
     self._path
   }
 
+  /// Checks a directory.
   pub fn is_dir(*const self) bool {
     self._is_dir
   }
 
+  /// Checks a regular file.
   pub fn is_file(*const self) bool {
     self._is_file
   }
 
+  /// Checks a symlink.
   pub fn is_symlink(*const self) bool {
     self._is_symlink
   }

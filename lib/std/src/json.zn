@@ -253,7 +253,7 @@ implement JsonValue {
   }
 }
 
-/// Object backing in insert order, fast lookup
+/// Object backing in insert order, fast lookup.
 struct JsonObject {
   map: HashMap[String, JsonValue],
   keys: List[String],

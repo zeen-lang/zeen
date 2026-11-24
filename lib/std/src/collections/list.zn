@@ -5,7 +5,7 @@ comptime InitialListCapacity = 4;
 /// Insertion sort threshold (tiny runs).
 comptime SortInsertionThreshold = 20;
 
-/// Dynamic heap-allocated array buffer
+/// Dynamic heap-allocated array buffer.
 pub struct List[T] {
   ptr: [*]T,
   _len: usize,
@@ -13,7 +13,7 @@ pub struct List[T] {
 }
 
 implement[T] List[T] {
-  /// Create new `List` instance
+  /// Create new `List` instance.
   pub fn new() Self {
     Self {
       .ptr = @as([*]T, nullptr),
@@ -22,7 +22,7 @@ implement[T] List[T] {
     }
   }
 
-  /// Create new `List` instance with aligned capacity
+  /// Create new `List` instance with aligned capacity.
   pub fn with_capacity(capacity: usize) Self {
     const bytes_capacity = align_capacity_up(capacity * @sizeof(T));
     const ptr = @as([*]T, Allocator.alloc(bytes_capacity));
@@ -34,7 +34,7 @@ implement[T] List[T] {
     }
   }
 
-  /// UNSAFE: Construct `List` from raw parts (pointer must be heap allocated)
+  /// UNSAFE: Construct `List` from raw parts (pointer must be heap allocated).
   pub fn from_raw_parts(ptr: [*]T, len: usize, capacity: usize) Self {
     Self {
       .ptr = ptr,
@@ -43,7 +43,7 @@ implement[T] List[T] {
     }
   }
 
-  /// Initialization called on first push
+  /// Initialization called on first push.
   fn __initialize_if_new(*self) {
     if (self._capacity > 0) {
       return;
@@ -56,22 +56,22 @@ implement[T] List[T] {
     self._capacity = InitialListCapacity;
   }
 
-  /// `List`'s len getter
+  /// `List`'s len getter.
   pub fn len(*const self) usize {
     self._len
   }
 
-  /// `List`'s capacity getter
+  /// `List`'s capacity getter.
   pub fn capacity(*const self) usize {
     self._capacity
   }
 
-  /// Is empty getter (if len is 0)
+  /// Is empty getter (if len is 0).
   pub fn is_empty(*const self) bool {
     self._len == 0
   }
 
-  /// Capacity private extender
+  /// Capacity private extender.
   fn __capacity_extend(*self) {
     if (self._capacity - 1 < self._len) {
       self._capacity = align_capacity_up(self._len + 1);
@@ -88,7 +88,7 @@ implement[T] List[T] {
     }
   }
 
-  /// Push single element
+  /// Push single element.
   pub fn push(*self, value: T) {
     self.__initialize_if_new();
     self._len += 1;
@@ -97,7 +97,7 @@ implement[T] List[T] {
     self.ptr[self._len - 1] = value;
   }
   
-  /// Pop last element and return it
+  /// Pop last element and return it.
   pub fn pop(*self) Option[T] {
     if (self._capacity < 1 || self._len < 1) {
       return Option.None;
@@ -109,7 +109,7 @@ implement[T] List[T] {
     Option.Some(output)
   }
 
-  /// Remove element by provided index and return it
+  /// Remove element by provided index and return it.
   pub fn remove(*self, index: usize) Option[T] {
     if (
       self._capacity < 1
@@ -146,7 +146,7 @@ implement[T] List[T] {
     Option.Some(output)
   }
 
-  /// Get element by index, copying it out (out of bounds returns `None`)
+  /// Get element by index, copying it out (out of bounds returns `None`).
   pub fn get[T: Copy](*const self, index: usize) Option[T] {
     if (
       self._capacity < 1
@@ -159,7 +159,7 @@ implement[T] List[T] {
     Option.Some(self.ptr[index])
   }
 
-  /// Get pointer to element by index (out of bounds returns `None`)
+  /// Get pointer to element by index (out of bounds returns `None`).
   pub fn get_ptr(*const self, index: usize) Option[*T] {
     if (
       self._capacity < 1
@@ -172,7 +172,7 @@ implement[T] List[T] {
     Option.Some(&self.ptr[index])
   }
 
-  /// Set element by index and return old (out of bounds returns `None`)
+  /// Set element by index and return old (out of bounds returns `None`).
   pub fn set(*self, index: usize, value: T) Option[T] {
     if (
       self._capacity < 1
@@ -205,7 +205,7 @@ implement[T] List[T] {
     return Option.None;
   }
 
-  /// Reverse elements order in list
+  /// Reverse elements order in list.
   pub fn reverse(*self) {
     if (self._capacity < 1 || self._len < 1) {
       return;
@@ -225,14 +225,14 @@ implement[T] List[T] {
     }
   }
 
-  /// Clear list, dropping removed elements (capacity saves)
+  /// Clear list, dropping removed elements (capacity saves).
   pub fn clear(*self) {
     while (!self.is_empty()) {
       let _item = self.pop().unwrap();
     };
   }
 
-  /// Truncate list with new length, dropping removed elements (capacity saves)
+  /// Truncate list with new length, dropping removed elements (capacity saves).
   pub fn truncate(*self, new_len: usize) {
     if (new_len >= self._len) { return; };
 
@@ -241,7 +241,7 @@ implement[T] List[T] {
     };
   }
 
-  /// Swap elements at two indices
+  /// Swap elements at two indices.
   pub fn swap(*self, a: usize, b: usize) {
     if (a >= self._len || b >= self._len) {
       @panic(
@@ -262,7 +262,7 @@ implement[T] List[T] {
     *right = temp;
   }
 
-  /// Sort list in place (through `Ord`)
+  /// Sort list in place (through `Ord`).
   pub fn sort[T: Ord](*self) {
     let len = self._len;
 
@@ -280,7 +280,7 @@ implement[T] List[T] {
     Allocator.dealloc(@as(*void, buf));
   }
 
-  /// Insertion sort through ordering interface `Ord`
+  /// Insertion sort through ordering interface `Ord`.
   fn __insertion_sort[T: Ord](*self, lo: usize, hi: usize) {
     let i = lo + 1;
 
@@ -653,7 +653,7 @@ implement[T] List[T] {
 }
 
 implement[T: Copy] List[T] {
-  /// Allocate new `List` with copying values from slice
+  /// Allocate new `List` with copying values from slice.
   pub fn from(value: []const T) Self {
     const len = value.len;
     const capacity = align_capacity_up(value.len + 1);
@@ -674,7 +674,7 @@ implement[T: Copy] List[T] {
 }
 
 implement[T: Clone] List[T] {
-  /// Allocate new `List` with cloning values from slice
+  /// Allocate new `List` with cloning values from slice.
   pub fn from(value: []const T) Self {
     let len = value.len;
     let capacity = align_capacity_up(value.len + 1);
@@ -817,7 +817,7 @@ implement[T] Sliceable : List[T] {
   }
 }
 
-/// Borrow iter yielding pointers
+/// Borrow iter yielding pointers.
 pub struct ListIter[T] {
   ptr: [*]const T,
   len: usize,
@@ -847,6 +847,7 @@ implement[T] PtrIterator : List[T] {
   }
 }
 
+/// Mutable borrow iter yielding pointers.
 pub struct ListMutIter[T] {
   ptr: [*]T,
   len: usize,
@@ -901,7 +902,7 @@ implement[T] FromIterator : List[T] {
   }
 }
 
-/// Owning iter yielding moves
+/// Owning iter yielding moves.
 pub struct OwnedListIter[T] {
   ptr: [*]T,
   len: usize,

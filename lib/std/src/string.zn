@@ -26,8 +26,8 @@ implement String {
     }
   }
 
-  /// Constructor with capacity aligned to the next geometry progression
-  /// String's length sequence (8, 16, 32, 64, 128, ...)
+  /// Constructor with capacity aligned to the next geometry progression.
+  /// String's length sequence (8, 16, 32, 64, 128, ...).
   pub fn with_capacity(capacity: usize) Self {
     const capacity = next_capacity(capacity);
     const ptr = @as([*]char, Allocator.alloc(@sizeof(char) * capacity));
@@ -39,7 +39,7 @@ implement String {
     }
   }
 
-  /// Allocate new String instance from provided slice
+  /// Allocate new String instance from provided slice.
   pub fn from(value: []const char) Self {
     const len = value.len;
     const capacity = next_capacity(len + 1);
@@ -55,7 +55,7 @@ implement String {
     }
   }
 
-  /// UNSAFE: Constructs String from cstr, you must assume that provided sequence ends with '\0'
+  /// UNSAFE: Constructs String from cstr, you must assume that provided sequence ends with '\0'.
   pub fn from_cstr(value: [*]const char) Self {
     if (@as(*void, value) == nullptr) {
       @panic("Null pointer in argument `from_cstr` constructor");
@@ -121,17 +121,17 @@ implement String {
     self._capacity = InitialStringCapacity;
   }
 
-  /// String's length getter
+  /// String's length getter.
   pub fn len(*const self) usize {
     self._len
 }
 
-  /// String's capacity getter
+  /// String's capacity getter.
   pub fn capacity(*const self) usize {
     self._capacity
   }
 
-  /// Is empty getter (if len is 0)
+  /// Is empty getter (if len is 0).
   pub fn is_empty(*const self) bool {
     self._len == 0
   }
@@ -152,7 +152,7 @@ implement String {
     };
   }
 
-  /// Push single character to the String
+  /// Push single character to the String.
   pub fn push(*self, value: char) {
     self.initialize_if_new();
     self._len += 1;
@@ -163,7 +163,7 @@ implement String {
     self.ptr[self._len] = '\0';
   }
 
-  /// Push string slice to the String instance
+  /// Push string slice to the String instance.
   pub fn push_str(*self, value: []const char) {
     self.initialize_if_new();
     const start = self._len;
@@ -175,7 +175,7 @@ implement String {
     self.ptr[self._len] = '\0';
   }
 
-  /// Push another dynamic String content to current (through reference)
+  /// Push another dynamic String content to current (through reference).
   pub fn push_string(*self, value: *Self) {
     if (value == nullptr)
       @panic("Null pointer value in `String.push_string`");
@@ -190,7 +190,7 @@ implement String {
     self.ptr[self._len] = '\0';
   }
 
-  /// Push a single rune encoded as UTF-8
+  /// Push a single rune encoded as UTF-8.
   pub fn push_rune(*self, rune: Rune) {
     self.initialize_if_new();
 
@@ -210,7 +210,7 @@ implement String {
     self.ptr[self._len] = '\0';
   }
 
-  /// Push a rune slice encoded as UTF-8
+  /// Push a rune slice encoded as UTF-8.
   pub fn push_runes(*self, value: []const Rune) {
     let i: usize = 0;
     while (i < value.len) {
@@ -219,7 +219,7 @@ implement String {
     };
   }
 
-  /// Remove last rune and return it
+  /// Remove last rune and return it.
   pub fn pop_rune(*self) Option[Rune] {
     if (self._capacity < 1 || self._len < 1) {
       return Option.None;
@@ -239,24 +239,24 @@ implement String {
     decoded
   }
 
-  /// Iterate over the runes of the string
+  /// Iterate over the runes of the string.
   pub fn runes(*const self) RuneIter {
     RuneIter.new(self.ptr[0..self._len])
   }
 
-  /// Count runes in the string
+  /// Count runes in the string.
   pub fn rune_count(*const self) usize {
     Rune.count(self.ptr[0..self._len])
   }
 
-  /// Decode the rune at the byte offset
+  /// Decode the rune at the byte offset.
   pub fn rune_at(*const self, byte_index: usize) Option[Rune] {
     let index = byte_index;
 
     Rune.decode(self.ptr[0..self._len], &index)
   }
 
-  /// Decode the rune by its position in code points
+  /// Decode the rune by its position in code points.
   pub fn nth_rune(*const self, position: usize) Option[Rune] {
     let iter = self.runes();
     let i: usize = 0;
@@ -272,7 +272,7 @@ implement String {
     iter.next()
   }
 
-  /// Remove last character and return it
+  /// Remove last character and return it.
   pub fn pop(*self) Option[char] {
     if (self._capacity < 1 || self._len < 1) {
       return Option.None;
@@ -285,7 +285,7 @@ implement String {
     Option.Some(output)
   }
 
-  /// Remove character by provided index and return it
+  /// Remove character by provided index and return it.
   pub fn remove(*self, index: usize) Option[char] {
     if (
       self._capacity < 1
@@ -323,7 +323,7 @@ implement String {
     Option.Some(output)
   }
 
-  /// Get character by index (out of bounds returns `None`)
+  /// Get character by index (out of bounds returns `None`).
   pub fn get(*const self, index: usize) Option[char] {
     if (
       self._capacity < 1
@@ -336,7 +336,7 @@ implement String {
     Option.Some(self.ptr[index])
   }
 
-  /// Get pointer to character by index (out of bounds returns `None`)
+  /// Get pointer to character by index (out of bounds returns `None`).
   pub fn get_ptr(*const self, index: usize) Option[*char] {
     if (
       self._capacity < 1
@@ -349,7 +349,7 @@ implement String {
     Option.Some(&self.ptr[index])
   }
 
-  /// Set character by index and return old (out of bounds returns `None`)
+  /// Set character by index and return old (out of bounds returns `None`).
   pub fn set(*self, index: usize, value: char) Option[char] {
     if (
       self._capacity < 1
@@ -365,7 +365,7 @@ implement String {
     output
   }
 
-  /// `true` if string contains provided character
+  /// `true` if string contains provided character.
   pub fn contains(*const self, value: char) bool {
     if (self._capacity < 1 || self._len < 1) {
       return false;
@@ -374,7 +374,7 @@ implement String {
     return strchr(self.ptr, value) != nullptr;
   }
 
-  /// `true` if string contains provided string slice
+  /// `true` if string contains provided string slice.
   pub fn contains_str(*const self, value: []const char) bool {
     if (self._capacity < 1 || self._len < 1) {
       return false;
@@ -383,7 +383,7 @@ implement String {
     return strstr(self.ptr, value.ptr) != nullptr;
   }
 
-  /// `true` if string contains provided cstr
+  /// `true` if string contains provided cstr.
   pub fn contains_cstr(*const self, value: [*]const char) bool {
     if (self._capacity < 1 || self._len < 1) {
       return false;
@@ -466,12 +466,12 @@ implement String {
     Option.None
   }
 
-  /// Checks that the string contains the rune
+  /// Checks that the string contains the rune.
   pub fn contains_rune(*const self, rune: Rune) bool {
     self.find_rune(rune).is_some()
   }
 
-  /// Converts whole string to uppercase
+  /// Converts whole string to uppercase.
   pub fn to_uppercase(*self) {
     let cursor = @as(*char, self.ptr);
     const end = @as(*char, self.ptr + self._len);
@@ -482,7 +482,7 @@ implement String {
     }
   }
 
-  /// Converts whole string to lowercase 
+  /// Converts whole string to lowercase.
   pub fn to_lowercase(*self) {
     let cursor = @as(*char, self.ptr);
     const end = @as(*char, self.ptr + self._len);
@@ -493,7 +493,7 @@ implement String {
     }
   }
 
-  /// Find every `from` string entrance and replace with `to`
+  /// Find every `from` string entrance and replace with `to`.
   pub fn replace(*self, from: [*]const char, to: [*]const char) {
     if (
       @as(*void, from) == nullptr ||
@@ -547,7 +547,7 @@ implement String {
     self._capacity = new_capacity;
   }
 
-  /// Reverse runes order in string
+  /// Reverse runes order in string.
   pub fn reverse(*self) {
     if (self._capacity < 1 || self._len < 2) {
       return;
@@ -581,13 +581,13 @@ implement String {
     Allocator.dealloc(@as(*void, buffer));
   }
 
-  /// Clear string (capacity saves)
+  /// Clear string (capacity saves).
   pub fn clear(*self) {
     self.ptr[0] = '\0';
     self._len = 0;
   }
 
-  /// Truncate string with new length (capacity saves)
+  /// Truncate string with new length (capacity saves).
   pub fn truncate(*self, new_len: usize) {
     if (new_len > self._len) { return; };
 

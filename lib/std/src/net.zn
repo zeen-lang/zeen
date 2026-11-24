@@ -25,22 +25,27 @@ pub struct SocketAddr {
 }
 
 implement SocketAddr {
+  /// Address from octets in `ip` and `port`.
   pub fn new(ip: u32, port: u16) Self {
     Self { ._ip = ip, ._port = port }
   }
 
+  /// Loopback address on `port`.
   pub fn loopback(port: u16) Self {
     Self { ._ip = 2130706433, ._port = port }
   }
 
+  /// Address that listens on every interface.
   pub fn any(port: u16) Self {
     Self { ._ip = 0, ._port = port }
   }
 
+  /// Octets in host order.
   pub fn ip(*const self) u32 {
     self._ip
   }
 
+  /// Port number.
   pub fn port(*const self) u16 {
     self._port
   }

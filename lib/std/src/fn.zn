@@ -1,10 +1,12 @@
 use std.alloc;
 
+/// Closure value with an owned environment.
 pub struct Fn {
     ptr: *void,
     env: *void,
 }
 
+/// Closure value that frees its environment on drop.
 pub struct FnOnce {
     ptr: *void,
     env: *void,

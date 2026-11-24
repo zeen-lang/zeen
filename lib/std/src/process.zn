@@ -46,6 +46,7 @@ pub struct Process {
     return out;
   }
 
+  /// Borrowed iterator over the arguments.
   pub fn args_iter() ArgsIter {
     return ArgsIter.new();
   }
@@ -95,6 +96,7 @@ pub struct ArgsIter {
 }
 
 implement ArgsIter {
+  /// Iterator at the first argument.
   pub fn new() Self {
     return ArgsIter { .index = 0 };
   }
@@ -103,6 +105,7 @@ implement ArgsIter {
 implement Iterator : ArgsIter {
   alias Item = []const char;
 
+  /// Next argument as a readonly slice.
   pub fn next(*self) Option[[]const char] {
     const at = @as(usize, self.index);
 
@@ -117,24 +120,26 @@ implement Iterator : ArgsIter {
   }
 }
 
-/// Child stdio config
+/// Child stdio config.
 pub enum Stdio {
   Piped,
   Inherit,
   Null,
 }
 
-/// Child exit report
+/// Child exit report.
 pub struct ExitStatus {
   pub exit_code: i32,
   pub term_signal: i32,
 }
 
 implement ExitStatus {
+  /// Checks that the child exited with code zero.
   pub fn success(*const self) bool {
     return self.term_signal == 0 && self.exit_code == 0;
   }
 
+  /// Exit code, `None` when a signal ended the child.
   pub fn code(*const self) Option[i32] {
     if (self.term_signal != 0) {
       return Option.None;
@@ -143,6 +148,7 @@ implement ExitStatus {
     return Option.Some(self.exit_code);
   }
 
+  /// Termination signal, `None` on a normal exit.
   pub fn signal(*const self) Option[i32] {
     if (self.term_signal == 0) {
       return Option.None;
@@ -152,20 +158,21 @@ implement ExitStatus {
   }
 }
 
-/// Finished child output
+/// Finished child output.
 pub struct Output {
   pub status: ExitStatus,
   pub stdout: String,
   pub stderr: String,
 }
 
-/// Owned pipe read end, closes on drop
+/// Owned pipe read end, closes on drop.
 pub struct PipeReader {
   pub fd: c_int,
   pub handle: *void,
 }
 
 implement PipeReader {
+  /// Reads the rest of the pipe into `out`.
   pub fn read_to_string(*self, out: *String) Result[usize, IoError] {
     @os[windows] {
       return read_handle_to_string(self.handle, out);
@@ -189,13 +196,14 @@ implement Drop : PipeReader {
   }
 }
 
-/// Owned pipe write end, closes on drop
+/// Owned pipe write end, closes on drop.
 pub struct PipeWriter {
   pub fd: c_int,
   pub handle: *void,
 }
 
 implement PipeWriter {
+  /// Writes the whole slice into the pipe.
   pub fn write_all(*self, buf: []const char) Result[void, IoError] {
     @os[windows] {
       return write_handle_all(self.handle, buf);
@@ -219,7 +227,7 @@ implement Drop : PipeWriter {
   }
 }
 
-/// Child handle, wait reaps it
+/// Child handle, wait reaps it.
 pub struct Child {
   pub pid: i32,
   pub handle: *void,
@@ -232,10 +240,12 @@ pub struct Child {
 }
 
 implement Child {
+  /// Process id.
   pub fn id(*const self) i32 {
     return self.pid;
   }
 
+  /// Takes the stdin pipe, `None` when it is missing or already taken.
   pub fn take_stdin(*self) Option[PipeWriter] {
     @os[windows] {
       if (self.win_in == nullptr) {
@@ -258,6 +268,7 @@ implement Child {
     }
   }
 
+  /// Takes the stdout pipe, `None` when it is missing or already taken.
   pub fn take_stdout(*self) Option[PipeReader] {
     @os[windows] {
       if (self.win_out == nullptr) {
@@ -280,6 +291,7 @@ implement Child {
     }
   }
 
+  /// Takes the stderr pipe, `None` when it is missing or already taken.
   pub fn take_stderr(*self) Option[PipeReader] {
     @os[windows] {
       if (self.win_err == nullptr) {
@@ -302,6 +314,7 @@ implement Child {
     }
   }
 
+  /// Waits for the child and reports its exit.
   pub fn wait(*self) Result[ExitStatus, IoError] {
     @os[windows] {
       let code: WinDWORD = 0;
@@ -337,6 +350,7 @@ implement Child {
     }
   }
 
+  /// Checks the child without blocking, `None` while it runs.
   pub fn try_wait(*self) Result[Option[ExitStatus], IoError] {
     @os[windows] {
       let code: WinDWORD = 0;
@@ -375,6 +389,7 @@ implement Child {
     }
   }
 
+  /// Asks the child to terminate.
   pub fn kill(*self) Result[void, IoError] {
     @os[windows] {
       if (TerminateProcess(self.handle, 1) == WinFALSE) {
@@ -421,14 +436,14 @@ implement Drop : Child {
   }
 }
 
-/// Single env override, remove deletes
+/// Single env override, remove deletes.
 struct CommandEnv {
   pub key: String,
   pub value: String,
   pub remove: bool,
 }
 
-/// Pending spawn, chain or rebind builders
+/// Pending spawn, chain or rebind builders.
 pub struct Command {
   pub program: String,
   pub argv: List[String],
@@ -442,6 +457,7 @@ pub struct Command {
 }
 
 implement Command {
+  /// Command for `program`.
   pub fn new(program: []const char) Self {
     return Command {
       .program = String.from(program),
@@ -456,12 +472,14 @@ implement Command {
     };
   }
 
+  /// Appends one argument.
   pub fn arg(self, value: []const char) Self {
     self.argv.push(String.from(value));
 
     return self;
   }
 
+  /// Appends several arguments.
   pub fn args(self, values: *const List[String]) Self {
     let i: usize = 0;
 
@@ -474,6 +492,7 @@ implement Command {
     return self;
   }
 
+  /// Sets one environment variable for the child.
   pub fn env(self, key: []const char, value: []const char) Self {
     self.envs.push(CommandEnv {
       .key = String.from(key),
@@ -484,6 +503,7 @@ implement Command {
     return self;
   }
 
+  /// Removes one environment variable from the child.
   pub fn env_remove(self, key: []const char) Self {
     self.envs.push(CommandEnv {
       .key = String.from(key),
@@ -494,12 +514,14 @@ implement Command {
     return self;
   }
 
+  /// Starts the child with an empty environment.
   pub fn env_clear(self) Self {
     self.env_cleared = true;
 
     return self;
   }
 
+  /// Sets the working directory of the child.
   pub fn current_dir(self, dir: []const char) Self {
     self.cwd = String.from(dir);
     self.has_cwd = true;
@@ -507,24 +529,28 @@ implement Command {
     return self;
   }
 
+  /// Sets the stdin mode.
   pub fn stdin(self, mode: Stdio) Self {
     self.stdin_mode = mode;
 
     return self;
   }
 
+  /// Sets the stdout mode.
   pub fn stdout(self, mode: Stdio) Self {
     self.stdout_mode = mode;
 
     return self;
   }
 
+  /// Sets the stderr mode.
   pub fn stderr(self, mode: Stdio) Self {
     self.stderr_mode = mode;
 
     return self;
   }
 
+  /// Starts the child.
   pub fn spawn(*const self) Result[Child, IoError] {
     @os[windows] {
       return spawn_windows(self);
@@ -533,10 +559,12 @@ implement Command {
     }
   }
 
+  /// Runs the child and waits for its exit.
   pub fn status(*const self) Result[ExitStatus, IoError] {
     return self.spawn()?.wait();
   }
 
+  /// Runs the child and collects its output.
   pub fn output(*self) Result[Output, IoError] {
     self.stdout_mode = Stdio.Piped;
     self.stderr_mode = Stdio.Piped;

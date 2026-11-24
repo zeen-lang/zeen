@@ -33,11 +33,13 @@ fn set_find_in_bucket[T: Hash + Eq](bucket: *List[SetEntry[T]], key: *const T, h
   return Option.None;
 }
 
+/// Bucket record holding a value and its hash.
 pub struct SetEntry[T] {
   pub hash: u64,
   pub key: T,
 }
 
+/// Hash set of unique values.
 pub struct HashSet[T: Hash + Eq] {
   buckets: List[List[SetEntry[T]]],
   _len: usize,
@@ -45,6 +47,7 @@ pub struct HashSet[T: Hash + Eq] {
 }
 
 implement[T: Hash + Eq] HashSet[T] {
+  /// Empty set.
   pub fn new() Self {
     let cap: usize = InitialSetCapacity;
     let buckets = List#[List[SetEntry[T]]].with_capacity(cap);
@@ -62,6 +65,7 @@ implement[T: Hash + Eq] HashSet[T] {
     }
   }
 
+  /// Empty set with room for `cap` values.
   pub fn with_capacity(cap: usize) Self {
     let cap = next_pow2_set(if (cap < InitialSetCapacity) { InitialSetCapacity } else { cap });
     let buckets = List#[List[SetEntry[T]]].with_capacity(cap);
@@ -79,18 +83,22 @@ implement[T: Hash + Eq] HashSet[T] {
     }
   }
 
+  /// Number of values.
   pub fn len(*const self) usize {
     self._len
   }
 
+  /// Checks that no values are present.
   pub fn is_empty(*const self) bool {
     self._len == 0
   }
 
+  /// Current bucket count.
   pub fn capacity(*const self) usize {
     self._capacity
   }
 
+  /// Removes every value.
   pub fn clear(*self) {
     let idx: usize = 0;
 
@@ -106,6 +114,7 @@ implement[T: Hash + Eq] HashSet[T] {
     self._len = 0;
   }
 
+  /// Checks that the value is present.
   pub fn contains(*const self, value: *const T) bool {
     if (self._capacity == 0) {
       return false;
@@ -123,6 +132,7 @@ implement[T: Hash + Eq] HashSet[T] {
     }
   }
 
+  /// Borrow of the stored copy of `value`.
   pub fn get(*const self, value: *const T) Option[*const T] {
     if (self._capacity == 0) {
       return Option.None;
@@ -147,6 +157,7 @@ implement[T: Hash + Eq] HashSet[T] {
     }
   }
 
+  /// Adds `value`, `false` when it was already present.
   pub fn insert(*self, value: T) bool {
     if (self._capacity == 0) {
       let new_buckets = List#[List[SetEntry[T]]].with_capacity(InitialSetCapacity);
@@ -225,6 +236,7 @@ implement[T: Hash + Eq] HashSet[T] {
     self._capacity = new_cap;
   }
 
+  /// Removes `value`, `false` when it was absent.
   pub fn remove(*self, value: *const T) bool {
     if (self._capacity == 0) {
       return false;

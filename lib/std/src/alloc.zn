@@ -1,7 +1,8 @@
 use std.c.stdlib;
 
-/// Main standard library allocator
+/// Main standard library allocator.
 pub struct Allocator {
+  /// Allocates `size` bytes, panics on failure.
   pub fn alloc(size: usize) *void {
     const ptr = G_ALLOC(size);
     
@@ -12,6 +13,7 @@ pub struct Allocator {
     ptr
   }
 
+  /// Resizes the allocation at `ptr` to `size` bytes, panics on failure.
   pub fn realloc(ptr: *void, size: usize) *void {
     const ptr = G_REALLOC(ptr, size);
 
@@ -22,11 +24,13 @@ pub struct Allocator {
     ptr
   }
 
+  /// Frees the allocation at `ptr`, ignores null.
   pub fn dealloc(ptr: *void) {
     if (ptr != nullptr)
       G_FREE(ptr);
   }
 
+  /// Replaces the global allocator functions.
   pub fn set_allocator(instance: AllocatorInstance) {
     G_ALLOC = instance.alloc;
     G_REALLOC = instance.realloc;
@@ -38,8 +42,12 @@ let G_ALLOC: fn(usize) *void = malloc;
 let G_REALLOC: fn(*void, usize) *void = realloc;
 let G_FREE: fn(*void) void = free;
 
+/// Function table for a custom allocator.
 pub struct AllocatorInstance {
+  /// Allocation function.
   pub alloc: fn(usize) *void,
+  /// Resize function.
   pub realloc: fn(*void, usize) *void,
+  /// Free function.
   pub free: fn(*void) void
 }

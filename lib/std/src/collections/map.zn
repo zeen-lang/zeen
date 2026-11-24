@@ -35,6 +35,7 @@ fn find_in_bucket[K: Hash + Eq, V](bucket: *List[Entry[K, V]], key: *const K, ha
   return Option.None;
 }
 
+/// Bucket record holding a key, its hash and the value.
 pub struct Entry[K, V] {
   pub hash: u64,
   pub value: V,
@@ -42,15 +43,18 @@ pub struct Entry[K, V] {
 }
 
 implement[K, V] Entry[K, V] {
+  /// Writable pointer to the value.
   pub fn value_ptr(*self) *V {
     &self.value
   }
 
+  /// Readonly pointer to the value.
   pub fn value_const_ptr(*const self) *const V {
     &self.value
   }
 }
 
+/// Hash table mapping keys to values.
 pub struct HashMap[K: Hash + Eq, V] {
   buckets: List[List[Entry[K, V]]],
   _len: usize,
@@ -58,6 +62,7 @@ pub struct HashMap[K: Hash + Eq, V] {
 }
 
 implement[K: Hash + Eq, V] HashMap[K, V] {
+  /// Empty map.
   pub fn new() Self {
     const cap: usize = InitialMapCapacity;
     let buckets = List#[List[Entry[K, V]]].with_capacity(cap);
@@ -75,6 +80,7 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
     }
   }
 
+  /// Empty map with room for `cap` entries.
   pub fn with_capacity(cap: usize) Self {
     let cap = next_pow2(if (cap < InitialMapCapacity) { InitialMapCapacity } else { cap });
     let buckets = List#[List[Entry[K, V]]].with_capacity(cap);
@@ -92,18 +98,22 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
     }
   }
 
+  /// Number of entries.
   pub fn len(*const self) usize {
     self._len
   }
 
+  /// Checks that no entries are present.
   pub fn is_empty(*const self) bool {
     self._len == 0
   }
 
+  /// Current bucket count.
   pub fn capacity(*const self) usize {
     self._capacity
   }
 
+  /// Removes every entry.
   pub fn clear(*self) {
     let idx: usize = 0;
 
@@ -119,6 +129,7 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
     self._len = 0;
   }
 
+  /// Checks that a key is present.
   pub fn contains_key(*const self, key: *const K) bool {
     if (self._capacity == 0) {
       return false;
@@ -138,6 +149,7 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
     }
   }
 
+  /// Borrow of the value stored under `key`.
   pub fn get(*const self, key: *const K) Option[*const V] {
     if (self._capacity == 0) {
       return Option.None;
@@ -162,6 +174,7 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
     }
   }
 
+  /// Writable borrow of the value stored under `key`.
   pub fn get_mut(*self, key: *const K) Option[*V] {
     if (self._capacity == 0) {
       return Option.None;
@@ -186,6 +199,7 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
     }
   }
 
+  /// Stores `value` under `key`, returns the previous value.
   pub fn insert(*self, key: K, value: V) Option[V] {
     if (self._capacity == 0) {
       let new_buckets = List#[List[Entry[K, V]]].with_capacity(InitialMapCapacity);
@@ -272,6 +286,7 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
     self._capacity = new_cap;
   }
 
+  /// Removes `key` and returns its value.
   pub fn remove(*self, key: *const K) Option[V] {
     if (self._capacity == 0) {
       return Option.None;
@@ -301,6 +316,7 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
     }
   }
 
+  /// Removes `key` and returns its entry.
   pub fn remove_entry(*self, key: *const K) Option[Entry[K, V]] {
     if (self._capacity == 0) {
       return Option.None;

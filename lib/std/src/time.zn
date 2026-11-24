@@ -14,34 +14,42 @@ pub struct Duration {
 }
 
 implement Duration {
+  /// Span of `s` seconds.
   pub fn from_secs(s: u64) Self {
     return Duration { .secs = s, .nanos = 0 };
   }
 
+  /// Span of `ms` milliseconds.
   pub fn from_millis(ms: u64) Self {
     return Duration { .secs = ms / 1000, .nanos = @as(u32, ms % 1000) * 1000000 };
   }
 
+  /// Span of `us` microseconds.
   pub fn from_micros(us: u64) Self {
     return Duration { .secs = us / 1000000, .nanos = @as(u32, us % 1000000) * 1000 };
   }
 
+  /// Whole seconds.
   pub fn as_secs(*const self) u64 {
     return self.secs;
   }
 
+  /// Nanoseconds below the last whole second.
   pub fn subsec_nanos(*const self) u32 {
     return self.nanos;
   }
 
+  /// Whole milliseconds.
   pub fn as_millis(*const self) u64 {
     return self.secs * 1000 + @as(u64, self.nanos) / 1000000;
   }
 
+  /// Whole nanoseconds.
   pub fn as_nanos(*const self) u64 {
     return self.secs * 1000000000 + @as(u64, self.nanos);
   }
 
+  /// Checks that the span is empty.
   pub fn is_zero(*const self) bool {
     return self.secs == 0 && self.nanos == 0;
   }
@@ -61,6 +69,7 @@ pub struct Instant {
 }
 
 implement Instant {
+  /// Current monotonic time.
   pub fn now() Self {
     @os[windows] {
       let freq: i64 = 0;
@@ -78,6 +87,7 @@ implement Instant {
     }
   }
 
+  /// Time passed since this instant.
   pub fn elapsed(*const self) Duration {
     const now = Instant.now();
 
@@ -119,6 +129,7 @@ pub struct Time {
     return @as(i64, time(nullptr));
   }
 
+  /// Blocks the current thread for `d`.
   pub fn sleep(d: Duration) {
     @os[windows] {
       Sleep(@as(WinDWORD, d.as_millis()));

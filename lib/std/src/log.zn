@@ -15,28 +15,34 @@ pub struct Log {
     level = l;
   }
 
+  /// Current minimum level.
   pub fn level() Level {
     return level;
   }
 
+  /// Writes `msg` with its level when it passes the minimum.
   pub fn log(l: Level, msg: []const char) {
     if (@enumTag(l) >= @enumTag(level)) {
       @println("[{}] {}", l, msg);
     };
   }
 
+  /// Writes a debug message.
   pub fn debug(msg: []const char) {
     Log.log(Level.Debug, msg);
   }
 
+  /// Writes an info message.
   pub fn info(msg: []const char) {
     Log.log(Level.Info, msg);
   }
 
+  /// Writes a warning message.
   pub fn warn(msg: []const char) {
     Log.log(Level.Warn, msg);
   }
 
+  /// Writes an error message.
   pub fn error(msg: []const char) {
     Log.log(Level.Error, msg);
   }

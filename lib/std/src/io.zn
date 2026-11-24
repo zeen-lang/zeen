@@ -8,7 +8,7 @@ use std.c.windows.windef;
 use std.c.windows.winbase;
 use std.c.windows.fileapi;
 
-/// IO error kind
+/// IO error kind.
 pub enum IoErrorKind {
   NotFound,
   PermissionDenied,
@@ -41,6 +41,7 @@ pub struct IoError {
 }
 
 implement IoError {
+  /// Error with a kind and a message.
   pub fn new(kind: IoErrorKind, message: []const char) Self {
     Self {
       ._kind = kind,
@@ -48,10 +49,12 @@ implement IoError {
     }
   }
 
+  /// Error kind.
   pub fn kind(*const self) IoErrorKind {
     self._kind
   }
 
+  /// Human readable message.
   pub fn message(self) String {
     self._message
   }
