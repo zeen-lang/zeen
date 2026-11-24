@@ -2,50 +2,60 @@ use std.c.math;
 use std.string;
 
 implement builtin f64 {
+  /// Smallest finite value.
   pub fn min_value() f64 {
     const max = f64.max_value();
 
     return 0.0 - max;
   }
 
+  /// Largest finite value.
   pub fn max_value() f64 {
     return f64.from_bits(0x7FEFFFFFFFFFFFFF);
   }
 
+  /// Smallest positive value.
   pub fn min_positive_value() f64 {
     return f64.from_bits(1);
   }
 
+  /// Difference between one and the next value.
   pub fn epsilon() f64 {
     return f64.from_bits(0x3CB0000000000000);
   }
 
+  /// Positive infinity.
   pub fn infinity() f64 {
     return f64.from_bits(0x7FF0000000000000);
   }
 
+  /// Negative infinity.
   pub fn neg_infinity() f64 {
     const infinity = f64.infinity();
 
     return 0.0 - infinity;
   }
 
+  /// Not a number.
   pub fn nan() f64 {
     return f64.from_bits(0x7FF8000000000000);
   }
 
+  /// Bit pattern of the value.
   pub fn to_bits(self) u64 {
     const p = @as(*u64, @as(*void, @as(*f64, &self)));
 
     return *p;
   }
 
+  /// Value from a bit pattern.
   pub fn from_bits(bits: u64) f64 {
     const p = @as(*f64, @as(*void, @as(*u64, &bits)));
 
     return *p;
   }
 
+  /// Checks that the value is not a number.
   pub fn is_nan(self) bool {
     const bits = self.to_bits();
     const exponent = (bits >> 52) & 0x7FF;
@@ -54,6 +64,7 @@ implement builtin f64 {
     return exponent == 0x7FF && mantissa != 0;
   }
 
+  /// Checks that the value is infinite.
   pub fn is_infinite(self) bool {
     const bits = self.to_bits();
     const exponent = (bits >> 52) & 0x7FF;
@@ -62,6 +73,7 @@ implement builtin f64 {
     return exponent == 0x7FF && mantissa == 0;
   }
 
+  /// Checks that the value is finite.
   pub fn is_finite(self) bool {
     const bits = self.to_bits();
     const exponent = (bits >> 52) & 0x7FF;
@@ -69,40 +81,49 @@ implement builtin f64 {
     return exponent != 0x7FF;
   }
 
+  /// Checks a positive sign bit.
   pub fn is_sign_positive(self) bool {
     return (self.to_bits() >> 63) == 0;
   }
 
+  /// Checks a negative sign bit.
   pub fn is_sign_negative(self) bool {
     return (self.to_bits() >> 63) != 0;
   }
 
+  /// Absolute value.
   pub fn abs(self) f64 {
     return fabs(self);
   }
 
+  /// Sign as `-1.0`, `0.0` or `1.0`.
   pub fn signum(self) f64 {
     if (self.is_nan()) { return f64.nan(); };
 
     return copysign(1.0, self);
   }
 
+  /// Value with the sign of `sign`.
   pub fn copysign(self, sign: f64) f64 {
     return copysign(self, sign);
   }
 
+  /// Square root.
   pub fn sqrt(self) f64 {
     return sqrt(self);
   }
 
+  /// Cube root.
   pub fn cbrt(self) f64 {
     return cbrt(self);
   }
 
+  /// Raises to a floating point power.
   pub fn powf(self, other: f64) f64 {
     return pow(self, other);
   }
 
+  /// Raises to an integer power.
   pub fn powi(self, n: i32) f64 {
     if (n < 0) {
       return 1.0 / self.pow_positive(@as(u32, 0 - n));
@@ -126,130 +147,162 @@ implement builtin f64 {
     return result;
   }
 
+  /// `e` raised to the value.
   pub fn exp(self) f64 {
     return exp(self);
   }
 
+  /// Two raised to the value.
   pub fn exp2(self) f64 {
     return exp2(self);
   }
 
+  /// `e` raised to the value minus one, accurate near zero.
   pub fn exp_m1(self) f64 {
     return expm1(self);
   }
 
+  /// Natural logarithm.
   pub fn ln(self) f64 {
     return log(self);
   }
 
+  /// Natural logarithm of one plus the value, accurate near zero.
   pub fn ln_1p(self) f64 {
     return log1p(self);
   }
 
+  /// Base 2 logarithm.
   pub fn log2(self) f64 {
     return log2(self);
   }
 
+  /// Base 10 logarithm.
   pub fn log10(self) f64 {
     return log10(self);
   }
 
+  /// Logarithm for `base`.
   pub fn log(self, base: f64) f64 {
     return self.ln() / base.ln();
   }
 
+  /// Sine of the angle in radians.
   pub fn sin(self) f64 {
     return sin(self);
   }
 
+  /// Cosine of the angle in radians.
   pub fn cos(self) f64 {
     return cos(self);
   }
 
+  /// Tangent of the angle in radians.
   pub fn tan(self) f64 {
     return tan(self);
   }
 
+  /// Arcsine in radians.
   pub fn asin(self) f64 {
     return asin(self);
   }
 
+  /// Arccosine in radians.
   pub fn acos(self) f64 {
     return acos(self);
   }
 
+  /// Arctangent in radians.
   pub fn atan(self) f64 {
     return atan(self);
   }
 
+  /// Angle of the point `(other, self)` in radians.
   pub fn atan2(self, other: f64) f64 {
     return atan2(self, other);
   }
 
+  /// Hyperbolic sine.
   pub fn sinh(self) f64 {
     return sinh(self);
   }
 
+  /// Hyperbolic cosine.
   pub fn cosh(self) f64 {
     return cosh(self);
   }
 
+  /// Hyperbolic tangent.
   pub fn tanh(self) f64 {
     return tanh(self);
   }
 
+  /// Inverse hyperbolic sine.
   pub fn asinh(self) f64 {
     return asinh(self);
   }
 
+  /// Inverse hyperbolic cosine.
   pub fn acosh(self) f64 {
     return acosh(self);
   }
 
+  /// Inverse hyperbolic tangent.
   pub fn atanh(self) f64 {
     return atanh(self);
   }
 
+  /// Length of the hypotenuse for the two legs.
   pub fn hypot(self, other: f64) f64 {
     return hypot(self, other);
   }
 
+  /// `self * a + b` with one rounding.
   pub fn mul_add(self, a: f64, b: f64) f64 {
     return fma(self, a, b);
   }
 
+  /// Largest integer at or below the value.
   pub fn floor(self) f64 {
     return floor(self);
   }
 
+  /// Smallest integer at or above the value.
   pub fn ceil(self) f64 {
     return ceil(self);
   }
 
+  /// Nearest integer, ties away from zero.
   pub fn round(self) f64 {
     return round(self);
   }
 
+  /// Integer part of the value.
   pub fn trunc(self) f64 {
     return trunc(self);
   }
 
+  /// Fractional part of the value.
   pub fn fract(self) f64 {
     return self - trunc(self);
   }
 
+  /// Inverse of the value.
   pub fn recip(self) f64 {
     return 1.0 / self;
   }
 
+  /// Angle in degrees.
   pub fn to_degrees(self) f64 {
     return self * 57.29577951308232;
   }
 
+  /// Angle in radians.
   pub fn to_radians(self) f64 {
     return self * 0.017453292519943295;
   }
 
+  /// Smaller value, ignores a `NaN` operand.
   pub fn min(self, other: f64) f64 {
     return switch (true) {
       _ if (self.is_nan()) => other,
@@ -261,6 +314,7 @@ implement builtin f64 {
     };
   }
 
+  /// Larger value, ignores a `NaN` operand.
   pub fn max(self, other: f64) f64 {
     return switch (true) {
       _ if (self.is_nan()) => other,
@@ -272,6 +326,7 @@ implement builtin f64 {
     };
   }
 
+  /// Smaller value, propagates `NaN`.
   pub fn minimum(self, other: f64) f64 {
     return switch (true) {
       _ if (self.is_nan() || other.is_nan()) => f64.nan(),
@@ -282,6 +337,7 @@ implement builtin f64 {
     };
   }
 
+  /// Larger value, propagates `NaN`.
   pub fn maximum(self, other: f64) f64 {
     return switch (true) {
       _ if (self.is_nan() || other.is_nan()) => f64.nan(),
@@ -292,6 +348,7 @@ implement builtin f64 {
     };
   }
 
+  /// Clamps the value into `[min, max]`, panics on a `NaN` bound or reversed bounds.
   pub fn clamp(self, min: f64, max: f64) f64 {
     if (min.is_nan() || max.is_nan() || min > max) { @panic("clamp: min > max"); };
 
@@ -302,6 +359,7 @@ implement builtin f64 {
     };
   }
 
+  /// Euclidean division, rounded toward negative infinity.
   pub fn div_euclid(self, rhs: f64) f64 {
     const quotient = trunc(self / rhs);
     const remainder = self % rhs;
@@ -313,6 +371,7 @@ implement builtin f64 {
     };
   }
 
+  /// Euclidean remainder, never negative.
   pub fn rem_euclid(self, rhs: f64) f64 {
     const remainder = self % rhs;
 
@@ -323,6 +382,7 @@ implement builtin f64 {
     return remainder;
   }
 
+  /// Decimal text form.
   pub fn to_string(self) String {
     return @format("{}", self);
   }

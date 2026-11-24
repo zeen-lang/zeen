@@ -1,4 +1,5 @@
 implement[N: comptime_uint, T] builtin [N]T {
+  /// Swaps the elements at `a` and `b`, panics out of bounds.
   pub fn swap(*self, a: usize, b: usize) {
     if (a >= N || b >= N) {
       @panic("out of bounds, array len is {} but indices are {} and {}", N, a, b);
@@ -11,6 +12,7 @@ implement[N: comptime_uint, T] builtin [N]T {
     self[b] = temp;
   }
 
+  /// Reverses the element order in place.
   pub fn reverse(*self) {
     let i: usize = 0;
 
@@ -25,10 +27,12 @@ implement[N: comptime_uint, T] builtin [N]T {
 }
 
 implement[N: comptime_uint, T: Copy] builtin [N]T {
+  /// Checks that the length is zero.
   pub fn is_empty(*const self) bool {
     return N == 0;
   }
 
+  /// Borrow of the first element.
   pub fn first(*const self) Option[*const T] {
     if (N == 0) {
       return Option.None;
@@ -37,6 +41,7 @@ implement[N: comptime_uint, T: Copy] builtin [N]T {
     Option.Some(&self[0])
   }
 
+  /// Borrow of the last element.
   pub fn last(*const self) Option[*const T] {
     if (N == 0) {
       return Option.None;
@@ -45,6 +50,7 @@ implement[N: comptime_uint, T: Copy] builtin [N]T {
     Option.Some(&self[N - 1])
   }
 
+  /// Borrow of the element at `index`, `None` when out of bounds.
   pub fn get(*const self, index: usize) Option[*const T] {
     if (index >= N) {
       return Option.None;
@@ -53,6 +59,7 @@ implement[N: comptime_uint, T: Copy] builtin [N]T {
     Option.Some(&self[index])
   }
 
+  /// Writable borrow of the element at `index`, `None` when out of bounds.
   pub fn get_mut(*self, index: usize) Option[*T] {
     if (index >= N) {
       return Option.None;
@@ -61,12 +68,14 @@ implement[N: comptime_uint, T: Copy] builtin [N]T {
     Option.Some(&self[index])
   }
 
+  /// Writes `value` into every element.
   pub fn fill(*self, value: T) {
     for (i : 0..N) {
       self[i] = value;
     };
   }
 
+  /// Repeats the elements into a `[L]T` buffer.
   pub fn repeat[L: comptime_uint](*const self) [L]T {
     let out: [L]T = @uninit();
 
@@ -77,6 +86,7 @@ implement[N: comptime_uint, T: Copy] builtin [N]T {
     out
   }
 
+  /// Transforms every element with `f` into a new array.
   pub fn map[U, F: Callable(T) U](*const self, f: F) [N]U {
     let out: [N]U = @uninit();
 
@@ -89,6 +99,7 @@ implement[N: comptime_uint, T: Copy] builtin [N]T {
 }
 
 implement[N: comptime_uint, T: Copy + Eq] builtin [N]T {
+  /// Offset of the first equal element.
   pub fn position(*const self, value: T) Option[usize] {
     let i: usize = 0;
 
@@ -103,6 +114,7 @@ implement[N: comptime_uint, T: Copy + Eq] builtin [N]T {
     Option.None
   }
 
+  /// Checks that an equal element occurs.
   pub fn contains(*const self, value: T) bool {
     let i: usize = 0;
 

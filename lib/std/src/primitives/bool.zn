@@ -1,6 +1,7 @@
 use std.string;
 
 implement builtin bool {
+  /// Text form `true` or `false`.
   pub fn to_string(self) String {
     return @format("{}", self);
   }

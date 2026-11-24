@@ -2,18 +2,22 @@ use std.primitives;
 use std.string;
 
 implement builtin usize {
+  /// Bit width of the type.
   pub fn bits() u32 {
     return @as(u32, 8 * @sizeof(usize));
   }
 
+  /// Smallest value of the type.
   pub fn min_value() usize {
     return 0;
   }
 
+  /// Largest value of the type.
   pub fn max_value() usize {
     return ~@as(usize, 0);
   }
 
+  /// Counts set bits.
   pub fn count_ones(self) u32 {
     let v = @as(usize, self);
     let count: u32 = 0;
@@ -26,10 +30,12 @@ implement builtin usize {
     return count;
   }
 
+  /// Counts unset bits.
   pub fn count_zeros(self) u32 {
     return usize.bits() - self.count_ones();
   }
 
+  /// Counts unset bits above the highest set bit.
   pub fn leading_zeros(self) u32 {
     const v = @as(usize, self);
 
@@ -45,6 +51,7 @@ implement builtin usize {
     return count;
   }
 
+  /// Counts unset bits below the lowest set bit.
   pub fn trailing_zeros(self) u32 {
     let v = @as(usize, self);
 
@@ -59,18 +66,21 @@ implement builtin usize {
     return count;
   }
 
+  /// Counts set bits from the highest bit.
   pub fn leading_ones(self) u32 {
     const inverted = ~self;
 
     return inverted.leading_zeros();
   }
 
+  /// Counts set bits from the lowest bit.
   pub fn trailing_ones(self) u32 {
     const inverted = ~self;
 
     return inverted.trailing_zeros();
   }
 
+  /// Rotates the bits left by `n`.
   pub fn rotate_left(self, n: u32) usize {
     const bits = usize.bits();
     const shift = n % bits;
@@ -81,6 +91,7 @@ implement builtin usize {
     return @as(usize, (v << @as(usize, shift)) | (v >> @as(usize, bits - shift)));
   }
 
+  /// Rotates the bits right by `n`.
   pub fn rotate_right(self, n: u32) usize {
     const bits = usize.bits();
     const shift = n % bits;
@@ -91,6 +102,7 @@ implement builtin usize {
     return @as(usize, (v >> @as(usize, shift)) | (v << @as(usize, bits - shift)));
   }
 
+  /// Swaps the byte order.
   pub fn swap_bytes(self) usize {
     let v = @as(usize, self);
     let out: usize = 0;
@@ -105,6 +117,7 @@ implement builtin usize {
     return @as(usize, out);
   }
 
+  /// Reverses the bit order.
   pub fn reverse_bits(self) usize {
     let v = @as(usize, self);
     let out: usize = 0;
@@ -119,18 +132,21 @@ implement builtin usize {
     return @as(usize, out);
   }
 
+  /// Adds `rhs`, `None` on overflow.
   pub fn checked_add(self, rhs: usize) Option[usize] {
     if (self > usize.max_value() - rhs) { return Option.None; };
 
     return Option.Some(self + rhs);
   }
 
+  /// Subtracts `rhs`, `None` on overflow.
   pub fn checked_sub(self, rhs: usize) Option[usize] {
     if (self < rhs) { return Option.None; };
 
     return Option.Some(self - rhs);
   }
 
+  /// Multiplies by `rhs`, `None` on overflow.
   pub fn checked_mul(self, rhs: usize) Option[usize] {
     if (rhs == 0) { return Option.Some(@as(usize, 0)); };
     if (self > usize.max_value() / rhs) { return Option.None; };
@@ -138,18 +154,21 @@ implement builtin usize {
     return Option.Some(self * rhs);
   }
 
+  /// Divides by `rhs`, `None` on overflow or a zero divisor.
   pub fn checked_div(self, rhs: usize) Option[usize] {
     if (rhs == 0) { return Option.None; };
 
     return Option.Some(self / rhs);
   }
 
+  /// Remainder of the division by `rhs`, `None` on overflow or a zero divisor.
   pub fn checked_rem(self, rhs: usize) Option[usize] {
     if (rhs == 0) { return Option.None; };
 
     return Option.Some(self % rhs);
   }
 
+  /// Raises to `exp`, `None` on overflow.
   pub fn checked_pow(self, exp: u32) Option[usize] {
     let result: usize = 1;
     let base = self;
@@ -177,38 +196,46 @@ implement builtin usize {
     return Option.Some(result);
   }
 
+  /// Shifts left by `rhs`, `None` when the shift reaches the bit width.
   pub fn checked_shl(self, rhs: u32) Option[usize] {
     if (rhs >= usize.bits()) { return Option.None; };
 
     return Option.Some(self << @as(usize, rhs));
   }
 
+  /// Shifts right by `rhs`, `None` when the shift reaches the bit width.
   pub fn checked_shr(self, rhs: u32) Option[usize] {
     if (rhs >= usize.bits()) { return Option.None; };
 
     return Option.Some(self >> @as(usize, rhs));
   }
 
+  /// Adds `rhs` and wraps on overflow.
   pub fn wrapping_add(self, rhs: usize) usize {
     return self + rhs;
   }
 
+  /// Subtracts `rhs` and wraps on overflow.
   pub fn wrapping_sub(self, rhs: usize) usize {
     return self - rhs;
   }
 
+  /// Multiplies by `rhs` and wraps on overflow.
   pub fn wrapping_mul(self, rhs: usize) usize {
     return self * rhs;
   }
 
+  /// Divides by `rhs` and wraps on overflow.
   pub fn wrapping_div(self, rhs: usize) usize {
     return self / rhs;
   }
 
+  /// Remainder of the division by `rhs`, wraps on overflow.
   pub fn wrapping_rem(self, rhs: usize) usize {
     return self % rhs;
   }
 
+  /// Raises to `exp` and wraps on overflow.
   pub fn wrapping_pow(self, exp: u32) usize {
     let result: usize = 1;
     let base = self;
@@ -224,30 +251,35 @@ implement builtin usize {
     return result;
   }
 
+  /// Shifts left by `rhs`, wrapping the shift by the bit width.
   pub fn wrapping_shl(self, rhs: u32) usize {
     const shift = rhs % usize.bits();
 
     return self << @as(usize, shift);
   }
 
+  /// Shifts right by `rhs`, wrapping the shift by the bit width.
   pub fn wrapping_shr(self, rhs: u32) usize {
     const shift = rhs % usize.bits();
 
     return self >> @as(usize, shift);
   }
 
+  /// Adds `rhs` and reports the overflow.
   pub fn overflowing_add(self, rhs: usize) Overflowing[usize] {
     const sum = self + rhs;
 
     return Overflowing { .value = sum, .overflowed = sum < self };
   }
 
+  /// Subtracts `rhs` and reports the overflow.
   pub fn overflowing_sub(self, rhs: usize) Overflowing[usize] {
     const difference = self - rhs;
 
     return Overflowing { .value = difference, .overflowed = self < rhs };
   }
 
+  /// Multiplies by `rhs` and reports the overflow.
   pub fn overflowing_mul(self, rhs: usize) Overflowing[usize] {
     const product = self * rhs;
     const overflowed = rhs != 0 && self > usize.max_value() / rhs;
@@ -255,6 +287,7 @@ implement builtin usize {
     return Overflowing { .value = product, .overflowed = overflowed };
   }
 
+  /// Raises to `exp` and reports the overflow.
   pub fn overflowing_pow(self, exp: u32) Overflowing[usize] {
     let result: usize = 1;
     let base = self;
@@ -279,6 +312,7 @@ implement builtin usize {
     return Overflowing { .value = result, .overflowed = overflowed };
   }
 
+  /// Shifts left by `rhs` and reports a shift beyond the bit width.
   pub fn overflowing_shl(self, rhs: u32) Overflowing[usize] {
     const shift = rhs % usize.bits();
     const value = self << @as(usize, shift);
@@ -286,6 +320,7 @@ implement builtin usize {
     return Overflowing { .value = value, .overflowed = rhs >= usize.bits() };
   }
 
+  /// Shifts right by `rhs` and reports a shift beyond the bit width.
   pub fn overflowing_shr(self, rhs: u32) Overflowing[usize] {
     const shift = rhs % usize.bits();
     const value = self >> @as(usize, shift);
@@ -293,6 +328,7 @@ implement builtin usize {
     return Overflowing { .value = value, .overflowed = rhs >= usize.bits() };
   }
 
+  /// Adds `rhs` and clamps to the type bounds.
   pub fn saturating_add(self, rhs: usize) usize {
     const sum = self.checked_add(rhs);
 
@@ -301,6 +337,7 @@ implement builtin usize {
     return usize.max_value();
   }
 
+  /// Subtracts `rhs` and clamps to the type bounds.
   pub fn saturating_sub(self, rhs: usize) usize {
     const difference = self.checked_sub(rhs);
 
@@ -309,6 +346,7 @@ implement builtin usize {
     return 0;
   }
 
+  /// Multiplies by `rhs` and clamps to the type bounds.
   pub fn saturating_mul(self, rhs: usize) usize {
     const product = self.checked_mul(rhs);
 
@@ -317,10 +355,12 @@ implement builtin usize {
     return usize.max_value();
   }
 
+  /// Divides by `rhs` and clamps to the type bounds.
   pub fn saturating_div(self, rhs: usize) usize {
     return self / rhs;
   }
 
+  /// Raises to `exp` and clamps to the type bounds.
   pub fn saturating_pow(self, exp: u32) usize {
     const powered = self.checked_pow(exp);
 
@@ -329,26 +369,32 @@ implement builtin usize {
     return usize.max_value();
   }
 
+  /// Raises to `exp`, wrapping on overflow.
   pub fn pow(self, exp: u32) usize {
     return self.wrapping_pow(exp);
   }
 
+  /// Euclidean division, rounded toward negative infinity.
   pub fn div_euclid(self, rhs: usize) usize {
     return self / rhs;
   }
 
+  /// Euclidean remainder, never negative.
   pub fn rem_euclid(self, rhs: usize) usize {
     return self % rhs;
   }
 
+  /// Euclidean division, `None` on overflow or a zero divisor.
   pub fn checked_div_euclid(self, rhs: usize) Option[usize] {
     return self.checked_div(rhs);
   }
 
+  /// Euclidean remainder, `None` on overflow or a zero divisor.
   pub fn checked_rem_euclid(self, rhs: usize) Option[usize] {
     return self.checked_rem(rhs);
   }
 
+  /// Division rounded up.
   pub fn div_ceil(self, rhs: usize) usize {
     const quotient = self / rhs;
 
@@ -357,6 +403,7 @@ implement builtin usize {
     return quotient + 1;
   }
 
+  /// Smallest multiple of `rhs` at or above the value.
   pub fn next_multiple_of(self, rhs: usize) usize {
     const remainder = self % rhs;
 
@@ -365,6 +412,7 @@ implement builtin usize {
     return self + (rhs - remainder);
   }
 
+  /// Smallest multiple of `rhs` at or above the value, `None` on overflow.
   pub fn checked_next_multiple_of(self, rhs: usize) Option[usize] {
     const remainder = self % rhs;
 
@@ -373,28 +421,33 @@ implement builtin usize {
     return self.checked_add(rhs - remainder);
   }
 
+  /// Absolute difference between the two values.
   pub fn abs_diff(self, other: usize) usize {
     if (self > other) { return @as(usize, self) - @as(usize, other); };
 
     return @as(usize, other) - @as(usize, self);
   }
 
+  /// Point halfway to `other`, rounded down.
   pub fn midpoint(self, other: usize) usize {
     return (self & other) + ((self ^ other) >> 1);
   }
 
+  /// Smaller of the two values.
   pub fn min(self, other: usize) usize {
     if (self < other) { return self; };
 
     return other;
   }
 
+  /// Larger of the two values.
   pub fn max(self, other: usize) usize {
     if (self > other) { return self; };
 
     return other;
   }
 
+  /// Clamps the value into `[min, max]`.
   pub fn clamp(self, min: usize, max: usize) usize {
     return switch (true) {
       _ if (self < min) => min,
@@ -403,10 +456,12 @@ implement builtin usize {
     };
   }
 
+  /// Checks that the value is a power of two.
   pub fn is_power_of_two(self) bool {
     return self != 0 && (self & (self - 1)) == 0;
   }
 
+  /// Smallest power of two at or above the value.
   pub fn next_power_of_two(self) usize {
     if (self <= 1) { return 1; };
     let v = self - 1;
@@ -420,6 +475,7 @@ implement builtin usize {
     return v + 1;
   }
 
+  /// Smallest power of two at or above the value, `None` on overflow.
   pub fn checked_next_power_of_two(self) Option[usize] {
     if (self <= 1) { return Option.Some(@as(usize, 1)); };
     const next = self.next_power_of_two();
@@ -429,6 +485,7 @@ implement builtin usize {
     return Option.Some(next);
   }
 
+  /// Integer square root, rounded down.
   pub fn isqrt(self) usize {
     if (self < 2) { return self; };
     let x = self;
@@ -442,12 +499,14 @@ implement builtin usize {
     return x;
   }
 
+  /// Base 2 logarithm rounded down, panics on zero.
   pub fn ilog2(self) u32 {
     if (self == 0) { @panic("ilog2: argument must be positive"); };
 
     return usize.bits() - 1 - self.leading_zeros();
   }
 
+  /// Base 10 logarithm rounded down, panics on zero.
   pub fn ilog10(self) u32 {
     if (self == 0) { @panic("ilog10: argument must be positive"); };
     let value = @as(u64, self);
@@ -461,6 +520,7 @@ implement builtin usize {
     return count;
   }
 
+  /// Logarithm for `base` rounded down, panics on zero or a base below two.
   pub fn ilog(self, base: u32) u32 {
     if (self == 0) { @panic("ilog: argument must be positive"); };
     if (base < 2) { @panic("ilog: base must be at least 2"); };
@@ -476,22 +536,27 @@ implement builtin usize {
     return count;
   }
 
+  /// Converts to big endian byte order.
   pub fn to_be(self) usize {
     return self.swap_bytes();
   }
 
+  /// Converts to little endian byte order.
   pub fn to_le(self) usize {
     return self;
   }
 
+  /// Converts from big endian byte order.
   pub fn from_be(value: usize) usize {
     return value.swap_bytes();
   }
 
+  /// Converts from little endian byte order.
   pub fn from_le(value: usize) usize {
     return value;
   }
 
+  /// Bytes in big endian order.
   pub fn to_be_bytes(self) [8]u8 {
     const v = @as(u64, self);
     let bytes: [8]u8 = {0; 8};
@@ -505,6 +570,7 @@ implement builtin usize {
     return bytes;
   }
 
+  /// Bytes in little endian order.
   pub fn to_le_bytes(self) [8]u8 {
     const v = @as(u64, self);
     let bytes: [8]u8 = {0; 8};
@@ -518,10 +584,12 @@ implement builtin usize {
     return bytes;
   }
 
+  /// Bytes in native byte order.
   pub fn to_ne_bytes(self) [8]u8 {
     return self.to_le_bytes();
   }
 
+  /// Value from big endian bytes.
   pub fn from_be_bytes(bytes: [8]u8) usize {
     let v: u64 = 0;
     let i: usize = 0;
@@ -534,6 +602,7 @@ implement builtin usize {
     return @as(usize, v);
   }
 
+  /// Value from little endian bytes.
   pub fn from_le_bytes(bytes: [8]u8) usize {
     let v: u64 = 0;
     let i: usize = 0;
@@ -546,10 +615,12 @@ implement builtin usize {
     return @as(usize, v);
   }
 
+  /// Value from native order bytes.
   pub fn from_ne_bytes(bytes: [8]u8) usize {
     return usize.from_le_bytes(bytes);
   }
 
+  /// Decimal text form.
   pub fn to_string(self) String {
     return @format("{}", self);
   }

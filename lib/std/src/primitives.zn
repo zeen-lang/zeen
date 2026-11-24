@@ -1,4 +1,7 @@
+/// Result of an overflowing arithmetic operation.
 pub struct Overflowing[T] {
+  /// Wrapped value.
   pub value: T,
+  /// Set when the operation overflowed.
   pub overflowed: bool,
 }

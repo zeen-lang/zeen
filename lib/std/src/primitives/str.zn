@@ -9,14 +9,17 @@ fn chars[N: comptime_uint](s: *const [N]char) []const char {
 }
 
 implement builtin []const char {
+  /// Number of bytes.
   pub fn len(self) usize {
     return self.len;
   }
 
+  /// Checks that no bytes are present.
   pub fn is_empty(self) bool {
     return self.len == 0;
   }
 
+  /// Byte at `index`, `None` when out of bounds.
   pub fn get(self, index: usize) Option[char] {
     if (index >= self.len) {
       return Option.None;
@@ -25,6 +28,7 @@ implement builtin []const char {
     return Option.Some(self[index]);
   }
 
+  /// Checks that every byte is ASCII.
   pub fn is_ascii(self) bool {
     let i: usize = 0;
 
@@ -39,6 +43,7 @@ implement builtin []const char {
     return true;
   }
 
+  /// Checks the prefix.
   pub fn starts_with(self, prefix: []const char) bool {
     const n = prefix.len;
 
@@ -59,6 +64,7 @@ implement builtin []const char {
     return true;
   }
 
+  /// Checks the suffix.
   pub fn ends_with(self, suffix: []const char) bool {
     const n = suffix.len;
 
@@ -80,6 +86,7 @@ implement builtin []const char {
     return true;
   }
 
+  /// Offset of the first `needle`.
   pub fn find(self, needle: []const char) Option[usize] {
     const n = needle.len;
 
@@ -104,6 +111,7 @@ implement builtin []const char {
     return Option.None;
   }
 
+  /// Offset of the last `needle`.
   pub fn rfind(self, needle: []const char) Option[usize] {
     const n = needle.len;
 
@@ -130,10 +138,12 @@ implement builtin []const char {
     return Option.None;
   }
 
+  /// Checks that `needle` occurs.
   pub fn contains(self, needle: []const char) bool {
     return self.find(needle).is_some();
   }
 
+  /// Removes the prefix.
   pub fn strip_prefix(self, prefix: []const char) Option[[]const char] {
     if (!self.starts_with(prefix)) {
       return Option.None;
@@ -142,6 +152,7 @@ implement builtin []const char {
     return Option.Some(self.ptr[prefix.len..self.len]);
   }
 
+  /// Removes the suffix.
   pub fn strip_suffix(self, suffix: []const char) Option[[]const char] {
     if (!self.ends_with(suffix)) {
       return Option.None;
@@ -150,6 +161,7 @@ implement builtin []const char {
     return Option.Some(self.ptr[0..self.len - suffix.len]);
   }
 
+  /// Drops leading `value` bytes.
   pub fn trim_start_matches(self, value: char) []const char {
     let i: usize = 0;
 
@@ -160,6 +172,7 @@ implement builtin []const char {
     return self.ptr[i..self.len];
   }
 
+  /// Drops trailing `value` bytes.
   pub fn trim_end_matches(self, value: char) []const char {
     let end = self.len;
 
@@ -170,6 +183,7 @@ implement builtin []const char {
     return self.ptr[0..end];
   }
 
+  /// Drops leading whitespace.
   pub fn trim_start(self) []const char {
     let i: usize = 0;
 
@@ -180,6 +194,7 @@ implement builtin []const char {
     return self.ptr[i..self.len];
   }
 
+  /// Drops trailing whitespace.
   pub fn trim_end(self) []const char {
     let end = self.len;
 
@@ -190,6 +205,7 @@ implement builtin []const char {
     return self.ptr[0..end];
   }
 
+  /// Drops whitespace on both ends.
   pub fn trim(self) []const char {
     const start = self.len - self.trim_start().len;
     const end = self.trim_end().len;
@@ -201,6 +217,7 @@ implement builtin []const char {
     return self.ptr[start..end];
   }
 
+  /// Compares the bytes ignoring ASCII case.
   pub fn eq_ignore_ascii_case(self, other: []const char) bool {
     if (self.len != other.len) {
       return false;
@@ -219,10 +236,12 @@ implement builtin []const char {
     return true;
   }
 
+  /// Copies the bytes into a `String`.
   pub fn to_string(self) String {
     return String.from(self);
   }
 
+  /// Copies the bytes with letters in ASCII uppercase.
   pub fn to_ascii_uppercase(self) String {
     let out = String.with_capacity(self.len);
     let i: usize = 0;
@@ -235,6 +254,7 @@ implement builtin []const char {
     return out;
   }
 
+  /// Copies the bytes with letters in ASCII lowercase.
   pub fn to_ascii_lowercase(self) String {
     let out = String.with_capacity(self.len);
     let i: usize = 0;
@@ -247,6 +267,7 @@ implement builtin []const char {
     return out;
   }
 
+  /// Joins `times` copies into a new `String`.
   pub fn repeat(self, times: usize) String {
     let out = String.with_capacity(self.len * times);
     let i: usize = 0;
@@ -261,10 +282,12 @@ implement builtin []const char {
 }
 
 implement builtin []char {
+  /// Borrows the bytes as a readonly slice.
   pub fn as_str(self) []const char {
     return self;
   }
 
+  /// Writes `value` into every byte.
   pub fn fill(*self, value: char) {
     let s: []char = *self;
     let i: usize = 0;
@@ -275,6 +298,7 @@ implement builtin []char {
     };
   }
 
+  /// Rewrites the letters to ASCII uppercase.
   pub fn make_ascii_uppercase(*self) {
     let s: []char = *self;
     let i: usize = 0;
@@ -285,6 +309,7 @@ implement builtin []char {
     };
   }
 
+  /// Rewrites the letters to ASCII lowercase.
   pub fn make_ascii_lowercase(*self) {
     let s: []char = *self;
     let i: usize = 0;
@@ -295,126 +320,147 @@ implement builtin []char {
     };
   }
 
+  /// Number of bytes.
   pub fn len(*const self) usize {
     const s: []const char = *self;
 
     return s.len();
   }
 
+  /// Checks that no bytes are present.
   pub fn is_empty(*const self) bool {
     const s: []const char = *self;
 
     return s.is_empty();
   }
 
+  /// Byte at `index`, `None` when out of bounds.
   pub fn get(*const self, index: usize) Option[char] {
     const s: []const char = *self;
 
     return s.get(index);
   }
 
+  /// Checks that every byte is ASCII.
   pub fn is_ascii(*const self) bool {
     const s: []const char = *self;
 
     return s.is_ascii();
   }
 
+  /// Checks the prefix.
   pub fn starts_with(*const self, prefix: []const char) bool {
     const s: []const char = *self;
 
     return s.starts_with(prefix);
   }
 
+  /// Checks the suffix.
   pub fn ends_with(*const self, suffix: []const char) bool {
     const s: []const char = *self;
 
     return s.ends_with(suffix);
   }
 
+  /// Offset of the first `needle`.
   pub fn find(*const self, needle: []const char) Option[usize] {
     const s: []const char = *self;
 
     return s.find(needle);
   }
 
+  /// Offset of the last `needle`.
   pub fn rfind(*const self, needle: []const char) Option[usize] {
     const s: []const char = *self;
 
     return s.rfind(needle);
   }
 
+  /// Checks that `needle` occurs.
   pub fn contains(*const self, needle: []const char) bool {
     const s: []const char = *self;
 
     return s.contains(needle);
   }
 
+  /// Removes the prefix.
   pub fn strip_prefix(*const self, prefix: []const char) Option[[]const char] {
     const s: []const char = *self;
 
     return s.strip_prefix(prefix);
   }
 
+  /// Removes the suffix.
   pub fn strip_suffix(*const self, suffix: []const char) Option[[]const char] {
     const s: []const char = *self;
 
     return s.strip_suffix(suffix);
   }
 
+  /// Drops leading `value` bytes.
   pub fn trim_start_matches(*const self, value: char) []const char {
     const s: []const char = *self;
 
     return s.trim_start_matches(value);
   }
 
+  /// Drops trailing `value` bytes.
   pub fn trim_end_matches(*const self, value: char) []const char {
     const s: []const char = *self;
 
     return s.trim_end_matches(value);
   }
 
+  /// Drops whitespace on both ends.
   pub fn trim(*const self) []const char {
     const s: []const char = *self;
 
     return s.trim();
   }
 
+  /// Drops leading whitespace.
   pub fn trim_start(*const self) []const char {
     const s: []const char = *self;
 
     return s.trim_start();
   }
 
+  /// Drops trailing whitespace.
   pub fn trim_end(*const self) []const char {
     const s: []const char = *self;
 
     return s.trim_end();
   }
 
+  /// Compares the bytes ignoring ASCII case.
   pub fn eq_ignore_ascii_case(*const self, other: []const char) bool {
     const s: []const char = *self;
 
     return s.eq_ignore_ascii_case(other);
   }
 
+  /// Copies the bytes into a `String`.
   pub fn to_string(*const self) String {
     const s: []const char = *self;
 
     return s.to_string();
   }
 
+  /// Copies the bytes with letters in ASCII uppercase.
   pub fn to_ascii_uppercase(*const self) String {
     const s: []const char = *self;
 
     return s.to_ascii_uppercase();
   }
 
+  /// Copies the bytes with letters in ASCII lowercase.
   pub fn to_ascii_lowercase(*const self) String {
     const s: []const char = *self;
 
     return s.to_ascii_lowercase();
   }
 
+  /// Joins `times` copies into a new `String`.
   pub fn repeat(*const self, times: usize) String {
     const s: []const char = *self;
 
@@ -423,74 +469,92 @@ implement builtin []char {
 }
 
 implement[N: comptime_uint] builtin [N]char {
+  /// Borrows the bytes, dropping a trailing NUL.
   pub fn as_str(*const self) []const char {
     return chars#[N](self);
   }
 
+  /// Length without a trailing NUL.
   pub fn len(*const self) usize {
     return chars#[N](self).len;
   }
 
+  /// Checks that every byte is ASCII.
   pub fn is_ascii(*const self) bool {
     return chars#[N](self).is_ascii();
   }
 
+  /// Checks the prefix.
   pub fn starts_with(*const self, prefix: []const char) bool {
     return chars#[N](self).starts_with(prefix);
   }
 
+  /// Checks the suffix.
   pub fn ends_with(*const self, suffix: []const char) bool {
     return chars#[N](self).ends_with(suffix);
   }
 
+  /// Offset of the first `needle`.
   pub fn find(*const self, needle: []const char) Option[usize] {
     return chars#[N](self).find(needle);
   }
 
+  /// Offset of the last `needle`.
   pub fn rfind(*const self, needle: []const char) Option[usize] {
     return chars#[N](self).rfind(needle);
   }
 
+  /// Removes the prefix.
   pub fn strip_prefix(*const self, prefix: []const char) Option[[]const char] {
     return chars#[N](self).strip_prefix(prefix);
   }
 
+  /// Removes the suffix.
   pub fn strip_suffix(*const self, suffix: []const char) Option[[]const char] {
     return chars#[N](self).strip_suffix(suffix);
   }
 
+  /// Drops leading `value` bytes.
   pub fn trim_start_matches(*const self, value: char) []const char {
     return chars#[N](self).trim_start_matches(value);
   }
 
+  /// Drops trailing `value` bytes.
   pub fn trim_end_matches(*const self, value: char) []const char {
     return chars#[N](self).trim_end_matches(value);
   }
 
+  /// Drops whitespace on both ends.
   pub fn trim(*const self) []const char {
     return chars#[N](self).trim();
   }
 
+  /// Drops leading whitespace.
   pub fn trim_start(*const self) []const char {
     return chars#[N](self).trim_start();
   }
 
+  /// Drops trailing whitespace.
   pub fn trim_end(*const self) []const char {
     return chars#[N](self).trim_end();
   }
 
+  /// Compares the bytes ignoring ASCII case.
   pub fn eq_ignore_ascii_case(*const self, other: []const char) bool {
     return chars#[N](self).eq_ignore_ascii_case(other);
   }
 
+  /// Copies the bytes into a `String`.
   pub fn to_string(*const self) String {
     return chars#[N](self).to_string();
   }
 
+  /// Copies the bytes with letters in ASCII uppercase.
   pub fn to_ascii_uppercase(*const self) String {
     return chars#[N](self).to_ascii_uppercase();
   }
 
+  /// Copies the bytes with letters in ASCII lowercase.
   pub fn to_ascii_lowercase(*const self) String {
     return chars#[N](self).to_ascii_lowercase();
   }

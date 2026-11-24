@@ -1,10 +1,12 @@
 use std.string;
 
 implement builtin char {
+  /// Checks that the byte is ASCII.
   pub fn is_ascii(self) bool {
     return @as(u32, self) < 128;
   }
 
+  /// Checks an ASCII letter.
   pub fn is_ascii_alphabetic(self) bool {
     return switch (self) {
       'A'..='Z' | 'a'..='z' => true,
@@ -12,16 +14,19 @@ implement builtin char {
     };
   }
 
+  /// Checks an ASCII digit.
   pub fn is_ascii_digit(self) bool {
     const code = @as(u32, self);
 
     return code >= 48 && code <= 57;
   }
 
+  /// Checks an ASCII letter or digit.
   pub fn is_ascii_alphanumeric(self) bool {
     return self.is_ascii_alphabetic() || self.is_ascii_digit();
   }
 
+  /// Checks an ASCII whitespace byte.
   pub fn is_ascii_whitespace(self) bool {
     return switch (@as(u32, self)) {
       32 | 9..=13 => true,
@@ -29,18 +34,21 @@ implement builtin char {
     };
   }
 
+  /// Checks an ASCII uppercase letter.
   pub fn is_ascii_uppercase(self) bool {
     const code = @as(u32, self);
 
     return code >= 65 && code <= 90;
   }
 
+  /// Checks an ASCII lowercase letter.
   pub fn is_ascii_lowercase(self) bool {
     const code = @as(u32, self);
 
     return code >= 97 && code <= 122;
   }
 
+  /// Checks an ASCII punctuation byte.
   pub fn is_ascii_punctuation(self) bool {
     return switch (@as(u32, self)) {
       33..=126 => !self.is_ascii_alphanumeric(),
@@ -48,18 +56,21 @@ implement builtin char {
     };
   }
 
+  /// Checks an ASCII control byte.
   pub fn is_ascii_control(self) bool {
     const code = @as(u32, self);
 
     return code < 32 || code == 127;
   }
 
+  /// Checks a printable byte above space.
   pub fn is_ascii_graphic(self) bool {
     const code = @as(u32, self);
 
     return code > 32 && code < 127;
   }
 
+  /// Checks an ASCII hex digit.
   pub fn is_ascii_hexdigit(self) bool {
     return switch (self) {
       '0'..='9' | 'a'..='f' | 'A'..='F' => true,
@@ -67,34 +78,42 @@ implement builtin char {
     };
   }
 
+  /// Checks a letter, ASCII only for now.
   pub fn is_alphabetic(self) bool {
     return self.is_ascii_alphabetic();
   }
 
+  /// Checks a digit, ASCII only for now.
   pub fn is_numeric(self) bool {
     return self.is_ascii_digit();
   }
 
+  /// Checks a letter or digit, ASCII only for now.
   pub fn is_alphanumeric(self) bool {
     return self.is_ascii_alphanumeric();
   }
 
+  /// Checks whitespace, ASCII only for now.
   pub fn is_whitespace(self) bool {
     return self.is_ascii_whitespace();
   }
 
+  /// Checks a control byte, ASCII only for now.
   pub fn is_control(self) bool {
     return self.is_ascii_control();
   }
 
+  /// Checks an uppercase letter, ASCII only for now.
   pub fn is_uppercase(self) bool {
     return self.is_ascii_uppercase();
   }
 
+  /// Checks a lowercase letter, ASCII only for now.
   pub fn is_lowercase(self) bool {
     return self.is_ascii_lowercase();
   }
 
+  /// ASCII uppercase form.
   pub fn to_ascii_uppercase(self) char {
     if (self.is_ascii_lowercase()) {
       return @as(char, @as(u32, self) - 32);
@@ -103,6 +122,7 @@ implement builtin char {
     return self;
   }
 
+  /// ASCII lowercase form.
   pub fn to_ascii_lowercase(self) char {
     if (self.is_ascii_uppercase()) {
       return @as(char, @as(u32, self) + 32);
@@ -111,10 +131,12 @@ implement builtin char {
     return self;
   }
 
+  /// Compares the bytes ignoring ASCII case.
   pub fn eq_ignore_ascii_case(self, other: char) bool {
     return self.to_ascii_lowercase() == other.to_ascii_lowercase();
   }
 
+  /// Digit value in `radix`, `None` when the byte is no digit.
   pub fn to_digit(self, radix: u32) Option[u32] {
     const value = switch (self) {
       '0'..='9' => @as(u32, self) - 48,
@@ -128,6 +150,7 @@ implement builtin char {
     return Option.Some(value);
   }
 
+  /// Byte for a digit value in `radix`, `None` when out of range.
   pub fn from_digit(num: u32, radix: u32) Option[char] {
     if (num >= radix) { return Option.None; };
     if (num < 10) { return Option.Some(@as(char, num + 48)); };
@@ -135,6 +158,7 @@ implement builtin char {
     return Option.Some(@as(char, num - 10 + 97));
   }
 
+  /// One byte `String`.
   pub fn to_string(self) String {
     return @format("{}", self);
   }
