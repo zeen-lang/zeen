@@ -185,6 +185,14 @@ fn macro_docs(name: &str) -> Option<(&'static str, &'static str)> {
             "@uninit() any",
             "compiler macro: uninitialized value, reading it is UB",
         )),
+        "memset" => Some((
+            "@memset(dest, byte)",
+            "compiler macro: fills a buffer of `u8` or `char` with a byte",
+        )),
+        "memcpy" => Some((
+            "@memcpy(dest, src)",
+            "compiler macro: copies bytes into a buffer of `u8` or `char`",
+        )),
         "zeen_type" => Some((
             "@zeen_type(T)",
             "comptime macro: captures a type as zeen_type, `$()` splices are evaluated",
@@ -1359,6 +1367,30 @@ mod tests {
 
         assert!(markdown.contains("@variantCount(T)"), "{markdown}");
         assert!(markdown.contains("number of enum variants"), "{markdown}");
+    }
+
+    #[test]
+    fn at_memory_macro_shows_docs() {
+        let analysis = crate::analysis::Analysis::default();
+        let paths = crate::completion::ResolvePaths::default();
+
+        let text = "fn main() {\n    @memset(buf, 0);\n}\n";
+        let offset = text.find("@memset").unwrap() + 1;
+        let markdown = hover_markdown(text, &analysis, offset, paths, "test.zn")
+            .unwrap()
+            .markdown;
+
+        assert!(markdown.contains("@memset(dest, byte)"), "{markdown}");
+        assert!(markdown.contains("fills a"), "{markdown}");
+
+        let text = "fn main() {\n    @memcpy(dest, src);\n}\n";
+        let offset = text.find("@memcpy").unwrap() + 1;
+        let markdown = hover_markdown(text, &analysis, offset, paths, "test.zn")
+            .unwrap()
+            .markdown;
+
+        assert!(markdown.contains("@memcpy(dest, src)"), "{markdown}");
+        assert!(markdown.contains("copies bytes"), "{markdown}");
     }
 
     #[test]
