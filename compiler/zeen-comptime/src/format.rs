@@ -4,14 +4,39 @@ pub(crate) enum FormatChunk {
     Arg(FormatSpec),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum FormatSpec {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Align {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FormatKind {
     Display,
     Debug,
-    Hex,
+    Hex { upper: bool },
     Oct,
     Bin,
     Float { precision: u32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FormatSpec {
+    pub(crate) kind: FormatKind,
+    pub(crate) width: Option<u32>,
+    pub(crate) align: Option<Align>,
+    pub(crate) zero: bool,
+}
+
+impl FormatSpec {
+    fn plain(kind: FormatKind) -> Self {
+        Self {
+            kind,
+            width: None,
+            align: None,
+            zero: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,25 +117,107 @@ pub(crate) fn parse_format_string(input: &str) -> Result<Vec<FormatChunk>, Forma
 }
 
 fn parse_spec(inner: &str, offset: usize) -> Result<FormatSpec, FormatParseError> {
-    match inner {
-        "" => Ok(FormatSpec::Display),
-        ":?" => Ok(FormatSpec::Debug),
-        "hex" => Ok(FormatSpec::Hex),
-        "oct" => Ok(FormatSpec::Oct),
-        "bin" => Ok(FormatSpec::Bin),
-        s if s.starts_with(":.") => {
-            let digits = &s[2..];
+    let (head, tail) = match inner.split_once(':') {
+        Some((head, tail)) => (head, Some(tail)),
+        None => (inner, None),
+    };
+
+    let mut spec = FormatSpec::plain(FormatKind::Display);
+
+    if !head.is_empty() {
+        spec.kind = parse_kind(head, offset)?;
+    }
+
+    if let Some(tail) = tail {
+        parse_padding(tail, &mut spec, offset)?;
+    }
+
+    Ok(spec)
+}
+
+fn parse_padding(raw: &str, spec: &mut FormatSpec, offset: usize) -> Result<(), FormatParseError> {
+    let mut rest = raw;
+    let chars: Vec<char> = rest.chars().collect();
+
+    if chars.len() >= 2 && is_align(chars[1]) {
+        if chars[0] != ' ' && chars[0] != '0' {
+            return Err(FormatParseError::UnknownSpecifier {
+                spec: raw.to_string(),
+                offset,
+            });
+        }
+
+        spec.align = Some(align_of(chars[1], raw, offset)?);
+        spec.zero = chars[0] == '0';
+        rest = &rest[chars[0].len_utf8() + 1..];
+    } else if chars.first() == Some(&'0') && chars.len() > 1 {
+        spec.zero = true;
+        rest = &rest[1..];
+    } else if chars.first().is_some_and(|c| is_align(*c)) {
+        spec.align = Some(align_of(chars[0], raw, offset)?);
+        rest = &rest[1..];
+    }
+
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    rest = &rest[digits.len()..];
+
+    if !digits.is_empty() {
+        match digits.parse::<u32>() {
+            Ok(width) => spec.width = Some(width),
+            Err(_) => {
+                return Err(FormatParseError::UnknownSpecifier {
+                    spec: raw.to_string(),
+                    offset,
+                });
+            }
+        }
+    }
+
+    if !rest.is_empty() {
+        spec.kind = parse_kind(rest, offset)?;
+    }
+
+    Ok(())
+}
+
+fn parse_kind(raw: &str, offset: usize) -> Result<FormatKind, FormatParseError> {
+    match raw {
+        "?" => Ok(FormatKind::Debug),
+
+        "hex" | "x" => Ok(FormatKind::Hex { upper: false }),
+        "HEX" | "X" => Ok(FormatKind::Hex { upper: true }),
+        "oct" | "o" => Ok(FormatKind::Oct),
+        "bin" | "b" => Ok(FormatKind::Bin),
+
+        s if s.starts_with('.') => {
+            let digits = &s[1..];
 
             match digits.parse::<u32>() {
-                Ok(n) => Ok(FormatSpec::Float { precision: n }),
+                Ok(n) => Ok(FormatKind::Float { precision: n }),
                 Err(_) => Err(FormatParseError::InvalidPrecision {
                     raw: digits.to_string(),
                     offset,
                 }),
             }
         }
+
         other => Err(FormatParseError::UnknownSpecifier {
             spec: other.to_string(),
+            offset,
+        }),
+    }
+}
+
+fn is_align(chr: char) -> bool {
+    matches!(chr, '<' | '>' | '^')
+}
+
+fn align_of(chr: char, raw: &str, offset: usize) -> Result<Align, FormatParseError> {
+    match chr {
+        '<' => Ok(Align::Left),
+        '>' => Ok(Align::Right),
+        _ => Err(FormatParseError::UnknownSpecifier {
+            spec: raw.to_string(),
             offset,
         }),
     }
@@ -126,7 +233,7 @@ mod tests {
             parse_format_string("hello {}!").unwrap(),
             vec![
                 FormatChunk::Literal("hello ".into()),
-                FormatChunk::Arg(FormatSpec::Display),
+                FormatChunk::Arg(FormatSpec::plain(FormatKind::Display)),
                 FormatChunk::Literal("!".into()),
             ]
         );
@@ -136,7 +243,7 @@ mod tests {
     fn parses_debug() {
         assert_eq!(
             parse_format_string("{:?}").unwrap(),
-            vec![FormatChunk::Arg(FormatSpec::Debug)]
+            vec![FormatChunk::Arg(FormatSpec::plain(FormatKind::Debug))]
         );
     }
 
@@ -147,11 +254,11 @@ mod tests {
         assert_eq!(
             chunks,
             vec![
-                FormatChunk::Arg(FormatSpec::Hex),
+                FormatChunk::Arg(FormatSpec::plain(FormatKind::Hex { upper: false })),
                 FormatChunk::Literal(" ".into()),
-                FormatChunk::Arg(FormatSpec::Oct),
+                FormatChunk::Arg(FormatSpec::plain(FormatKind::Oct)),
                 FormatChunk::Literal(" ".into()),
-                FormatChunk::Arg(FormatSpec::Bin),
+                FormatChunk::Arg(FormatSpec::plain(FormatKind::Bin)),
             ]
         );
     }
@@ -160,7 +267,30 @@ mod tests {
     fn parses_float_precision() {
         assert_eq!(
             parse_format_string("{:.3}").unwrap(),
-            vec![FormatChunk::Arg(FormatSpec::Float { precision: 3 })]
+            vec![FormatChunk::Arg(FormatSpec::plain(FormatKind::Float {
+                precision: 3
+            }))]
+        );
+    }
+
+    #[test]
+    fn parses_width_alignment_and_zero_pad() {
+        assert_eq!(
+            parse_format_string("{:<8}{:08x}").unwrap(),
+            vec![
+                FormatChunk::Arg(FormatSpec {
+                    kind: FormatKind::Display,
+                    width: Some(8),
+                    align: Some(Align::Left),
+                    zero: false,
+                }),
+                FormatChunk::Arg(FormatSpec {
+                    kind: FormatKind::Hex { upper: false },
+                    width: Some(8),
+                    align: None,
+                    zero: true,
+                }),
+            ]
         );
     }
 
@@ -185,7 +315,7 @@ mod tests {
         assert_eq!(
             parse_format_string("{:q}"),
             Err(FormatParseError::UnknownSpecifier {
-                spec: ":q".into(),
+                spec: "q".into(),
                 offset: 0,
             })
         );

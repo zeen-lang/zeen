@@ -8,7 +8,7 @@ use zeen_mir::{
     Rvalue, StructFieldLayout, StructLayout,
 };
 use zeen_resolve::{DefId, DefKind};
-use zeen_typecheck::format_str::{FormatChunk, FormatSpec};
+use zeen_typecheck::format_str::{FormatChunk, FormatKind, FormatSpec};
 use zeen_types::{ConstArg, Type};
 
 use crate::codegen::{CodeGen, CodeGenNames, CodegenOptions};
@@ -505,7 +505,7 @@ fn f32_division_narrows_to_slot_and_promotes_for_printf() {
         binary(BinaryOp::Div, const_float(4.0), const_float(3.0)),
     );
     f.format(
-        vec![FormatChunk::Arg(FormatSpec::Display)],
+        vec![FormatChunk::Arg(FormatSpec::plain(FormatKind::Display))],
         vec![copy_of(q)],
         vec![f32],
         dest,
@@ -549,7 +549,7 @@ fn enum_display_and_debug() {
     f.block("bb1");
     f.set_current("bb0");
     f.format(
-        vec![FormatChunk::Arg(FormatSpec::Display)],
+        vec![FormatChunk::Arg(FormatSpec::plain(FormatKind::Display))],
         vec![const_int(0)],
         vec![color_ty],
         dest,
@@ -588,7 +588,7 @@ fn enum_debug_prints_enum_name() {
     f.block("bb1");
     f.set_current("bb0");
     f.format(
-        vec![FormatChunk::Arg(FormatSpec::Debug)],
+        vec![FormatChunk::Arg(FormatSpec::plain(FormatKind::Debug))],
         vec![const_int(0)],
         vec![color_ty],
         dest,
@@ -947,7 +947,7 @@ fn format_returns_a_slice() {
     f.format(
         vec![
             FormatChunk::Literal("value is ".to_string()),
-            FormatChunk::Arg(FormatSpec::Display),
+            FormatChunk::Arg(FormatSpec::plain(FormatKind::Display)),
         ],
         vec![const_int(42)],
         vec![i32],
@@ -967,7 +967,10 @@ fn format_returns_a_slice() {
 
 #[test]
 fn char_display_uses_percent_c_and_debug_wraps_in_quotes() {
-    for (spec, expected) in [(FormatSpec::Display, "%c"), (FormatSpec::Debug, "\'%c\'")] {
+    for (spec, expected) in [
+        (FormatSpec::plain(FormatKind::Display), "%c"),
+        (FormatSpec::plain(FormatKind::Debug), "\'%c\'"),
+    ] {
         let mut fx = Fixture::new();
         let fmt_def = fx.def("fmt", DefKind::Function);
         let void = fx.void();
@@ -1184,7 +1187,7 @@ fn string_literal_coerces_to_char_array_param_and_formats() {
     greet.format(
         vec![
             FormatChunk::Literal("value is ".to_string()),
-            FormatChunk::Arg(FormatSpec::Display),
+            FormatChunk::Arg(FormatSpec::plain(FormatKind::Display)),
         ],
         vec![copy_of(name)],
         vec![arr7],

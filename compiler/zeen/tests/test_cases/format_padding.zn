@@ -1,0 +1,13 @@
+fn main() i32 {
+  @println("{:08x}", 0xabc);
+  @println("{:X}", 0xabc);
+  @println("[{:>6}]", 42);
+  @println("[{:<6}]", 42);
+  @println("[{:6}]", -42);
+  @println("[{:>8}]", "hi");
+  @println("[{:<8}]", "hi");
+  @println("[{:08.3}]", 3.14159);
+  @println("[{hex:04}]", 10);
+  @println("[{:o}] [{:b}]", 8, 5);
+  return 0;
+}

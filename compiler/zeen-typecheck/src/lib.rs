@@ -13,7 +13,7 @@ use crate::{
     closure_alloc::analyze_closures,
     coerce::{CoerceResult, try_coerce},
     context::{FnCtx, InterfaceRegistry, TypeCheckCtx},
-    format_str::FormatSpec,
+    format_str::{FormatKind, FormatSpec},
     result::{CallResolution, ImplEntry, OperatorResolution, OrderingCmpTarget, TypeCheckResult},
 };
 use crate::{error::TypeError, format_str::FormatParseError};
@@ -5226,8 +5226,8 @@ impl<'res> TypeChecker<'res> {
     }
 
     fn check_format_arg(&mut self, spec: FormatSpec, arg_ty: TypeId, arg: &HirExpr) {
-        match spec {
-            FormatSpec::Display => {
+        match spec.kind {
+            FormatKind::Display => {
                 if !self.resolve_format_struct_arg(arg_ty, "Display", "display", arg)
                     && !self.type_implements_display(arg_ty)
                 {
@@ -5240,7 +5240,7 @@ impl<'res> TypeChecker<'res> {
                 };
             }
 
-            FormatSpec::Debug => {
+            FormatKind::Debug => {
                 if !self.resolve_format_struct_arg(arg_ty, "Debug", "debug", arg)
                     && !self.type_implements_debug(arg_ty)
                 {
@@ -5253,7 +5253,7 @@ impl<'res> TypeChecker<'res> {
                 };
             }
 
-            FormatSpec::Hex | FormatSpec::Oct | FormatSpec::Bin => {
+            FormatKind::Hex { .. } | FormatKind::Oct | FormatKind::Bin => {
                 match self.result.interner.get(arg_ty) {
                     Type::Builtin(b) if coerce::builtin_is_integer(*b) => {}
                     Type::IntLiteral => {}
@@ -5272,7 +5272,7 @@ impl<'res> TypeChecker<'res> {
                 }
             }
 
-            FormatSpec::Float { .. } => match self.result.interner.get(arg_ty) {
+            FormatKind::Float { .. } => match self.result.interner.get(arg_ty) {
                 Type::Builtin(b) if coerce::builtin_is_float(*b) => {}
                 Type::FloatLiteral => {}
                 Type::Error => {}

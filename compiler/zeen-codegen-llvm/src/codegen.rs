@@ -37,7 +37,7 @@ use zeen_mir::{
 use zeen_resolve::{DefId, ResolutionResult};
 use zeen_typecheck::{
     coerce::{builtin_is_float, builtin_is_integer},
-    format_str::{FormatChunk, FormatSpec},
+    format_str::{Align, FormatChunk, FormatKind, FormatSpec},
     result::TypeCheckResult,
 };
 use zeen_types::{ArrayLen, ConstArg, Type, TypeId};
@@ -4181,6 +4181,17 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         spec: FormatSpec,
         func: &MirFunction,
     ) -> (String, Vec<BasicValueEnum<'ctx>>) {
+        let (specifier, values) = self.format_arg_value_inner(operand, arg_ty, spec, func);
+        (pad_specifier(specifier, spec), values)
+    }
+
+    fn format_arg_value_inner(
+        &mut self,
+        operand: &Operand,
+        arg_ty: Option<TypeId>,
+        spec: FormatSpec,
+        func: &MirFunction,
+    ) -> (String, Vec<BasicValueEnum<'ctx>>) {
         if let Some(Type::Enum { def_id, .. }) =
             arg_ty.map(|ty| self.typecheck.interner.get(ty).clone())
         {
@@ -4201,8 +4212,8 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                 }
             };
             let name_ptr = self.enum_variant_name_ptr(def_id, disc);
-            let specifier = match spec {
-                FormatSpec::Debug => format!("{}.%s", self.enum_name(def_id)),
+            let specifier = match spec.kind {
+                FormatKind::Debug => format!("{}.%s", self.enum_name(def_id)),
                 _ => "%s".to_string(),
             };
             return (specifier, vec![name_ptr.into()]);
@@ -4211,7 +4222,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
         match (operand, spec) {
             (Operand::Constant(c, _), _) => {
                 if let ConstValue::Int(n) = c {
-                    if matches!(spec, FormatSpec::Bin) {
+                    if matches!(spec.kind, FormatKind::Bin) {
                         let bits = arg_ty
                             .map(|t| self.map_basic_type(t).into_int_type().get_bit_width())
                             .unwrap_or(32);
@@ -4226,9 +4237,10 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                     }
 
                     let (len, signed, value) = self.int_format_arg(*n, arg_ty, func);
-                    let specifier = match spec {
-                        FormatSpec::Hex => format!("%{len}x"),
-                        FormatSpec::Oct => format!("%{len}o"),
+                    let specifier = match spec.kind {
+                        FormatKind::Hex { upper: false } => format!("%{len}x"),
+                        FormatKind::Hex { upper: true } => format!("%{len}X"),
+                        FormatKind::Oct => format!("%{len}o"),
                         _ => format!("%{len}{}", if signed { "d" } else { "u" }),
                     };
                     return (specifier, vec![value]);
@@ -4237,14 +4249,14 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                     Some(t) => self.const_value(c, Some(t), func),
                     None => self.const_value(c, None, func),
                 };
-                let specifier = match (c, spec) {
-                    (ConstValue::Float(_), FormatSpec::Float { precision }) => {
+                let specifier = match (c, spec.kind) {
+                    (ConstValue::Float(_), FormatKind::Float { precision }) => {
                         format!("%.{precision}f")
                     }
                     (ConstValue::Float(_), _) => "%f".to_string(),
-                    (ConstValue::Str(_), FormatSpec::Debug) => "\"%s\"".to_string(),
+                    (ConstValue::Str(_), FormatKind::Debug) => "\"%s\"".to_string(),
                     (ConstValue::Str(_), _) => "%s".to_string(),
-                    (ConstValue::Char(_), FormatSpec::Debug) => "'%c'".to_string(),
+                    (ConstValue::Char(_), FormatKind::Debug) => "'%c'".to_string(),
                     (ConstValue::Char(_), _) => "%c".to_string(),
                     (ConstValue::Bool(b), _) => {
                         let s = if *b { "true" } else { "false" };
@@ -4269,15 +4281,15 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                     };
                     let ptr = self.place_ptr(place, func);
                     let Some(array_len) = len.known() else {
-                        let specifier = match spec {
-                            FormatSpec::Debug => "\"%s\"".to_string(),
+                        let specifier = match spec.kind {
+                            FormatKind::Debug => "\"%s\"".to_string(),
                             _ => "%s".to_string(),
                         };
                         return (specifier, vec![ptr.into()]);
                     };
                     let len_i32 = self.context.i32_type().const_int(array_len, false);
-                    let specifier = match spec {
-                        FormatSpec::Debug => "\"%.*s\"".to_string(),
+                    let specifier = match spec.kind {
+                        FormatKind::Debug => "\"%.*s\"".to_string(),
                         _ => "%.*s".to_string(),
                     };
                     return (specifier, vec![len_i32.into(), ptr.into()]);
@@ -4305,8 +4317,8 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                         .builder
                         .build_int_truncate(len, self.context.i32_type(), "")
                         .unwrap();
-                    let specifier = match spec {
-                        FormatSpec::Debug => "\"%.*s\"".to_string(),
+                    let specifier = match spec.kind {
+                        FormatKind::Debug => "\"%.*s\"".to_string(),
                         _ => "%.*s".to_string(),
                     };
                     return (specifier, vec![len.into(), ptr]);
@@ -4326,7 +4338,7 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                     return ("%s".to_string(), vec![ptr]);
                 }
 
-                if matches!(spec, FormatSpec::Bin) {
+                if matches!(spec.kind, FormatKind::Bin) {
                     let bits = self.map_basic_type(ty).into_int_type().get_bit_width();
                     let val = self.operand_value(operand, Some(ty), func).into_int_value();
                     let buf = self.emit_bin_buffer(val, bits);
@@ -4342,9 +4354,9 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                 } else {
                     value
                 };
-                let specifier = match spec {
-                    FormatSpec::Display => self.display_specifier(ty),
-                    FormatSpec::Debug => {
+                let specifier = match spec.kind {
+                    FormatKind::Display => self.display_specifier(ty),
+                    FormatKind::Debug => {
                         let base = self.display_specifier(ty);
                         match base.as_str() {
                             "%s" => "\"%s\"".to_string(),
@@ -4358,10 +4370,11 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
                             _ => base,
                         }
                     }
-                    FormatSpec::Hex => format!("%{}x", self.int_spec_width(ty)),
-                    FormatSpec::Oct => format!("%{}o", self.int_spec_width(ty)),
-                    FormatSpec::Bin => unreachable!("handled above"),
-                    FormatSpec::Float { precision } => format!("%.{precision}f"),
+                    FormatKind::Hex { upper: false } => format!("%{}x", self.int_spec_width(ty)),
+                    FormatKind::Hex { upper: true } => format!("%{}X", self.int_spec_width(ty)),
+                    FormatKind::Oct => format!("%{}o", self.int_spec_width(ty)),
+                    FormatKind::Bin => unreachable!("handled above"),
+                    FormatKind::Float { precision } => format!("%.{precision}f"),
                 };
                 (specifier, vec![value])
             }
@@ -5095,4 +5108,34 @@ impl<'ctx, 'prog> CodeGen<'ctx, 'prog> {
             .map(|info| self.resolve_spur(info.name))
             .unwrap_or_else(|| format!("<def#{def_id:?}>"))
     }
+}
+
+fn pad_specifier(specifier: String, spec: FormatSpec) -> String {
+    let Some(width) = spec.width else {
+        return specifier;
+    };
+    let Some(idx) = specifier.find('%') else {
+        return specifier;
+    };
+
+    let mut flags = String::new();
+    if spec.align == Some(Align::Left) {
+        flags.push('-');
+    }
+
+    let numeric = matches!(
+        specifier[idx + 1..].chars().last(),
+        Some('d' | 'i' | 'u' | 'x' | 'X' | 'o' | 'f' | 'F' | 'e' | 'E' | 'g' | 'G')
+    );
+    if spec.zero && numeric && spec.align != Some(Align::Left) {
+        flags.push('0');
+    }
+
+    format!(
+        "{}{}{}{}",
+        &specifier[..idx + 1],
+        flags,
+        width,
+        &specifier[idx + 1..]
+    )
 }

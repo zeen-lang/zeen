@@ -22,7 +22,7 @@ use zeen_driver::Target;
 use zeen_layout::{LayoutEngine, Shape};
 
 use crate::error::Error;
-use crate::format::{FormatChunk, FormatSpec, parse_format_string};
+use crate::format::{Align, FormatChunk, FormatKind, FormatSpec, parse_format_string};
 use crate::value::{StructValue, Value};
 
 pub const STEP_LIMIT: usize = 200_000;
@@ -2906,37 +2906,45 @@ impl<'arena> Interp<'arena> {
         spec: FormatSpec,
         span: miette::SourceSpan,
     ) -> Result<String, Unwind<'arena>> {
-        match spec {
-            FormatSpec::Display => Ok(self.format_display(value)),
-            FormatSpec::Debug => Ok(self.format_debug(value)),
-            FormatSpec::Hex | FormatSpec::Oct | FormatSpec::Bin => match value {
+        let (text, numeric) = match spec.kind {
+            FormatKind::Display => (self.format_display(value), false),
+            FormatKind::Debug => (self.format_debug(value), false),
+            FormatKind::Hex { .. } | FormatKind::Oct | FormatKind::Bin => match value {
                 Value::Int(number) => {
                     let raw = *number as u64;
-                    Ok(match spec {
-                        FormatSpec::Hex => format!("{raw:x}"),
-                        FormatSpec::Oct => format!("{raw:o}"),
+                    let text = match spec.kind {
+                        FormatKind::Hex { upper: false } => format!("{raw:x}"),
+                        FormatKind::Hex { upper: true } => format!("{raw:X}"),
+                        FormatKind::Oct => format!("{raw:o}"),
                         _ => format!("{raw:b}"),
-                    })
+                    };
+                    (text, true)
                 }
-                other => Err(self.format_error(
-                    format!(
-                        "format requires integer type, but found `{}`",
-                        other.type_name()
-                    ),
-                    span,
-                )),
+                other => {
+                    return Err(self.format_error(
+                        format!(
+                            "format requires integer type, but found `{}`",
+                            other.type_name()
+                        ),
+                        span,
+                    ));
+                }
             },
-            FormatSpec::Float { precision } => match value {
-                Value::Float(number) => Ok(format!("{:.*}", precision as usize, number)),
-                other => Err(self.format_error(
-                    format!(
-                        "format requires float type, but found `{}`",
-                        other.type_name()
-                    ),
-                    span,
-                )),
+            FormatKind::Float { precision } => match value {
+                Value::Float(number) => (format!("{:.*}", precision as usize, number), true),
+                other => {
+                    return Err(self.format_error(
+                        format!(
+                            "format requires float type, but found `{}`",
+                            other.type_name()
+                        ),
+                        span,
+                    ));
+                }
             },
-        }
+        };
+
+        Ok(pad_rendered(text, spec, numeric))
     }
 
     fn format_display(&self, value: &Value<'arena>) -> String {
@@ -4140,6 +4148,26 @@ fn builtin_shape(builtin: BuiltinType) -> Shape {
         BuiltinType::char => Shape::Char,
         BuiltinType::void => Shape::Void,
         BuiltinType::never => Shape::Never,
+    }
+}
+
+fn pad_rendered(text: String, spec: FormatSpec, numeric: bool) -> String {
+    let Some(width) = spec.width else {
+        return text;
+    };
+    let len = text.chars().count() as u32;
+    if len >= width {
+        return text;
+    }
+
+    let fill = (width - len) as usize;
+    if spec.zero && numeric && spec.align != Some(Align::Left) {
+        return format!("{}{text}", "0".repeat(fill));
+    }
+    if spec.align == Some(Align::Left) {
+        format!("{text}{}", " ".repeat(fill))
+    } else {
+        format!("{}{text}", " ".repeat(fill))
     }
 }
 

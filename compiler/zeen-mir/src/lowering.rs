@@ -20,7 +20,7 @@ use zeen_hir::{
 use zeen_resolve::{DefId, DefKind, ResolutionResult};
 use zeen_typecheck::{
     coerce::builtin_is_integer,
-    format_str::{FormatChunk, FormatSpec},
+    format_str::{FormatChunk, FormatKind, FormatSpec},
     result::{CallResolution, OperatorResolution, TypeCheckResult},
 };
 use zeen_types::{
@@ -2786,9 +2786,9 @@ impl<'ctx> MirLowering<'ctx> {
                     kind: HirMacroKind::Panic,
                     format_chunks: Some(vec![
                         FormatChunk::Literal("enum tag mismatch: requested tag `".into()),
-                        FormatChunk::Arg(FormatSpec::Display),
+                        FormatChunk::Arg(FormatSpec::plain(FormatKind::Display)),
                         FormatChunk::Literal("` but found `".into()),
-                        FormatChunk::Arg(FormatSpec::Display),
+                        FormatChunk::Arg(FormatSpec::plain(FormatKind::Display)),
                         FormatChunk::Literal("`".into()),
                     ]),
                     args: vec![
@@ -6747,9 +6747,9 @@ impl<'ctx> MirLowering<'ctx> {
                 kind: HirMacroKind::Panic,
                 format_chunks: Some(vec![
                     FormatChunk::Literal("index out of bounds: the len is ".into()),
-                    FormatChunk::Arg(FormatSpec::Display),
+                    FormatChunk::Arg(FormatSpec::plain(FormatKind::Display)),
                     FormatChunk::Literal(" but the index is ".into()),
-                    FormatChunk::Arg(FormatSpec::Display),
+                    FormatChunk::Arg(FormatSpec::plain(FormatKind::Display)),
                 ]),
                 args: vec![
                     len_operand,
@@ -7075,11 +7075,11 @@ impl<'ctx> MirLowering<'ctx> {
                 kind: HirMacroKind::Panic,
                 format_chunks: Some(vec![
                     FormatChunk::Literal("slice index out of bounds: the len is ".into()),
-                    FormatChunk::Arg(FormatSpec::Display),
+                    FormatChunk::Arg(FormatSpec::plain(FormatKind::Display)),
                     FormatChunk::Literal(" but the range is ".into()),
-                    FormatChunk::Arg(FormatSpec::Display),
+                    FormatChunk::Arg(FormatSpec::plain(FormatKind::Display)),
                     FormatChunk::Literal("..".into()),
-                    FormatChunk::Arg(FormatSpec::Display),
+                    FormatChunk::Arg(FormatSpec::plain(FormatKind::Display)),
                 ]),
                 args: vec![
                     len_operand,
@@ -7388,11 +7388,11 @@ impl<'ctx> MirLowering<'ctx> {
                             let ty = arg.map(|a| self.expr_type(fb, a));
                             let err_ty = self.typecheck.interner.error();
                             let rendered_ty = ty.unwrap_or(err_ty);
-                            let is_container_debug = matches!(spec, FormatSpec::Debug)
+                            let is_container_debug = matches!(spec.kind, FormatKind::Debug)
                                 && self.container_debug_target(rendered_ty);
                             let is_struct_display = !is_container_debug
                                 && self.format_display_target(rendered_ty)
-                                && matches!(spec, FormatSpec::Display | FormatSpec::Debug);
+                                && matches!(spec.kind, FormatKind::Display | FormatKind::Debug);
 
                             if is_container_debug || is_struct_display {
                                 if is_panic && !seg_chunks.is_empty() {
@@ -7416,8 +7416,8 @@ impl<'ctx> MirLowering<'ctx> {
                                         Some(&source),
                                     )
                                 } else {
-                                    let iface = match spec {
-                                        FormatSpec::Debug => ("Debug", "debug"),
+                                    let iface = match spec.kind {
+                                        FormatKind::Debug => ("Debug", "debug"),
                                         _ => ("Display", "display"),
                                     };
                                     let (block_w, writer_place, writer_ty) =
@@ -7593,11 +7593,11 @@ impl<'ctx> MirLowering<'ctx> {
                         let ty = arg.map(|a| self.expr_type(fb, a));
                         let err_ty = self.typecheck.interner.error();
                         let rendered_ty = ty.unwrap_or(err_ty);
-                        let is_container_debug = matches!(spec, FormatSpec::Debug)
+                        let is_container_debug = matches!(spec.kind, FormatKind::Debug)
                             && self.container_debug_target(rendered_ty);
                         let is_struct_display = !is_container_debug
                             && self.format_display_target(rendered_ty)
-                            && matches!(spec, FormatSpec::Display | FormatSpec::Debug);
+                            && matches!(spec.kind, FormatKind::Display | FormatKind::Debug);
 
                         if is_container_debug || is_struct_display {
                             if !seg_chunks.is_empty() {
@@ -7621,8 +7621,8 @@ impl<'ctx> MirLowering<'ctx> {
                                     Some(&source),
                                 )
                             } else {
-                                let iface = match spec {
-                                    FormatSpec::Debug => ("Debug", "debug"),
+                                let iface = match spec.kind {
+                                    FormatKind::Debug => ("Debug", "debug"),
                                     _ => ("Display", "display"),
                                 };
                                 let (block_w, writer_place, writer_ty) =
@@ -7793,11 +7793,11 @@ impl<'ctx> MirLowering<'ctx> {
                         let ty = arg.map(|a| self.expr_type(fb, a));
                         let err_ty = self.typecheck.interner.error();
                         let rendered_ty = ty.unwrap_or(err_ty);
-                        let is_container_debug = matches!(spec, FormatSpec::Debug)
+                        let is_container_debug = matches!(spec.kind, FormatKind::Debug)
                             && self.container_debug_target(rendered_ty);
                         let is_struct_display = !is_container_debug
                             && self.format_display_target(rendered_ty)
-                            && matches!(spec, FormatSpec::Display | FormatSpec::Debug);
+                            && matches!(spec.kind, FormatKind::Display | FormatKind::Debug);
 
                         if is_container_debug || is_struct_display {
                             if !seg_chunks.is_empty() {
@@ -7826,8 +7826,8 @@ impl<'ctx> MirLowering<'ctx> {
                                     Some(&source),
                                 )
                             } else {
-                                let iface = match spec {
-                                    FormatSpec::Debug => ("Debug", "debug"),
+                                let iface = match spec.kind {
+                                    FormatKind::Debug => ("Debug", "debug"),
                                     _ => ("Display", "display"),
                                 };
                                 self.lower_struct_display_call(
@@ -8034,8 +8034,8 @@ impl<'ctx> MirLowering<'ctx> {
             r.resolve(&self.resolution.defs[&fn_def].name).to_string()
         };
         let spec = match method_name.as_str() {
-            "debug" => FormatSpec::Debug,
-            "display" => FormatSpec::Display,
+            "debug" => FormatSpec::plain(FormatKind::Debug),
+            "display" => FormatSpec::plain(FormatKind::Display),
             _ => return None,
         };
 
@@ -9021,7 +9021,7 @@ impl<'ctx> MirLowering<'ctx> {
         block: BlockId,
         source: Option<&Source>,
     ) -> BlockId {
-        let chunks = vec![FormatChunk::Arg(FormatSpec::Debug)];
+        let chunks = vec![FormatChunk::Arg(FormatSpec::plain(FormatKind::Debug))];
 
         match sink {
             FormatSink::Print => {
