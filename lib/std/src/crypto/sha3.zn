@@ -1,0 +1,397 @@
+use std.string;
+use std.crypto.hash;
+
+const KECCAK_RHO: [25]u64 = {0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14};
+const KECCAK_RC_LO: [24]u32 = {0x00000001, 0x00008082, 0x0000808A, 0x80008000, 0x0000808B, 0x80000001, 0x80008081, 0x00008009, 0x0000008A, 0x00000088, 0x80008009, 0x8000000A, 0x8000808B, 0x0000008B, 0x00008089, 0x00008003, 0x00008002, 0x00000080, 0x0000800A, 0x8000000A, 0x80008081, 0x00008080, 0x80000001, 0x80008008};
+const KECCAK_RC_HI: [24]u32 = {0, 0, 0x80000000, 0x80000000, 0, 0, 0x80000000, 0x80000000, 0, 0, 0, 0, 0, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0, 0x80000000, 0x80000000, 0x80000000, 0, 0x80000000};
+
+fn rotl64(x: u64, n: u64) u64 {
+  if (n == 0) {
+    return x;
+  };
+
+  return (x << n) | (x >> (64 - n));
+}
+
+fn keccak_f(state: *[25]u64) {
+  const all: u64 = @as(u64, 0) - 1;
+  let c: [5]u64 = {0; 5};
+  let d: [5]u64 = {0; 5};
+  let b: [25]u64 = {0; 25};
+  let round: usize = 0;
+
+  while (round < 24) {
+    let x: usize = 0;
+
+    while (x < 5) {
+      c[x] = ((state[x] ^ state[x + 5]) ^ (state[x + 10] ^ state[x + 15])) ^ state[x + 20];
+      x += 1;
+    };
+
+    x = 0;
+    while (x < 5) {
+      d[x] = c[(x + 4) % 5] ^ rotl64(c[(x + 1) % 5], 1);
+      x += 1;
+    };
+
+    x = 0;
+    while (x < 5) {
+      let y: usize = 0;
+
+      while (y < 5) {
+        const src = x + 5 * y;
+        const dst = y + 5 * ((2 * x + 3 * y) % 5);
+
+        b[dst] = rotl64(state[src] ^ d[x], KECCAK_RHO[src]);
+        y += 1;
+      };
+      x += 1;
+    };
+
+    x = 0;
+    while (x < 5) {
+      let y: usize = 0;
+
+      while (y < 5) {
+        const at = x + 5 * y;
+        const next = b[(x + 1) % 5 + 5 * y];
+        const after = b[(x + 2) % 5 + 5 * y];
+
+        state[at] = b[at] ^ ((next ^ all) & after);
+        y += 1;
+      };
+      x += 1;
+    };
+
+    state[0] = state[0] ^ ((@as(u64, KECCAK_RC_HI[round]) << 32) | @as(u64, KECCAK_RC_LO[round]));
+    round += 1;
+  };
+}
+
+struct Keccak {
+  _state: [25]u64,
+  _buffer: [168]u8,
+  _buffered: usize,
+  _rate: usize,
+  _pad: u8,
+}
+
+implement Keccak {
+  pub fn init(rate: usize, pad: u8) Self {
+    const state: [25]u64 = {0; 25};
+
+    return Self { ._state = state, ._buffer = {0; 168}, ._buffered = 0, ._rate = rate, ._pad = pad };
+  }
+
+  fn absorb_block(*self) {
+    let lane: usize = 0;
+
+    while (lane < self._rate / 8) {
+      let word: u64 = 0;
+      let b: usize = 0;
+
+      while (b < 8) {
+        word |= @as(u64, self._buffer[lane * 8 + b]) << @as(u64, b * 8);
+        b += 1;
+      };
+
+      self._state[lane] = self._state[lane] ^ word;
+      lane += 1;
+    };
+
+    keccak_f(&self._state);
+    self._buffered = 0;
+  }
+
+  pub fn absorb(*self, data: []const char) {
+    let i: usize = 0;
+
+    while (i < data.len) {
+      self._buffer[self._buffered] = @as(u8, data[i]);
+      self._buffered += 1;
+
+      if (self._buffered == self._rate) {
+        self.absorb_block();
+      };
+
+      i += 1;
+    };
+  }
+
+  pub fn pad(*self) {
+    let i: usize = self._buffered;
+
+    while (i < self._rate) {
+      self._buffer[i] = 0;
+      i += 1;
+    };
+
+    self._buffer[self._buffered] = self._pad;
+    self._buffer[self._rate - 1] = self._buffer[self._rate - 1] ^ 128;
+    self.absorb_block();
+  }
+
+  fn read(*self, out: []char) {
+    let i: usize = 0;
+
+    while (i < out.len) {
+      out[i] = @as(char, self._state[i / 8] >> @as(u64, (i % 8) * 8));
+      i += 1;
+    };
+  }
+
+  pub fn finish(*self, out: []char) {
+    self.pad();
+    self.read(out);
+  }
+
+  pub fn squeeze(*self, out: []char) {
+    let written: usize = 0;
+
+    while (written < out.len) {
+      let block: usize = 0;
+
+      while (block < self._rate && written < out.len) {
+        out[written] = @as(char, self._state[block / 8] >> @as(u64, (block % 8) * 8));
+        written += 1;
+        block += 1;
+      };
+
+      if (written < out.len) {
+        keccak_f(&self._state);
+      };
+    };
+  }
+}
+
+pub struct Sha3_224 {
+  _k: Keccak,
+}
+
+implement Sha3_224 {
+  pub fn new() Self {
+    return Self { ._k = Keccak.init(144, 6) };
+  }
+
+  pub fn digest(data: []const char) [28]char {
+    let hasher = Sha3_224.new();
+
+    hasher.update(data);
+    return hasher.finalize();
+  }
+
+  pub fn hexdigest(data: []const char) String {
+    const out = Sha3_224.digest(data);
+
+    return Hashing.hexdigest(out[..]);
+  }
+}
+
+implement Digest : Sha3_224 {
+  alias Output = [28]char;
+
+  pub fn update(*self, data: []const char) {
+    self._k.absorb(data);
+  }
+
+  pub fn finalize(*self) [28]char {
+    let out: [28]char = {'\0'; 28};
+
+    self._k.finish(out[..]);
+    self.reset();
+    return out;
+  }
+
+  pub fn reset(*self) {
+    self._k = Keccak.init(144, 6);
+  }
+}
+
+pub struct Sha3_256 {
+  _k: Keccak,
+}
+
+implement Sha3_256 {
+  pub fn new() Self {
+    return Self { ._k = Keccak.init(136, 6) };
+  }
+
+  pub fn digest(data: []const char) [32]char {
+    let hasher = Sha3_256.new();
+
+    hasher.update(data);
+    return hasher.finalize();
+  }
+
+  pub fn hexdigest(data: []const char) String {
+    const out = Sha3_256.digest(data);
+
+    return Hashing.hexdigest(out[..]);
+  }
+}
+
+implement Digest : Sha3_256 {
+  alias Output = [32]char;
+
+  pub fn update(*self, data: []const char) {
+    self._k.absorb(data);
+  }
+
+  pub fn finalize(*self) [32]char {
+    let out: [32]char = {'\0'; 32};
+
+    self._k.finish(out[..]);
+    self.reset();
+    return out;
+  }
+
+  pub fn reset(*self) {
+    self._k = Keccak.init(136, 6);
+  }
+}
+
+pub struct Sha3_384 {
+  _k: Keccak,
+}
+
+implement Sha3_384 {
+  pub fn new() Self {
+    return Self { ._k = Keccak.init(104, 6) };
+  }
+
+  pub fn digest(data: []const char) [48]char {
+    let hasher = Sha3_384.new();
+
+    hasher.update(data);
+    return hasher.finalize();
+  }
+
+  pub fn hexdigest(data: []const char) String {
+    const out = Sha3_384.digest(data);
+
+    return Hashing.hexdigest(out[..]);
+  }
+}
+
+implement Digest : Sha3_384 {
+  alias Output = [48]char;
+
+  pub fn update(*self, data: []const char) {
+    self._k.absorb(data);
+  }
+
+  pub fn finalize(*self) [48]char {
+    let out: [48]char = {'\0'; 48};
+
+    self._k.finish(out[..]);
+    self.reset();
+    return out;
+  }
+
+  pub fn reset(*self) {
+    self._k = Keccak.init(104, 6);
+  }
+}
+
+pub struct Sha3_512 {
+  _k: Keccak,
+}
+
+implement Sha3_512 {
+  pub fn new() Self {
+    return Self { ._k = Keccak.init(72, 6) };
+  }
+
+  pub fn digest(data: []const char) [64]char {
+    let hasher = Sha3_512.new();
+
+    hasher.update(data);
+    return hasher.finalize();
+  }
+
+  pub fn hexdigest(data: []const char) String {
+    const out = Sha3_512.digest(data);
+
+    return Hashing.hexdigest(out[..]);
+  }
+}
+
+implement Digest : Sha3_512 {
+  alias Output = [64]char;
+
+  pub fn update(*self, data: []const char) {
+    self._k.absorb(data);
+  }
+
+  pub fn finalize(*self) [64]char {
+    let out: [64]char = {'\0'; 64};
+
+    self._k.finish(out[..]);
+    self.reset();
+    return out;
+  }
+
+  pub fn reset(*self) {
+    self._k = Keccak.init(72, 6);
+  }
+}
+
+pub struct Shake128 {
+  _k: Keccak,
+}
+
+implement Shake128 {
+  pub fn new() Self {
+    return Self { ._k = Keccak.init(168, 31) };
+  }
+
+  pub fn absorb(*self, data: []const char) {
+    self._k.absorb(data);
+  }
+
+  pub fn squeeze(*self, out: []char) {
+    self._k.pad();
+    self._k.squeeze(out);
+  }
+
+  pub fn reset(*self) {
+    self._k = Keccak.init(168, 31);
+  }
+
+  pub fn hash(data: []const char, out: []char) {
+    let hasher = Shake128.new();
+
+    hasher.absorb(data);
+    hasher.squeeze(out);
+  }
+}
+
+pub struct Shake256 {
+  _k: Keccak,
+}
+
+implement Shake256 {
+  pub fn new() Self {
+    return Self { ._k = Keccak.init(136, 31) };
+  }
+
+  pub fn absorb(*self, data: []const char) {
+    self._k.absorb(data);
+  }
+
+  pub fn squeeze(*self, out: []char) {
+    self._k.pad();
+    self._k.squeeze(out);
+  }
+
+  pub fn reset(*self) {
+    self._k = Keccak.init(136, 31);
+  }
+
+  pub fn hash(data: []const char, out: []char) {
+    let hasher = Shake256.new();
+
+    hasher.absorb(data);
+    hasher.squeeze(out);
+  }
+}
