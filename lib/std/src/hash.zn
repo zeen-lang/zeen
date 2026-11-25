@@ -1,23 +1,24 @@
-/// Fast hashes, not for crypto.
-pub struct Hasher {
-  /// 64-bit FNV-1a.
-  pub fn fnv1a64(data: []const char) u64 {
-    const hi: u64 = 0xCBF29CE4;
-    const lo: u64 = 0x84222325;
-    let hash = (hi << 32) | lo;
+/// 64-bit FNV-1a.
+pub struct Fnv1a64 {
+  /// Hash `data`.
+  pub fn hash(data: []const char) u64 {
+    let hash = (@as(u64, 0xCBF29CE4) << 32) | 0x84222325;
     let i: usize = 0;
 
     while (i < data.len) {
-      hash ^= @as(u64, data[i]);
+      hash ^= @as(u64, @as(u32, data[i]) & 255);
       hash *= 0x100000001B3;
       i += 1;
     }
 
     return hash;
   }
+}
 
-  /// 32-bit FNV-1a.
-  pub fn fnv1a32(data: []const char) u32 {
+/// 32-bit FNV-1a.
+pub struct Fnv1a32 {
+  /// Hash `data`.
+  pub fn hash(data: []const char) u32 {
     let hash: u32 = 0x811C9DC5;
     let i: usize = 0;
 
@@ -29,4 +30,254 @@ pub struct Hasher {
 
     return hash;
   }
+}
+
+/// CRC-32 (IEEE 802.3).
+pub struct Crc32 {
+  /// Hash `data`.
+  pub fn hash(data: []const char) u32 {
+    const poly: u32 = 0xEDB88320;
+    let table: [16]u32 = {0; 16};
+    let n: usize = 0;
+
+    while (n < 16) {
+      let crc = @as(u32, n);
+      let bit: usize = 0;
+      while (bit < 4) {
+        if ((crc & 1) != 0) {
+          crc = (crc >> 1) ^ poly;
+        } else {
+          crc >>= 1;
+        };
+        bit += 1;
+      };
+      table[n] = crc;
+      n += 1;
+    };
+
+    let crc: u32 = 0xFFFFFFFF;
+    let i: usize = 0;
+    while (i < data.len) {
+      const byte = @as(u32, data[i]);
+      crc = (crc >> 4) ^ table[@as(usize, (crc ^ byte) & 15)];
+      crc = (crc >> 4) ^ table[@as(usize, (crc ^ (byte >> 4)) & 15)];
+      i += 1;
+    }
+
+    return crc ^ 0xFFFFFFFF;
+  }
+}
+
+/// CRC-64/XZ (ECMA-182).
+pub struct Crc64 {
+  /// Hash `data`.
+  pub fn hash(data: []const char) u64 {
+    const poly = (@as(u64, 0xC96C5795) << 32) | 0xD7870F42;
+    let table: [16]u64 = {0; 16};
+    let n: usize = 0;
+
+    while (n < 16) {
+      let crc = @as(u64, n);
+      let bit: usize = 0;
+      while (bit < 4) {
+        if ((crc & 1) != 0) {
+          crc = (crc >> 1) ^ poly;
+        } else {
+          crc >>= 1;
+        };
+        bit += 1;
+      };
+      table[n] = crc;
+      n += 1;
+    };
+
+    let crc: u64 = @as(u64, 0) - 1;
+    let i: usize = 0;
+    while (i < data.len) {
+      const byte = @as(u64, @as(u32, data[i]) & 255);
+      crc = (crc >> 4) ^ table[@as(usize, (crc ^ byte) & 15)];
+      crc = (crc >> 4) ^ table[@as(usize, (crc ^ (byte >> 4)) & 15)];
+      i += 1;
+    }
+
+    return crc ^ (@as(u64, 0) - 1);
+  }
+}
+
+/// XXH64.
+pub struct XxHash64 {
+  /// Hash `data`.
+  pub fn hash(data: []const char) u64 {
+    const p1 = (@as(u64, 0x9E3779B1) << 32) | 0x85EBCA87;
+    const p2 = (@as(u64, 0xC2B2AE3D) << 32) | 0x27D4EB4F;
+    const p3: u64 = 0x165667B19E3779F9;
+    const p4 = (@as(u64, 0x85EBCA77) << 32) | 0xC2B2AE63;
+    const p5: u64 = 0x27D4EB2F165667C5;
+
+    let i: usize = 0;
+    let h: u64 = 0;
+
+    if (data.len >= 32) {
+      let v1 = p1 + p2;
+      let v2 = p2;
+      let v3: u64 = 0;
+      let v4 = @as(u64, 0) - p1;
+
+      while (i + 32 <= data.len) {
+        v1 = XxHash64.round(v1, read_le_u64(data, i));
+        v2 = XxHash64.round(v2, read_le_u64(data, i + 8));
+        v3 = XxHash64.round(v3, read_le_u64(data, i + 16));
+        v4 = XxHash64.round(v4, read_le_u64(data, i + 24));
+        i += 32;
+      };
+
+      h = (rotl64(v1, 1) + rotl64(v2, 7)) + (rotl64(v3, 12) + rotl64(v4, 18));
+      h = XxHash64.merge(h, v1);
+      h = XxHash64.merge(h, v2);
+      h = XxHash64.merge(h, v3);
+      h = XxHash64.merge(h, v4);
+    } else {
+      h = p5;
+    };
+
+    h += @as(u64, data.len);
+    while (i + 8 <= data.len) {
+      h ^= XxHash64.round(0, read_le_u64(data, i));
+      h = rotl64(h, 27) * p1 + p4;
+      i += 8;
+    };
+    if (i + 4 <= data.len) {
+      h ^= @as(u64, read_le_u32(data, i)) * p1;
+      h = rotl64(h, 23) * p2 + p3;
+      i += 4;
+    };
+    while (i < data.len) {
+      h ^= @as(u64, @as(u32, data[i]) & 255) * p5;
+      h = rotl64(h, 11) * p1;
+      i += 1;
+    };
+
+    h ^= h >> 33;
+    h *= p2;
+    h ^= h >> 29;
+    h *= p3;
+    h ^= h >> 32;
+
+    return h;
+  }
+
+  fn round(acc: u64, input: u64) u64 {
+    const p1 = (@as(u64, 0x9E3779B1) << 32) | 0x85EBCA87;
+    const p2 = (@as(u64, 0xC2B2AE3D) << 32) | 0x27D4EB4F;
+
+    return rotl64(acc + input * p2, 31) * p1;
+  }
+
+  fn merge(acc: u64, value: u64) u64 {
+    const p1 = (@as(u64, 0x9E3779B1) << 32) | 0x85EBCA87;
+    const p4 = (@as(u64, 0x85EBCA77) << 32) | 0xC2B2AE63;
+
+    return (acc ^ XxHash64.round(0, value)) * p1 + p4;
+  }
+}
+
+/// SipHash-2-4 with a 128-bit key.
+pub struct SipHash64 {
+  /// Hash `data` with `key`.
+  pub fn hash(key: [2]u64, data: []const char) u64 {
+    let state = SipState {
+      .v0 = 0x736F6D6570736575 ^ key[0],
+      .v1 = 0x646F72616E646F6D ^ key[1],
+      .v2 = 0x6C7967656E657261 ^ key[0],
+      .v3 = 0x7465646279746573 ^ key[1],
+    };
+
+    const end = data.len - (data.len % 8);
+    let i: usize = 0;
+
+    while (i < end) {
+      const block = read_le_u64(data, i);
+      state.v3 ^= block;
+      state.rounds(2);
+      state.v0 ^= block;
+      i += 8;
+    }
+
+    let last = (@as(u64, data.len & 255)) << 56;
+    let rest: usize = 0;
+    while (rest < data.len - end) {
+      last |= @as(u64, @as(u32, data[end + rest]) & 255) << (@as(u64, rest) * 8);
+      rest += 1;
+    };
+
+    state.v3 ^= last;
+    state.rounds(2);
+    state.v0 ^= last;
+    state.v2 ^= 0xFF;
+    state.rounds(4);
+
+    return (state.v0 ^ state.v1) ^ (state.v2 ^ state.v3);
+  }
+}
+
+struct SipState {
+  pub v0: u64,
+  pub v1: u64,
+  pub v2: u64,
+  pub v3: u64,
+}
+
+implement SipState {
+  pub fn rounds(*self, count: usize) void {
+    let i: usize = 0;
+    while (i < count) {
+      self.round();
+      i += 1;
+    }
+  }
+
+  pub fn round(*self) void {
+    (*self).v0 += (*self).v1;
+    (*self).v1 = rotl64((*self).v1, 13);
+    (*self).v1 ^= (*self).v0;
+    (*self).v0 = rotl64((*self).v0, 32);
+    (*self).v2 += (*self).v3;
+    (*self).v3 = rotl64((*self).v3, 16);
+    (*self).v3 ^= (*self).v2;
+    (*self).v0 += (*self).v3;
+    (*self).v3 = rotl64((*self).v3, 21);
+    (*self).v3 ^= (*self).v0;
+    (*self).v2 += (*self).v1;
+    (*self).v1 = rotl64((*self).v1, 17);
+    (*self).v1 ^= (*self).v2;
+    (*self).v2 = rotl64((*self).v2, 32);
+  }
+}
+
+fn rotl64(value: u64, bits: u64) u64 {
+  return (value << bits) | (value >> (64 - bits));
+}
+
+fn read_le_u64(data: []const char, at: usize) u64 {
+  let value: u64 = 0;
+  let i: usize = 0;
+
+  while (i < 8) {
+    value |= @as(u64, @as(u32, data[at + i]) & 255) << (@as(u64, i) * 8);
+    i += 1;
+  }
+
+  return value;
+}
+
+fn read_le_u32(data: []const char, at: usize) u32 {
+  let value: u32 = 0;
+  let i: usize = 0;
+
+  while (i < 4) {
+    value |= @as(u32, data[at + i]) << (@as(u32, i) * 8);
+    i += 1;
+  }
+
+  return value;
 }
