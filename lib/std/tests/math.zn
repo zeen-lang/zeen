@@ -1,0 +1,230 @@
+use std.math;
+use std.testing;
+
+fn close64(actual: f64, expected: f64) {
+  assert((actual - expected).abs() < 0.0001);
+}
+
+fn close32(actual: f32, expected: f32) {
+  assert((actual - expected).abs() < @as(f32, 0.0001));
+}
+
+/// @test
+pub fn math_constants() {
+  close64(PI, 3.141592653589793);
+  close64(TAU, 6.283185307179586);
+  close64(E, 2.718281828459045);
+  close64(SQRT_2, 1.4142135623730951);
+  close64(LN_2, 0.6931471805599453);
+  close64(LN_10, 2.302585092994046);
+}
+
+/// @test
+pub fn math_generic_helpers() {
+  assert_eq(Math.min(3, 2), 2);
+  close64(Math.max(3.0, 2.0), 3.0);
+  assert_eq(Math.clamp(5, 1, 3), 3);
+  close64(Math.clamp(0.5, 0.0, 1.0), 0.5);
+  assert_eq(Math.abs(0 - 7), 7);
+  close64(Math.abs(0.0 - 7.5), 7.5);
+}
+
+/// @test
+pub fn math_float_functions() {
+  close64(Math.sqrt(36.0), 6.0);
+  close32(Math.sqrt(@as(f32, 36.0)), 6.0);
+  close64(Math.cbrt(27.0), 3.0);
+  close64(Math.hypot(3.0, 4.0), 5.0);
+  close64(Math.pow(2.0, 10.0), 1024.0);
+  close64(Math.powi(2.0, 10), 1024.0);
+  close64(Math.exp(0.0), 1.0);
+  close64(Math.exp2(3.0), 8.0);
+  close64(Math.exp_m1(0.0), 0.0);
+  close64(Math.ln(E), 1.0);
+  close64(Math.ln_1p(0.0), 0.0);
+  close64(Math.log2(8.0), 3.0);
+  close64(Math.log10(1000.0), 3.0);
+  close64(Math.log(8.0, 2.0), 3.0);
+  close64(Math.rem(7.0, 2.0), 1.0);
+  close32(Math.rem(@as(f32, 7.0), 2.0), 1.0);
+}
+
+/// @test
+pub fn math_trigonometry() {
+  close64(Math.sin(0.0), 0.0);
+  close64(Math.cos(0.0), 1.0);
+  close64(Math.tan(0.0), 0.0);
+  close64(Math.asin(0.0), 0.0);
+  close64(Math.acos(1.0), 0.0);
+  close64(Math.atan(0.0), 0.0);
+  close64(Math.atan2(1.0, 1.0), 0.7853981633974483);
+  close64(Math.sinh(0.0), 0.0);
+  close64(Math.cosh(0.0), 1.0);
+  close64(Math.tanh(0.0), 0.0);
+  close64(Math.asinh(0.0), 0.0);
+  close64(Math.acosh(1.0), 0.0);
+  close64(Math.atanh(0.0), 0.0);
+  close64(Math.sin(Math.sqrt(4.0)), 0.9092974268256817);
+}
+
+/// @test
+pub fn math_rounding_and_sign() {
+  close64(Math.floor(2.7), 2.0);
+  close64(Math.ceil(2.1), 3.0);
+  close64(Math.round(2.5), 3.0);
+  close64(Math.trunc(0.0 - 2.7), -2.0);
+  close64(Math.fract(2.25), 0.25);
+  close64(Math.recip(4.0), 0.25);
+  close64(Math.signum(0.0 - 3.0), -1.0);
+  close64(Math.copysign(3.0, 0.0 - 1.0), -3.0);
+  close64(Math.mul_add(2.0, 3.0, 1.0), 7.0);
+  close64(Math.lerp(1.0, 3.0, 0.5), 2.0);
+  close64(Math.to_degrees(PI), 180.0);
+  close64(Math.to_radians(180.0), PI);
+
+  assert(Math.is_nan(Math.sqrt(0.0 - 1.0)));
+  assert(Math.is_inf(Math.recip(0.0)));
+  assert(Math.is_finite(1.0));
+  assert(Math.is_sign_positive(1.0));
+  assert(Math.is_sign_negative(0.0 - 1.0));
+}
+
+/// @test
+pub fn math_integer_helpers() {
+  assert_eq(Math.pow(2, 10), 1024);
+  assert_eq(Math.pow(@as(i64, 3), 4), 81);
+  assert_eq(Math.pow(@as(u32, 5), 3), 125);
+  assert_eq(Math.pow(@as(u64, 2), 20), 1048576);
+  assert_eq(Math.gcd(12, 18), 6);
+  assert_eq(Math.gcd(@as(i64, 0 - 12), 18), 6);
+  assert_eq(Math.gcd(@as(u32, 12), 18), 6);
+  assert_eq(Math.gcd(@as(u64, 12), 18), 6);
+  assert_eq(Math.lcm(4, 6), 12);
+  assert_eq(Math.lcm(@as(i64, 4), 6), 12);
+  assert_eq(Math.lcm(@as(u32, 4), 6), 12);
+  assert_eq(Math.lcm(@as(u64, 4), 6), 12);
+  assert_eq(Math.signum(0 - 7), -1);
+  assert_eq(Math.signum(@as(i64, 0 - 3)), -1);
+  assert_eq(Math.signum(@as(u32, 0)), 0);
+  assert_eq(Math.signum(@as(u64, 5)), 1);
+}
+
+/// @test
+pub fn float_interface_works_for_both_types() {
+  close64(sqrt_of(@as(f64, 36.0)), 6.0);
+  close32(sqrt_of(@as(f32, 36.0)), 6.0);
+  close64(cbrt_of(@as(f64, 27.0)), 3.0);
+  close64(powi_of(@as(f64, 2.0), 10), 1024.0);
+  close64(hypot_of(@as(f64, 3.0), 4.0), 5.0);
+  close64(pow_of(@as(f64, 2.0), 10.0), 1024.0);
+  close64(exp_of(@as(f64, 0.0)), 1.0);
+  close64(ln_of(@as(f64, E)), 1.0);
+  close64(log_of(@as(f64, 8.0), 2.0), 3.0);
+  close64(rem_of(@as(f64, 7.0), 2.0), 1.0);
+  close64(sin_of(@as(f64, 0.0)), 0.0);
+  close64(atan2_of(@as(f64, 1.0), 1.0), 0.7853981633974483);
+  close64(floor_of(@as(f64, 2.7)), 2.0);
+  close64(abs_of(@as(f64, 0.0 - 7.5)), 7.5);
+  close64(signum_of(@as(f64, 0.0 - 3.0)), -1.0);
+  close64(copysign_of(@as(f64, 3.0), 0.0 - 1.0), -3.0);
+  close64(mul_add_of(@as(f64, 2.0), 3.0, 1.0), 7.0);
+  close64(lerp_of(@as(f64, 1.0), 3.0, 0.5), 2.0);
+  close64(degrees_of(PI), 180.0);
+  assert(!is_nan_of(@as(f64, 36.0)));
+  assert(!is_inf_of(@as(f64, 36.0)));
+  assert(is_finite_of(@as(f64, 36.0)));
+  assert(is_sign_positive_of(@as(f64, 36.0)));
+  assert(!is_sign_negative_of(@as(f64, 36.0)));
+}
+
+fn sqrt_of[T: Float](x: T) T {
+  return x.sqrt();
+}
+
+fn cbrt_of[T: Float](x: T) T {
+  return x.cbrt();
+}
+
+fn hypot_of[T: Float](x: T, y: T) T {
+  return x.hypot(y);
+}
+
+fn pow_of[T: Float](x: T, y: T) T {
+  return x.pow(y);
+}
+
+fn powi_of[T: Float](x: T, n: i32) T {
+  return x.powi(n);
+}
+
+fn exp_of[T: Float](x: T) T {
+  return x.exp();
+}
+
+fn ln_of[T: Float](x: T) T {
+  return x.ln();
+}
+
+fn log_of[T: Float](x: T, base: T) T {
+  return x.log(base);
+}
+
+fn rem_of[T: Float](x: T, y: T) T {
+  return x.rem(y);
+}
+
+fn sin_of[T: Float](x: T) T {
+  return x.sin();
+}
+
+fn atan2_of[T: Float](y: T, x: T) T {
+  return y.atan2(x);
+}
+
+fn floor_of[T: Float](x: T) T {
+  return x.floor();
+}
+
+fn abs_of[T: Float](x: T) T {
+  return x.abs();
+}
+
+fn signum_of[T: Float](x: T) T {
+  return x.signum();
+}
+
+fn copysign_of[T: Float](x: T, sign: T) T {
+  return x.copysign(sign);
+}
+
+fn mul_add_of[T: Float](x: T, a: T, b: T) T {
+  return x.mul_add(a, b);
+}
+
+fn lerp_of[T: Float](a: T, b: T, t: T) T {
+  return a.lerp(b, t);
+}
+
+fn degrees_of[T: Float](x: T) T {
+  return x.to_degrees();
+}
+
+fn is_nan_of[T: Float](x: T) bool {
+  return x.is_nan();
+}
+
+fn is_inf_of[T: Float](x: T) bool {
+  return x.is_inf();
+}
+
+fn is_finite_of[T: Float](x: T) bool {
+  return x.is_finite();
+}
+
+fn is_sign_positive_of[T: Float](x: T) bool {
+  return x.is_sign_positive();
+}
+
+fn is_sign_negative_of[T: Float](x: T) bool {
+  return x.is_sign_negative();
+}

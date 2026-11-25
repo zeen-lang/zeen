@@ -1,0 +1,164 @@
+use std.string;
+use std.testing;
+
+fn close64(actual: f64, expected: f64) {
+  assert((actual - expected).abs() < 0.00001);
+}
+
+/// @test
+pub fn signed_integer_methods() {
+  const a: i32 = -5;
+
+  assert_eq(a.abs(), 5);
+  assert_eq(a.signum(), -1);
+  assert(a.is_negative());
+  assert_eq(a.unsigned_abs(), 5);
+  assert_eq(a.count_ones(), 31);
+  assert_eq(a.count_zeros(), 1);
+  assert_eq(a.leading_zeros(), 0);
+  assert_eq(a.trailing_zeros(), 0);
+  assert_eq(a.rotate_left(1), -9);
+  assert_eq(a.rotate_right(1), -3);
+  assert_eq(a.swap_bytes(), -67108865);
+  assert_eq(a.reverse_bits(), -536870913);
+  assert_eq(i32.bits(), 32);
+  assert_eq(i32.min_value(), -2147483648);
+  assert_eq(i32.max_value(), 2147483647);
+  assert_eq(a.pow(3), -125);
+  assert_eq(a.div_euclid(3), -2);
+  assert_eq(a.rem_euclid(3), 1);
+  assert_eq(a.div_ceil(3), -1);
+  assert_eq(a.next_multiple_of(3), -3);
+  assert_eq(a.midpoint(10), 2);
+  assert_eq(a.min(3), -5);
+  assert_eq(a.max(3), 3);
+  assert_eq(a.clamp(-1, 1), -1);
+  assert_eq(a.abs_diff(7), 12);
+}
+
+/// @test
+pub fn integer_logarithms() {
+  const positive: i32 = 100;
+
+  assert_eq(positive.ilog2(), 6);
+  assert_eq(positive.ilog10(), 2);
+  assert_eq(positive.ilog(2), 6);
+}
+
+/// @test
+pub fn checked_and_wrapping_arithmetic() {
+  const a: i32 = -5;
+  const max: i32 = i32.max_value();
+
+  assert(max.checked_add(1).is_none());
+  assert_eq(max.saturating_add(1), 2147483647);
+  assert_eq(max.wrapping_add(1), -2147483648);
+  assert(max.overflowing_add(1).overflowed);
+  assert_eq(max.overflowing_add(1).value, -2147483648);
+  assert_eq(a.checked_abs().unwrap(), 5);
+  assert_eq(a.checked_neg().unwrap(), 5);
+  assert_eq(a.checked_pow(2).unwrap(), 25);
+  assert(a.checked_div(0).is_none());
+  assert_eq(a.checked_shl(1).unwrap(), -10);
+}
+
+/// @test
+pub fn byte_order_round_trips() {
+  const a: i32 = -5;
+
+  assert_eq(i32.from_le_bytes(a.to_le_bytes()), -5);
+  assert_eq(i32.from_be_bytes(a.to_be_bytes()), -5);
+  assert_eq(a.to_le(), -5);
+}
+
+/// @test
+pub fn unsigned_integer_methods() {
+  const small: u8 = 200;
+
+  assert_eq(small.count_ones(), 3);
+  assert_eq(small.count_zeros(), 5);
+  assert_eq(small.leading_zeros(), 0);
+  assert(!small.is_power_of_two());
+  assert_eq(small.next_power_of_two(), 0);
+  assert(small.checked_next_power_of_two().is_none());
+  assert_eq(small.saturating_add(100), 255);
+  assert_eq(small.wrapping_add(100), 44);
+  assert(small.overflowing_add(100).overflowed);
+  assert_eq(u8.bits(), 8);
+  assert_eq(u8.min_value(), 0);
+  assert_eq(u8.max_value(), 255);
+
+  const wide: u64 = 144;
+
+  assert_eq(wide.isqrt(), 12);
+  assert_eq(wide.ilog2(), 7);
+  assert_eq(wide.ilog10(), 2);
+  assert_eq(wide.div_ceil(10), 15);
+  assert_eq(wide.abs_diff(100), 44);
+  assert_eq(u64.max_value(), @as(u64, 9223372036854775807) * 2 + 1);
+  assert(u64.max_value().checked_add(1).is_none());
+}
+
+/// @test
+pub fn float_methods() {
+  const x: f64 = 2.25;
+
+  close64(x.sqrt(), 1.5);
+  close64(x.powf(2.0), 5.0625);
+  close64(x.powi(3), 11.390625);
+  close64(x.floor(), 2.0);
+  close64(x.ceil(), 3.0);
+  close64(x.round(), 2.0);
+  close64(x.trunc(), 2.0);
+  close64(x.fract(), 0.25);
+  close64(x.recip(), 0.4444444444444444);
+  close64(x.abs(), 2.25);
+  close64(x.signum(), 1.0);
+  close64(x.hypot(4.0), 4.589389937671455);
+  close64(x.min(3.0), 2.25);
+  close64(x.max(3.0), 3.0);
+  close64(x.clamp(0.0, 2.0), 2.0);
+  close64(x.minimum(3.0), 2.25);
+  close64(x.maximum(3.0), 3.0);
+  close64(x.mul_add(2.0, 1.0), 5.5);
+  close64(x.to_degrees(), 128.9155043417158);
+  close64(x.to_radians(), 0.03926990816987242);
+  close64(x.div_euclid(2.0), 1.0);
+  close64(x.rem_euclid(2.0), 0.25);
+  close64(f64.from_bits(x.to_bits()), 2.25);
+
+  assert(f64.nan().is_nan());
+  assert(f64.infinity().is_infinite());
+  assert(f64.epsilon() > 0.0);
+  assert(f64.epsilon() < 0.0000001);
+  assert(f64.min_positive_value() > 0.0);
+  assert(f64.min_positive_value() < 0.0000001);
+  assert(f64.max_value().is_finite());
+  assert(f64.neg_infinity().is_sign_negative());
+}
+
+/// @test
+pub fn char_and_rune_methods() {
+  const c: char = 'z';
+
+  assert(c.is_ascii_lowercase());
+  assert(c.is_ascii_alphabetic());
+  assert_eq(c.to_ascii_uppercase(), 'Z');
+  assert(c.eq_ignore_ascii_case('Z'));
+  assert_eq(c.to_digit(36).unwrap(), 35);
+  assert_eq(char.from_digit(10, 16).unwrap(), 'a');
+
+  assert(Rune.from_u32(0x1F600).is_some());
+  assert(Rune.from_u32(0xD800).is_none());
+  assert_eq(Rune.from_u32(0x1F600).unwrap().utf8_len(), 4);
+  assert_eq(Rune.from_u32(0x1F600).unwrap().utf16_len(), 2);
+}
+
+/// @test
+pub fn scalar_to_string() {
+  const x: f64 = 2.25;
+
+  assert_eq(true.to_string(), String.from("true"));
+  assert_eq((0 - 42).to_string(), String.from("-42"));
+  assert_eq(x.to_string(), String.from("2.250000"));
+}
