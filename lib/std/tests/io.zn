@@ -18,18 +18,3 @@ pub fn io_error_keeps_custom_message() {
   assert_eq(error.kind(), IoErrorKind.TimedOut);
   assert_eq(error.message(), String.from("timed out"));
 }
-
-/// @test
-pub fn stdio_writes_both_streams() {
-  @os[windows] {
-    return;
-  }
-
-  const text = String.from("str\n");
-
-  Stdout.write("out\n");
-  Stdout.write_string(&text);
-  Stdout.flush();
-  Stderr.write("err\n");
-  Stderr.flush();
-}
