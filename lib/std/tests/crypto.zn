@@ -2,6 +2,7 @@ use std.crypto.blake2;
 use std.crypto.blake3;
 use std.crypto.hash;
 use std.crypto.hmac;
+use std.crypto.md5;
 use std.crypto.random;
 use std.crypto.sha1;
 use std.crypto.sha256;
@@ -336,4 +337,23 @@ pub fn sha1_streaming_matches_one_shot() {
   hasher.update("bc");
 
   assert_eq(Hashing.hexdigest(hasher.finalize()[..]), String.from("a9993e364706816aba3e25717850c26c9cd0d89d"));
+}
+
+/// @test
+pub fn md5_vectors() {
+  let data: [200]char = {'a'; 200};
+
+  assert_eq(Md5.hexdigest(""), String.from("d41d8cd98f00b204e9800998ecf8427e"));
+  assert_eq(Md5.hexdigest("abc"), String.from("900150983cd24fb0d6963f7d28e17f72"));
+  assert_eq(Md5.hexdigest(data[..]), String.from("887f30b43b2867f4a9accceee7d16e6c"));
+}
+
+/// @test
+pub fn md5_streaming_matches_one_shot() {
+  let hasher = Md5.new();
+
+  hasher.update("a");
+  hasher.update("bc");
+
+  assert_eq(Hashing.hexdigest(hasher.finalize()[..]), String.from("900150983cd24fb0d6963f7d28e17f72"));
 }
