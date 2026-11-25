@@ -1,0 +1,35 @@
+use std.http;
+use std.net;
+use std.io;
+use std.string;
+use std.testing;
+
+/// @test
+pub fn http_reads_request_and_sends_response() {
+  @os[windows] {
+    return;
+  }
+
+  let listener = TcpListener.bind(&SocketAddr.loopback(0)).unwrap();
+  const addr = listener.local_addr().unwrap();
+  let client = TcpStream.connect(&addr).unwrap();
+  let server = listener.accept().unwrap();
+
+  client.write_all("POST /submit HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello").unwrap();
+
+  const request = HttpServer.read_request(&server).unwrap();
+
+  assert(request.method == Method.Post);
+  assert_eq(request.header("content-length").unwrap(), String.from("5"));
+  assert_eq(request.header("HOST").unwrap(), String.from("x"));
+  assert_eq(String.from(request.path.slice(..)), String.from("/submit"));
+  assert_eq(String.from(request.body.slice(..)), String.from("hello"));
+
+  assert(Response.ok("Hello, World!\n").send(&server).is_ok());
+  server.shutdown().unwrap();
+
+  let out = String.new();
+
+  assert_eq(client.read_to_string(&out).unwrap(), @as(usize, 98));
+  assert_eq(out.len(), @as(usize, 98));
+}

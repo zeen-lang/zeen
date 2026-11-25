@@ -1,0 +1,131 @@
+use std.fs;
+use std.io;
+use std.string;
+use std.testing;
+
+fn base() []const char {
+  return "/tmp/zeen_test_fs_basic";
+}
+
+fn file() []const char {
+  return "/tmp/zeen_test_fs_basic/hello.txt";
+}
+
+fn moved() []const char {
+  return "/tmp/zeen_test_fs_basic/moved.txt";
+}
+
+fn clean() {
+  let _ = Fs.remove_file(moved());
+  let _ = Fs.remove_file(file());
+  let _ = Fs.remove_dir(base());
+}
+
+/// @test
+pub fn fs_writes_and_reads() {
+  @os[windows] {
+    return;
+  }
+
+  clean();
+  Fs.create_dir(base()).unwrap();
+
+  assert(Fs.exists(base()));
+  assert_eq(Fs.write(file(), "hello fs\nsecond\n").unwrap(), @as(usize, 16));
+
+  const meta = Fs.metadata(file()).unwrap();
+
+  assert_eq(meta.len(), @as(u64, 16));
+  assert(!meta.is_empty());
+  assert(meta.is_file());
+  assert(!meta.is_dir());
+
+  assert_eq(Fs.read_to_string(file()).unwrap().len(), @as(usize, 16));
+
+  let part = String.new();
+  let reader = File.open(file()).unwrap();
+
+  assert_eq(reader.read_exact(&part, 5).unwrap(), @as(usize, 5));
+  assert_eq(part.len(), @as(usize, 5));
+  assert_eq(part, String.from("hello"));
+
+  Fs.remove_file(file()).unwrap();
+  Fs.remove_dir(base()).unwrap();
+  assert(!Fs.exists(file()));
+}
+
+/// @test
+pub fn fs_lists_directory_entries() {
+  @os[windows] {
+    return;
+  }
+
+  clean();
+  Fs.create_dir(base()).unwrap();
+  Fs.write(file(), "hello fs\nsecond\n").unwrap();
+
+  const listed = Fs.read_dir(base()).unwrap();
+
+  assert_eq(listed.len(), @as(usize, 1));
+
+  let rest = listed;
+  let files: i32 = 0;
+  let seen_hello = false;
+
+  while (true) {
+    const next = rest.pop();
+
+    if (next.is_none()) {
+      break;
+    };
+
+    const entry = next.unwrap();
+
+    if (entry.is_file()) {
+      files += 1;
+    };
+
+    if (entry.into_name() == String.from("hello.txt")) {
+      seen_hello = true;
+    };
+  };
+
+  assert_eq(files, 1);
+  assert(seen_hello);
+
+  clean();
+}
+
+/// @test
+pub fn fs_open_options_and_rename() {
+  @os[windows] {
+    return;
+  }
+
+  clean();
+  Fs.create_dir(base()).unwrap();
+  Fs.write(file(), "hello fs\nsecond\n").unwrap();
+
+  let writer = OpenOptions.new().write(true).create(true).truncate(true).open(moved()).unwrap();
+
+  assert_eq(writer.write_all("moved\n").unwrap(), @as(usize, 6));
+  writer.sync_all().unwrap();
+
+  Fs.rename(moved(), file()).unwrap();
+  Fs.remove_file(file()).unwrap();
+  Fs.remove_dir(base()).unwrap();
+
+  assert(!Fs.exists(file()));
+}
+
+/// @test
+pub fn fs_reports_missing_file() {
+  @os[windows] {
+    return;
+  }
+
+  const missing = File.open("/tmp/zeen_test_fs_nope/x");
+
+  assert(missing.is_err());
+  assert_eq(missing.unwrap_err().kind(), IoErrorKind.NotFound);
+}

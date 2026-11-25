@@ -1,0 +1,60 @@
+use std.sync;
+use std.thread;
+use std.testing;
+
+/// @test
+pub fn rwlock_allows_writer_then_readers() {
+  @os[windows] {
+    return;
+  }
+
+  let shared = Arc.new(RwLock.new(0));
+  let writer_shared = shared.clone();
+
+  let writer = Thread.spawn(|| -> i32 {
+    let i: i32 = 0;
+
+    while (i < 50) {
+      let guard = writer_shared.get_mut().write();
+
+      *guard += 1;
+      i += 1;
+    };
+
+    return 1;
+  });
+
+  assert_eq(writer.join(), 1);
+
+  let reader_shared = shared.clone();
+
+  let reader = Thread.spawn(|| -> i32 {
+    const guard = reader_shared.get_mut().read();
+
+    return *guard;
+  });
+
+  assert_eq(reader.join(), 50);
+
+  {
+    const guard = shared.get_mut().read();
+
+    assert_eq(*guard, 50);
+  };
+
+  {
+    const read = shared.get_mut().try_read();
+
+    assert(read.is_some());
+  };
+
+  {
+    const write = shared.get_mut().try_write();
+
+    assert(write.is_some());
+  };
+
+  assert(shared.get_mut().try_write().is_some());
+  assert(shared.get_mut().try_write().is_some());
+  assert_eq(RwLock.new(7).into_inner(), 7);
+}

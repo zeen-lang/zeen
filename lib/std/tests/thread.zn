@@ -1,0 +1,43 @@
+use std.sync;
+use std.thread;
+use std.testing;
+
+/// @test
+pub fn mutex_serializes_increments() {
+  @os[windows] {
+    return;
+  }
+
+  let shared = Arc.new(Mutex.new(0));
+  let first = shared.clone();
+  let second = shared.clone();
+
+  let a = Thread.spawn(|| -> i32 {
+    let i: i32 = 0;
+
+    while (i < 100) {
+      let guard = first.get_mut().lock();
+
+      *guard += 1;
+      i += 1;
+    };
+
+    return 1;
+  });
+
+  let b = Thread.spawn(|| -> i32 {
+    let i: i32 = 0;
+
+    while (i < 100) {
+      let guard = second.get_mut().lock();
+
+      *guard += 1;
+      i += 1;
+    };
+
+    return 2;
+  });
+
+  assert_eq(a.join() + b.join(), 3);
+  assert_eq(*shared.get_mut().lock(), 200);
+}

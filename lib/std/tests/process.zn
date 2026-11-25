@@ -1,0 +1,144 @@
+use std.process;
+use std.string;
+use std.testing;
+
+fn echo_command() Command {
+  @os[windows] {
+    return Command.new("cmd").arg("/c").arg("echo");
+  } else {
+    return Command.new("echo");
+  }
+}
+
+/// @test
+pub fn process_exposes_args_and_cwd() {
+  assert_eq(Process.args_count(), 1);
+  assert_eq(Process.args().len(), @as(usize, 1));
+  assert(Process.cwd().is_ok());
+}
+
+/// @test
+pub fn command_captures_output() {
+  @os[windows] {
+    return;
+  }
+
+  const captured = echo_command().arg("hello").output().unwrap();
+
+  assert(captured.status.success());
+  assert_eq(captured.status.code().unwrap(), 0);
+  assert_eq(String.from(captured.stdout.trim_end()), String.from("hello"));
+
+  const multiple = echo_command().arg("a").arg("b").output().unwrap();
+
+  assert_eq(String.from(multiple.stdout.trim_end()), String.from("a b"));
+}
+
+/// @test
+pub fn command_reports_failure() {
+  @os[windows] {
+    return;
+  }
+
+  const status = Command.new("false").status().unwrap();
+
+  assert(!status.success());
+  assert_eq(status.code().unwrap(), 1);
+}
+
+/// @test
+pub fn command_sets_and_removes_env() {
+  @os[windows] {
+    return;
+  }
+
+  const seen = Command.new("env").env("ZEEN_TEST_SPAWN_PROBE", "wibble").output().unwrap();
+
+  assert(seen.stdout.contains_str("ZEEN_TEST_SPAWN_PROBE=wibble"));
+
+  const hidden = Command.new("env")
+    .env("ZEEN_TEST_SPAWN_PROBE", "wibble")
+    .env_remove("ZEEN_TEST_SPAWN_PROBE")
+    .output()
+    .unwrap();
+
+  assert(!hidden.stdout.contains_str("ZEEN_TEST_SPAWN_PROBE=wibble"));
+}
+
+/// @test
+pub fn command_sets_current_dir() {
+  @os[windows] {
+    return;
+  }
+
+  const out = Command.new("pwd").current_dir("/").output().unwrap();
+
+  assert_eq(String.from(out.stdout.trim_end()), String.from("/"));
+}
+
+/// @test
+pub fn command_pipes_stdin() {
+  @os[windows] {
+    return;
+  }
+
+  let child = Command.new("cat").stdin(Stdio.Piped).stdout(Stdio.Piped).spawn().unwrap();
+
+  {
+    let writer = child.take_stdin().unwrap();
+
+    writer.write_all("piped-in\n").unwrap();
+  };
+
+  let reader = child.take_stdout().unwrap();
+  let back = String.new();
+
+  reader.read_to_string(&back).unwrap();
+  child.wait().unwrap();
+
+  assert_eq(String.from(back.trim_end()), String.from("piped-in"));
+}
+
+/// @test
+pub fn command_drains_large_output() {
+  @os[windows] {
+    return;
+  }
+
+  const out = Command.new("sh").arg("-c").arg("seq 1 30000; seq 1 30000 >&2").output().unwrap();
+
+  assert(out.stdout.len() > 100000);
+  assert(out.stderr.len() > 100000);
+}
+
+/// @test
+pub fn command_can_be_killed() {
+  @os[windows] {
+    return;
+  }
+
+  let child = Command.new("sleep").arg("30").spawn().unwrap();
+
+  assert(child.try_wait().unwrap().is_none());
+
+  child.kill().unwrap();
+
+  const done = child.wait().unwrap();
+
+  assert_eq(done.signal().unwrap_or(0), 15);
+}
+
+/// @test
+pub fn command_reports_missing_program() {
+  assert(Command.new("zeen-no-such-program-xyz").status().is_err());
+}
+
+/// @test
+pub fn command_can_be_reused() {
+  let command = Command.new("echo").arg("again");
+  const first = command.output().unwrap();
+  const second = command.output().unwrap();
+
+  assert_eq(String.from(first.stdout.trim_end()), String.from("again"));
+  assert_eq(String.from(second.stdout.trim_end()), String.from("again"));
+}
