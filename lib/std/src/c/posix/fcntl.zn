@@ -34,6 +34,10 @@ use std.c.types;
   pub const F_SETFL: c_int = 4;
   pub const FD_CLOEXEC: c_int = 1;
 
+  pub const SEEK_SET: c_int = 0;
+  pub const SEEK_CUR: c_int = 1;
+  pub const SEEK_END: c_int = 2;
+
   // `open` and `fcntl` are varargs: pass the optional `mode` only with `O_CREAT`.
   pub extern fn open(path: [*]const char, oflag: c_int, ...) c_int;
   pub extern fn fcntl(fd: c_int, cmd: c_int, ...) c_int;

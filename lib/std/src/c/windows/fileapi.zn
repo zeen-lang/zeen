@@ -97,6 +97,32 @@ use std.c.windows.windef;
     move_method: WinDWORD,
   ) WinDWORD;
 
+  pub struct c_LargeInteger {
+    pub low: WinDWORD,
+    pub high: c_long,
+  }
+
+  pub extern fn SetFilePointerEx(
+    handle: WinHANDLE,
+    distance: c_LargeInteger,
+    new_pos: *c_LargeInteger,
+    move_method: WinDWORD,
+  ) WinBOOL;
+
+  pub extern fn SetEndOfFile(handle: WinHANDLE) WinBOOL;
+
+  pub const DUPLICATE_SAME_ACCESS: WinDWORD = 0x00000002;
+
+  pub extern fn DuplicateHandle(
+    source_process: WinHANDLE,
+    source: WinHANDLE,
+    target_process: WinHANDLE,
+    target: *WinHANDLE,
+    access: WinDWORD,
+    inherit: WinBOOL,
+    options: WinDWORD,
+  ) WinBOOL;
+
   pub extern fn DeleteFileW(name: [*]const c_wchar_t) WinBOOL;
   pub extern fn DeleteFileA(name: [*]const c_char) WinBOOL;
   pub extern fn MoveFileW(existing: [*]const c_wchar_t, new_file: [*]const c_wchar_t) WinBOOL;

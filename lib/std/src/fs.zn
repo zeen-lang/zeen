@@ -11,6 +11,7 @@ use std.c.errno;
   use std.c.windows.windef;
   use std.c.windows.winbase;
   use std.c.windows.fileapi;
+  use std.c.windows.processthreadsapi;
 } else {
   use std.c.posix.fcntl;
   use std.c.posix.unistd;
@@ -23,6 +24,29 @@ fn cpath(path: []const char) String {
   let s = String.from(path);
   s.push('\0');
   s
+}
+
+/// Offset for `File.seek`.
+pub enum SeekFrom {
+  Start: u64,
+  End: i64,
+  Current: i64,
+}
+
+/// Kind of a filesystem entry.
+pub enum FileType {
+  File,
+  Dir,
+  Symlink,
+  Other,
+}
+
+@os[windows] {
+  fn filetime_seconds(value: c_FileTime) i64 {
+    const ticks = (@as(u64, value.high) << @as(u64, 32)) | @as(u64, value.low);
+
+    return @as(i64, ticks / 10000000) - 11644473600;
+  }
 }
 
 /// Owned file handle. Closes itself on drop.
@@ -346,6 +370,9 @@ implement File {
         ._is_file = true,
         ._is_symlink = false,
         ._mode = 0,
+        ._atime = 0,
+        ._mtime = 0,
+        ._ctime = 0,
       });
     } else {
       let st: c_Stat = @uninit();
@@ -356,6 +383,176 @@ implement File {
 
       return Result.Ok(metadata_of(&st));
     }
+  }
+
+  /// Move the read/write cursor.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.InvalidInput
+  /// * IoErrorKind.Uncategorized
+  pub fn seek(*self, from: SeekFrom) Result[u64, IoError] {
+    @os[windows] {
+      let method: WinDWORD = FILE_BEGIN;
+      let distance: i64 = 0;
+
+      switch (from) {
+        .Start(value) => {
+          distance = @as(i64, value);
+        },
+        .End(value) => {
+          method = FILE_END;
+          distance = value;
+        },
+        .Current(value) => {
+          method = FILE_CURRENT;
+          distance = value;
+        },
+      };
+
+      const move = c_LargeInteger {
+        .low = @as(WinDWORD, @as(u32, distance)),
+        .high = @as(c_long, distance >> @as(i64, 32)),
+      };
+      let out: c_LargeInteger = @uninit();
+
+      if (SetFilePointerEx(@as(WinHANDLE, self.handle), move, &out, method) == 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok((@as(u64, out.high) << @as(u64, 32)) | @as(u64, out.low));
+    } else {
+      let whence: c_int = SEEK_SET;
+      let offset: c_off_t = 0;
+
+      switch (from) {
+        .Start(value) => {
+          offset = @as(c_off_t, value);
+        },
+        .End(value) => {
+          whence = SEEK_END;
+          offset = @as(c_off_t, value);
+        },
+        .Current(value) => {
+          whence = SEEK_CUR;
+          offset = @as(c_off_t, value);
+        },
+      };
+
+      const pos = lseek(self.fd, offset, whence);
+
+      if (pos < 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(@as(u64, pos));
+    }
+  }
+
+  /// Truncate or extend the file to `size` bytes.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.PermissionDenied
+  /// * IoErrorKind.InvalidInput
+  /// * IoErrorKind.Uncategorized
+  pub fn set_len(*self, size: u64) Result[void, IoError] {
+    @os[windows] {
+      const distance: i64 = @as(i64, size);
+      const move = c_LargeInteger {
+        .low = @as(WinDWORD, @as(u32, distance)),
+        .high = @as(c_long, distance >> @as(i64, 32)),
+      };
+      let out: c_LargeInteger = @uninit();
+
+      if (SetFilePointerEx(@as(WinHANDLE, self.handle), move, &out, FILE_BEGIN) == 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      if (SetEndOfFile(@as(WinHANDLE, self.handle)) == 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(.{});
+    } else {
+      if (ftruncate(self.fd, @as(c_off_t, size)) != 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(.{});
+    }
+  }
+
+  /// Duplicate the handle, sharing the same open file.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.Uncategorized
+  pub fn try_clone(*const self) Result[File, IoError] {
+    @os[windows] {
+      let out: WinHANDLE = nullptr;
+      const process = GetCurrentProcess();
+
+      if (DuplicateHandle(process, @as(WinHANDLE, self.handle), process, &out, 0, 0, DUPLICATE_SAME_ACCESS) == 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(File { .fd = -1, .handle = @as(*void, out) });
+    } else {
+      const fd = dup(self.fd);
+
+      if (fd < 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(File { .fd = fd, .handle = nullptr });
+    }
+  }
+
+  /// Read up to and including the next newline, appending it to `buf`.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.Interrupted
+  /// * IoErrorKind.IsADirectory
+  /// * IoErrorKind.PermissionDenied
+  /// * IoErrorKind.Uncategorized
+  pub fn read_line(*self, buf: *String) Result[usize, IoError] {
+    let total: usize = 0;
+    let done = false;
+
+    while (!done) {
+      let chunk: [1]char = @uninit();
+
+      @os[windows] {
+        let got: WinDWORD = 0;
+        const ok = ReadFile(@as(WinHANDLE, self.handle), @as(*void, &chunk[0]), 1, &got, nullptr);
+
+        if (ok == 0) {
+          return Result.Err(IoError.last_os_error());
+        };
+
+        if (got == 0) {
+          return Result.Ok(total);
+        };
+
+        (*buf).push(chunk[0]);
+        total += 1;
+        done = chunk[0] == '\n';
+      } else {
+        const got = read(self.fd, @as(*void, &chunk[0]), 1);
+
+        if (got < 0) {
+          return Result.Err(IoError.last_os_error());
+        };
+
+        if (got == 0) {
+          return Result.Ok(total);
+        };
+
+        (*buf).push(chunk[0]);
+        total += 1;
+        done = chunk[0] == '\n';
+      }
+    };
+
+    return Result.Ok(total);
   }
 }
 
@@ -538,6 +735,9 @@ pub struct Metadata {
   _is_file: bool,
   _is_symlink: bool,
   _mode: u32,
+  _atime: i64,
+  _mtime: i64,
+  _ctime: i64,
 }
 
 implement Metadata {
@@ -570,6 +770,38 @@ implement Metadata {
   pub fn mode(*const self) u32 {
     self._mode
   }
+
+  /// Kind of the entry.
+  pub fn file_type(*const self) FileType {
+    if (self._is_dir) {
+      return FileType.Dir;
+    };
+
+    if (self._is_symlink) {
+      return FileType.Symlink;
+    };
+
+    if (self._is_file) {
+      return FileType.File;
+    };
+
+    return FileType.Other;
+  }
+
+  /// Last access time in seconds since the epoch.
+  pub fn accessed(*const self) i64 {
+    self._atime
+  }
+
+  /// Last modification time in seconds since the epoch.
+  pub fn modified(*const self) i64 {
+    self._mtime
+  }
+
+  /// Creation time in seconds since the epoch.
+  pub fn created(*const self) i64 {
+    self._ctime
+  }
 }
 
 @os[linux | android | darwin | freebsd] {
@@ -582,6 +814,9 @@ implement Metadata {
       ._is_file = kind == S_IFREG,
       ._is_symlink = kind == S_IFLNK,
       ._mode = @as(u32, (*st).st_mode),
+      ._atime = @as(i64, (*st).st_atime),
+      ._mtime = @as(i64, (*st).st_mtime),
+      ._ctime = @as(i64, (*st).st_ctime),
     }
   }
 }
@@ -650,6 +885,9 @@ pub struct Fs {
         ._is_file = !dir,
         ._is_symlink = false,
         ._mode = 0,
+        ._atime = filetime_seconds(data.accessed),
+        ._mtime = filetime_seconds(data.written),
+        ._ctime = filetime_seconds(data.created),
       });
     } else {
       let c = cpath(path);

@@ -15,6 +15,8 @@ use std.c.types;
   pub extern fn close(fd: c_int) c_int;
 
   pub extern fn dup(fd: c_int) c_int;
+  pub extern fn lseek(fd: c_int, offset: c_off_t, whence: c_int) c_off_t;
+  pub extern fn ftruncate(fd: c_int, length: c_off_t) c_int;
   pub extern fn dup2(src: c_int, dst: c_int) c_int;
   pub extern fn pipe(fds: *c_int) c_int;
 

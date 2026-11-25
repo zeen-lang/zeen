@@ -129,3 +129,85 @@ pub fn fs_reports_missing_file() {
   assert(missing.is_err());
   assert_eq(missing.unwrap_err().kind(), IoErrorKind.NotFound);
 }
+
+/// @test
+pub fn fs_seeks_and_truncates() {
+  @os[windows] {
+    return;
+  }
+
+  clean();
+  Fs.create_dir(base()).unwrap();
+  Fs.write(file(), "hello fs\nsecond\n").unwrap();
+
+  let handle = OpenOptions.new().read(true).write(true).open(file()).unwrap();
+
+  assert_eq(handle.seek(SeekFrom.Start(6)).unwrap(), @as(u64, 6));
+
+  let part = String.new();
+  assert_eq(handle.read_exact(&part, 2).unwrap(), @as(usize, 2));
+  assert_eq(part, String.from("fs"));
+
+  assert_eq(handle.seek(SeekFrom.End(-1)).unwrap(), @as(u64, 15));
+  assert_eq(handle.seek(SeekFrom.Current(-2)).unwrap(), @as(u64, 13));
+
+  handle.set_len(5).unwrap();
+  handle.sync_all().unwrap();
+  assert_eq(Fs.metadata(file()).unwrap().len(), @as(u64, 5));
+
+  clean();
+}
+
+/// @test
+pub fn fs_reads_lines() {
+  @os[windows] {
+    return;
+  }
+
+  clean();
+  Fs.create_dir(base()).unwrap();
+  Fs.write(file(), "hello fs\nsecond\n").unwrap();
+
+  let handle = File.open(file()).unwrap();
+  let line = String.new();
+
+  assert_eq(handle.read_line(&line).unwrap(), @as(usize, 9));
+  assert_eq(line, String.from("hello fs\n"));
+
+  let rest = String.new();
+  assert_eq(handle.read_line(&rest).unwrap(), @as(usize, 7));
+  assert_eq(rest, String.from("second\n"));
+
+  let end = String.new();
+  assert_eq(handle.read_line(&end).unwrap(), @as(usize, 0));
+
+  clean();
+}
+
+/// @test
+pub fn fs_reports_types_and_times() {
+  @os[windows] {
+    return;
+  }
+
+  clean();
+  Fs.create_dir(base()).unwrap();
+  Fs.write(file(), "hello").unwrap();
+
+  const meta = Fs.metadata(file()).unwrap();
+
+  assert(switch (meta.file_type()) {
+    .File => true,
+    _ => false,
+  });
+  assert(meta.modified() > 0);
+
+  let handle = File.open(file()).unwrap();
+  let clone = handle.try_clone().unwrap();
+  let buf = String.new();
+
+  assert_eq(clone.read_exact(&buf, 5).unwrap(), @as(usize, 5));
+  assert_eq(buf, String.from("hello"));
+
+  clean();
+}
