@@ -8,19 +8,77 @@ pub fn path_splits_posix_paths() {
     return;
   }
 
-  assert(Path.is_absolute("/a"));
-  assert(!Path.is_absolute("a"));
-  assert(!Path.is_absolute(""));
+  const file = Path.new("/a/b.txt");
+  const bare = Path.new("b.txt");
+  const trailing = Path.new("/a/");
 
-  const file: []const char = "/a/b.txt";
-  const bare: []const char = "b.txt";
-  const trailing: []const char = "/a/";
+  assert(file.is_absolute());
+  assert(!bare.is_absolute());
+  assert(!Path.new("").is_absolute());
 
-  assert_eq(String.from(Path.basename(&file)), String.from("b.txt"));
-  assert_eq(String.from(Path.basename(&bare)), String.from("b.txt"));
-  assert_eq(String.from(Path.basename(&trailing)), String.from("a"));
-  assert_eq(String.from(Path.dirname(&file)), String.from("/a"));
-  assert_eq(String.from(Path.dirname(&bare)), String.from(""));
+  assert_eq(String.from(file.file_name().unwrap()), String.from("b.txt"));
+  assert_eq(String.from(bare.file_name().unwrap()), String.from("b.txt"));
+  assert_eq(String.from(trailing.file_name().unwrap()), String.from("a"));
+  assert_eq(String.from(file.parent().unwrap().as_str()), String.from("/a"));
+  assert_eq(String.from(bare.parent().unwrap().as_str()), String.from(""));
+  assert(Path.new("/").parent().is_none());
+  assert(Path.new("..").file_name().is_none());
+}
+
+/// @test
+pub fn path_components_and_iter() {
+  @os[windows] {
+    return;
+  }
+
+  let comps = Path.new("/a/./b/../c").components();
+
+  assert(switch (comps.next().unwrap()) {
+    .RootDir => true,
+    _ => false,
+  });
+  assert(switch (comps.next().unwrap()) {
+    .Normal(raw) => raw == "a",
+    _ => false,
+  });
+  assert(switch (comps.next().unwrap()) {
+    .CurDir => true,
+    _ => false,
+  });
+  assert(switch (comps.next().unwrap()) {
+    .Normal(raw) => raw == "b",
+    _ => false,
+  });
+  assert(switch (comps.next().unwrap()) {
+    .ParentDir => true,
+    _ => false,
+  });
+  assert(switch (comps.next().unwrap()) {
+    .Normal(raw) => raw == "c",
+    _ => false,
+  });
+  assert(comps.next().is_none());
+
+  let raw = Path.new("/a//b").iter();
+
+  assert_eq(String.from(raw.next().unwrap()), String.from("/"));
+  assert_eq(String.from(raw.next().unwrap()), String.from("a"));
+  assert_eq(String.from(raw.next().unwrap()), String.from("b"));
+  assert(raw.next().is_none());
+}
+
+/// @test
+pub fn path_ancestors() {
+  @os[windows] {
+    return;
+  }
+
+  let anc = Path.new("/a/b").ancestors();
+
+  assert_eq(String.from(anc.next().unwrap().as_str()), String.from("/a/b"));
+  assert_eq(String.from(anc.next().unwrap().as_str()), String.from("/a"));
+  assert_eq(String.from(anc.next().unwrap().as_str()), String.from("/"));
+  assert(anc.next().is_none());
 }
 
 /// @test
@@ -29,24 +87,81 @@ pub fn path_joins_and_normalizes() {
     return;
   }
 
-  assert_eq(Path.join("a", "b"), String.from("a/b"));
-  assert_eq(Path.join("a/", "/b"), String.from("a/b"));
-  assert_eq(Path.normalize("/a//./b/../c"), String.from("/a/c"));
+  assert_eq(Path.new("a").join("b").into_string(), String.from("a/b"));
+  assert_eq(Path.new("a/").join("b").into_string(), String.from("a/b"));
+  assert_eq(Path.new("a").join("/b").into_string(), String.from("/b"));
+  assert_eq(Path.new("/a//./b/../c").normalize().into_string(), String.from("/a/c"));
+  assert_eq(Path.new("a/../../b").normalize().into_string(), String.from("../b"));
+  assert_eq(Path.new("/..").normalize().into_string(), String.from("/"));
 }
 
 /// @test
-pub fn path_reads_extension() {
+pub fn path_reads_extension_and_stem() {
   @os[windows] {
     return;
   }
 
-  const file: []const char = "/a/b.txt";
-  const bare: []const char = "b.txt";
-  const extension = Path.extension(&file);
-  const bare_extension = Path.extension(&bare);
+  assert_eq(String.from(Path.new("/a/b.txt").extension().unwrap()), String.from("txt"));
+  assert_eq(String.from(Path.new("foo.tar.gz").extension().unwrap()), String.from("gz"));
+  assert_eq(String.from(Path.new("foo.").extension().unwrap()), String.from(""));
+  assert(Path.new(".gitignore").extension().is_none());
+  assert(Path.new("foo").extension().is_none());
 
-  assert(extension.is_some());
-  assert_eq(String.from(extension.unwrap()), String.from("txt"));
-  assert(bare_extension.is_some());
-  assert_eq(String.from(bare_extension.unwrap()), String.from("txt"));
+  assert_eq(String.from(Path.new("foo.tar.gz").file_stem().unwrap()), String.from("foo.tar"));
+  assert_eq(String.from(Path.new(".gitignore").file_stem().unwrap()), String.from(".gitignore"));
+  assert_eq(String.from(Path.new("foo").file_stem().unwrap()), String.from("foo"));
+  assert(Path.new("/").file_stem().is_none());
+}
+
+/// @test
+pub fn path_compares_components() {
+  @os[windows] {
+    return;
+  }
+
+  assert(Path.new("/a/b").starts_with("/a"));
+  assert(Path.new("/a/b").starts_with("/"));
+  assert(!Path.new("/a/b").starts_with("/b"));
+  assert(!Path.new("a/b").starts_with("/a"));
+  assert(!Path.new("/a/b").starts_with("/a/b/c"));
+
+  assert(Path.new("/a/b").ends_with("b"));
+  assert(Path.new("/a/b").ends_with("a/b"));
+  assert(!Path.new("/a/b").ends_with("a"));
+
+  assert_eq(String.from(Path.new("/a/b").strip_prefix("/a").unwrap().as_str()), String.from("b"));
+  assert_eq(String.from(Path.new("/a/b").strip_prefix("/a/b").unwrap().as_str()), String.from(""));
+  assert_eq(String.from(Path.new("/a/b").strip_prefix("/").unwrap().as_str()), String.from("a/b"));
+  assert(Path.new("/a/b").strip_prefix("/c").is_none());
+}
+
+/// @test
+pub fn path_rewrites_names() {
+  @os[windows] {
+    return;
+  }
+
+  assert_eq(Path.new("/a/b.txt").with_file_name("c.rs").into_string(), String.from("/a/c.rs"));
+  assert_eq(Path.new("b.txt").with_file_name("c.rs").into_string(), String.from("c.rs"));
+  assert_eq(Path.new("/a/b.txt").with_extension("rs").into_string(), String.from("/a/b.rs"));
+  assert_eq(Path.new("foo.tar.gz").with_extension("xz").into_string(), String.from("foo.tar.xz"));
+  assert_eq(Path.new("foo.rs").with_extension("").into_string(), String.from("foo"));
+  assert_eq(Path.new(".gitignore").with_extension("txt").into_string(), String.from(".gitignore.txt"));
+}
+
+/// @test
+pub fn path_buf_pushes_parts() {
+  @os[windows] {
+    return;
+  }
+
+  let buf = PathBuf.new();
+
+  buf.push("a");
+  buf.push("b");
+  assert_eq(String.from(buf.as_str()), String.from("a/b"));
+  buf.push("/c");
+  assert_eq(String.from(buf.as_str()), String.from("/c"));
+  assert_eq(PathBuf.from("a").join("b").into_string(), String.from("a/b"));
+  assert_eq(Path.new("a/b").to_path_buf().into_string(), String.from("a/b"));
 }

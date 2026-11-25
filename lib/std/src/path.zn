@@ -1,178 +1,623 @@
 use std.string;
 use std.collections.list;
 
-/// Portable path helpers.
+fn is_sep(c: char) bool {
+  @os[windows] {
+    return c == '/' || c == '\\';
+  } else {
+    return c == '/';
+  }
+}
+
+fn sep() char {
+  @os[windows] {
+    return '\\';
+  } else {
+    return '/';
+  }
+}
+
+fn has_prefix(raw: []const char) bool {
+  @os[windows] {
+    return raw.len >= 2 && raw[1] == ':' && raw[0].is_ascii_alphabetic();
+  } else {
+    return false;
+  }
+}
+
+fn raw_is_absolute(raw: []const char) bool {
+  @os[windows] {
+    if (has_prefix(raw)) {
+      return raw.len > 2 && is_sep(raw[2]);
+    };
+  }
+
+  return raw.len > 0 && is_sep(raw[0]);
+}
+
+fn component_eq(a: []const char, b: []const char) bool {
+  if (a.len == 1 && b.len == 1 && is_sep(a[0]) && is_sep(b[0])) {
+    return true;
+  };
+
+  return a == b;
+}
+
+fn component_count(raw: []const char) usize {
+  let it = RawComponents.new(raw);
+  let count: usize = 0;
+
+  while (it.next().is_some()) {
+    count += 1;
+  };
+
+  return count;
+}
+
 pub struct Path {
-  fn is_sep(c: char) bool {
-    @os[windows] {
-      return c == '/' || c == '\\';
-    } else {
-      return c == '/';
-    }
+  _raw: []const char,
+}
+
+implement Path {
+  pub fn new(raw: []const char) Self {
+    return Self { ._raw = raw };
   }
 
-  fn sep() char {
-    @os[windows] {
-      return '\\';
-    } else {
-      return '/';
-    }
+  pub fn as_str(*const self) []const char {
+    return self._raw;
   }
 
-  /// Absolute path check.
-  pub fn is_absolute(path: []const char) bool {
-    if (path.len == 0) {
-      return false;
+  pub fn is_absolute(*const self) bool {
+    return raw_is_absolute(self._raw);
+  }
+
+  pub fn is_relative(*const self) bool {
+    return !raw_is_absolute(self._raw);
+  }
+
+  pub fn parent(*const self) Option[Path] {
+    let end = self._raw.len;
+
+    while (end > 0 && is_sep(self._raw[end - 1])) {
+      end -= 1;
     };
 
-    @os[windows] {
-      if (path.len >= 2 && path[1] == ':') {
-        return true;
-      };
-    }
-
-    return Path.is_sep(path[0]);
-  }
-
-  /// File name without directories, without trailing separators.
-  pub fn basename(path: *[]const char) []const char {
-    const total = (*path).len;
-    let end = total;
-    while (end > 0 && Path.is_sep((*path)[end - 1])) {
-      end -= 1;
-    }
-
-    let i = end;
-    while (i > 0 && !Path.is_sep((*path)[i - 1])) {
-      i -= 1;
-    }
-
-    return (*path)[i..end];
-  }
-
-  /// Directory part without the file name.
-  pub fn dirname(path: *[]const char) []const char {
-    const total = (*path).len;
-    let end = total;
-    while (end > 0 && Path.is_sep((*path)[end - 1])) {
-      end -= 1;
-    }
-
-    let i = end;
-    while (i > 0 && !Path.is_sep((*path)[i - 1])) {
-      i -= 1;
-    }
-
-    if (i == 0) {
-      return "";
-    };
-
-    if (i == 1 && Path.is_sep((*path)[0])) {
-      return (*path)[0..1];
-    };
-
-    return (*path)[0..i - 1];
-  }
-
-  /// Extension without the dot, `None` when missing.
-  pub fn extension(path: *[]const char) Option[[]const char] {
-    const total = (*path).len;
-
-    let end = total;
-    while (end > 0 && Path.is_sep((*path)[end - 1])) {
-      end -= 1;
-    }
-
-    let start = end;
-    while (start > 0 && !Path.is_sep((*path)[start - 1])) {
-      start -= 1;
-    }
-
-    let i = end;
-    while (i > start + 1 && (*path)[i - 1] != '.') {
-      i -= 1;
-    }
-
-    if (i <= start + 1) {
+    if (end == 0) {
       return Option.None;
     };
 
-    return Option.Some((*path)[i..end]);
-  }
-
-  /// Join two parts with a single separator.
-  pub fn join(a: []const char, b: []const char) String {
-    let out = String.from(a);
-
-    if (out.len() > 0 && b.len > 0) {
-      const back = out.len() - 1;
-
-      if (Path.is_sep(a[back])) {
-        let start: usize = 0;
-        while (start < b.len && Path.is_sep(b[start])) {
-          start += 1;
-        }
-        out.push_str(b[start..b.len]);
-      } else {
-        if (!Path.is_sep(b[0])) {
-          out.push(Path.sep());
-        };
-        out.push_str(b);
-      };
-    } else {
-      out.push_str(b);
+    let i = end;
+    while (i > 0 && !is_sep(self._raw[i - 1])) {
+      i -= 1;
     };
 
-    return out;
+    if (i == 0) {
+      return Option.Some(Path.new(""));
+    };
+
+    let at = i - 1;
+    if (at == 0) {
+      if (is_sep(self._raw[0])) {
+        return Option.Some(Path.new(self._raw[0..1]));
+      };
+
+      return Option.Some(Path.new(""));
+    };
+
+    while (at > 0 && is_sep(self._raw[at - 1])) {
+      at -= 1;
+    };
+
+    return Option.Some(Path.new(self._raw[0..at]));
   }
 
-  /// Collapse duplicate separators, single dots and parent markers.
-  pub fn normalize(path: []const char) String {
-    const rooted = Path.is_absolute(path);
-    let kept = List#[[]const char].new();
+  pub fn file_name(*const self) Option[[]const char] {
+    let end = self._raw.len;
+
+    while (end > 0 && is_sep(self._raw[end - 1])) {
+      end -= 1;
+    };
+
+    if (end == 0) {
+      return Option.None;
+    };
+
+    let start = end;
+    while (start > 0 && !is_sep(self._raw[start - 1])) {
+      start -= 1;
+    };
+
+    if (self._raw[start..end] == "." || self._raw[start..end] == "..") {
+      return Option.None;
+    };
+
+    return Option.Some(self._raw[start..end]);
+  }
+
+  pub fn file_stem(*const self) Option[[]const char] {
+    let end = self._raw.len;
+
+    while (end > 0 && is_sep(self._raw[end - 1])) {
+      end -= 1;
+    };
+
+    if (end == 0) {
+      return Option.None;
+    };
+
+    let start = end;
+    while (start > 0 && !is_sep(self._raw[start - 1])) {
+      start -= 1;
+    };
+
+    if (self._raw[start..end] == "." || self._raw[start..end] == "..") {
+      return Option.None;
+    };
+
+    let dot = end;
+    while (dot > start + 1 && self._raw[dot - 1] != '.') {
+      dot -= 1;
+    };
+
+    if (dot <= start + 1) {
+      return Option.Some(self._raw[start..end]);
+    };
+
+    return Option.Some(self._raw[start..dot - 1]);
+  }
+
+  pub fn extension(*const self) Option[[]const char] {
+    let end = self._raw.len;
+
+    while (end > 0 && is_sep(self._raw[end - 1])) {
+      end -= 1;
+    };
+
+    if (end == 0) {
+      return Option.None;
+    };
+
+    let start = end;
+    while (start > 0 && !is_sep(self._raw[start - 1])) {
+      start -= 1;
+    };
+
+    if (self._raw[start..end] == "." || self._raw[start..end] == "..") {
+      return Option.None;
+    };
+
+    let dot = end;
+    while (dot > start && self._raw[dot - 1] != '.') {
+      dot -= 1;
+    };
+
+    if (dot <= start + 1) {
+      return Option.None;
+    };
+
+    return Option.Some(self._raw[dot..end]);
+  }
+
+  pub fn join(*const self, other: []const char) PathBuf {
+    if (raw_is_absolute(other) || self._raw.len == 0) {
+      return PathBuf.from(other);
+    };
+
+    let out = String.from(self._raw);
+
+    if (!is_sep(self._raw[self._raw.len - 1])) {
+      out.push(sep());
+    };
+
+    out.push_str(other);
+    return PathBuf.from_string(out);
+  }
+
+  pub fn components(*const self) Components {
+    return Components.new(self._raw);
+  }
+
+  pub fn iter(*const self) RawComponents {
+    return RawComponents.new(self._raw);
+  }
+
+  pub fn ancestors(*const self) Ancestors {
+    return Ancestors.new(Path.new(self._raw));
+  }
+
+  pub fn starts_with(*const self, base: []const char) bool {
+    const count = component_count(base);
+    let mine = self.iter();
+    let theirs = RawComponents.new(base);
 
     let i: usize = 0;
-    while (i < path.len) {
-      while (i < path.len && Path.is_sep(path[i])) {
-        i += 1;
-      }
-
-      const start = i;
-      while (i < path.len && !Path.is_sep(path[i])) {
-        i += 1;
-      }
-
-      if (start < i) {
-        const part = path[start..i];
-        if (part == "..") {
-          if (kept.len() > 0) {
-            let _ = kept.pop();
-          } else if (!rooted) {
-            kept.push(part);
-          };
-        } else if (part != "." && part.len != 0) {
-          kept.push(part);
-        };
+    while (i < count) {
+      const item = mine.next();
+      if (item.is_none()) {
+        return false;
       };
-    }
 
-    let out = String.new();
-    if (rooted) {
-      out.push(Path.sep());
+      if (!component_eq(item.unwrap(), theirs.next().unwrap())) {
+        return false;
+      };
+
+      i += 1;
     };
 
-    let first = true;
-    let j: usize = 0;
-    while (j < kept.len()) {
-      if (!first) {
-        out.push(Path.sep());
+    return true;
+  }
+
+  pub fn ends_with(*const self, child: []const char) bool {
+    const mine_count = component_count(self._raw);
+    const child_count = component_count(child);
+
+    if (child_count > mine_count) {
+      return false;
+    };
+
+    const skip = mine_count - child_count;
+    let mine = self.iter();
+    let theirs = RawComponents.new(child);
+
+    let i: usize = 0;
+    while (i < skip) {
+      let _ = mine.next();
+      i += 1;
+    };
+
+    i = 0;
+    while (i < child_count) {
+      if (!component_eq(mine.next().unwrap(), theirs.next().unwrap())) {
+        return false;
       };
-      const part = kept.get_ptr(j).unwrap();
-      out.push_str(*part);
-      first = false;
-      j += 1;
+
+      i += 1;
+    };
+
+    return true;
+  }
+
+  pub fn strip_prefix(*const self, base: []const char) Option[Path] {
+    if (!self.starts_with(base)) {
+      return Option.None;
+    };
+
+    const count = component_count(base);
+    let it = self.iter();
+
+    let i: usize = 0;
+    while (i < count) {
+      let _ = it.next();
+      i += 1;
+    };
+
+    let start = it.offset();
+    while (start < self._raw.len && is_sep(self._raw[start])) {
+      start += 1;
+    };
+
+    let end = self._raw.len;
+    while (end > start && is_sep(self._raw[end - 1])) {
+      end -= 1;
+    };
+
+    return Option.Some(Path.new(self._raw[start..end]));
+  }
+
+  pub fn with_file_name(*const self, name: []const char) PathBuf {
+    const up = self.parent();
+    if (up.is_none()) {
+      return PathBuf.from(name);
+    };
+
+    return up.unwrap().join(name);
+  }
+
+  pub fn with_extension(*const self, ext: []const char) PathBuf {
+    const name = self.file_name();
+    if (name.is_none()) {
+      return self.to_path_buf();
+    };
+
+    const stem = self.file_stem().unwrap();
+    let out = String.new();
+    const up = self.parent();
+
+    if (up.is_some()) {
+      const base = up.unwrap().as_str();
+      if (base.len > 0) {
+        out.push_str(base);
+
+        if (!is_sep(base[base.len - 1])) {
+          out.push(sep());
+        };
+      };
+    };
+
+    out.push_str(stem);
+
+    if (ext.len > 0) {
+      out.push('.');
+      out.push_str(ext);
+    };
+
+    return PathBuf.from_string(out);
+  }
+
+  pub fn to_path_buf(*const self) PathBuf {
+    return PathBuf.from(self._raw);
+  }
+
+  pub fn normalize(*const self) PathBuf {
+    const raw = self._raw;
+    const rooted = raw_is_absolute(raw);
+    let prefix: []const char = "";
+
+    @os[windows] {
+      if (has_prefix(raw)) {
+        prefix = raw[0..2];
+      };
     }
 
-    return out;
+    let kept = List#[[]const char].new();
+    let it = self.iter();
+    let part = it.next();
+
+    while (part.is_some()) {
+      const value = part.unwrap();
+
+      if (value.len == 1 && is_sep(value[0])) {
+        part = it.next();
+        continue;
+      };
+
+      if (value == "..") {
+        if (kept.len() > 0) {
+          const last = *kept.get_ptr(kept.len() - 1).unwrap();
+
+          if (last == "..") {
+            kept.push(value);
+          } else {
+            let _ = kept.pop();
+          };
+        } else if (!rooted) {
+          kept.push(value);
+        };
+      } else if (value != ".") {
+        kept.push(value);
+      };
+
+      part = it.next();
+    };
+
+    let out = String.new();
+
+    if (prefix.len > 0) {
+      out.push_str(prefix);
+    };
+
+    if (rooted) {
+      out.push(sep());
+    };
+
+    let i: usize = 0;
+    while (i < kept.len()) {
+      if (i > 0) {
+        out.push(sep());
+      };
+
+      out.push_str(*kept.get_ptr(i).unwrap());
+      i += 1;
+    };
+
+    return PathBuf.from_string(out);
+  }
+}
+
+pub struct PathBuf {
+  _raw: String,
+}
+
+implement PathBuf {
+  pub fn new() Self {
+    return Self { ._raw = String.new() };
+  }
+
+  pub fn from(raw: []const char) Self {
+    return Self { ._raw = String.from(raw) };
+  }
+
+  pub fn from_string(raw: String) Self {
+    return Self { ._raw = raw };
+  }
+
+  pub fn as_path(*const self) Path {
+    return Path.new(self.bytes());
+  }
+
+  pub fn as_str(*const self) []const char {
+    return self.bytes();
+  }
+
+  fn bytes(*const self) []const char {
+    return self._raw.slice(..);
+  }
+
+  pub fn into_string(*self) String {
+    return self._raw;
+  }
+
+  pub fn push(*self, part: []const char) {
+    if (part.len == 0) {
+      return;
+    };
+
+    if (self._raw.len() == 0) {
+      self._raw.push_str(part);
+      return;
+    };
+
+    if (raw_is_absolute(part)) {
+      self._raw.clear();
+      self._raw.push_str(part);
+      return;
+    };
+
+    const current = self.bytes();
+
+    if (!is_sep(current[current.len - 1])) {
+      self._raw.push(sep());
+    };
+
+    self._raw.push_str(part);
+  }
+
+  pub fn join(*const self, part: []const char) PathBuf {
+    return self.as_path().join(part);
+  }
+}
+
+pub enum Component {
+  Prefix: []const char,
+  RootDir,
+  CurDir,
+  ParentDir,
+  Normal: []const char,
+}
+
+pub struct RawComponents {
+  _raw: []const char,
+  _index: usize,
+  _prefix_done: bool,
+  _root_done: bool,
+}
+
+implement RawComponents {
+  pub fn new(raw: []const char) Self {
+    return Self { ._raw = raw, ._index = 0, ._prefix_done = false, ._root_done = false };
+  }
+
+  pub fn offset(*const self) usize {
+    return self._index;
+  }
+}
+
+implement Iterator : RawComponents {
+  alias Item = []const char;
+
+  pub fn next(*self) Option[[]const char] {
+    if (!self._prefix_done) {
+      self._prefix_done = true;
+
+      if (has_prefix(self._raw)) {
+        self._index = 2;
+        return Option.Some(self._raw[0..2]);
+      };
+    };
+
+    if (!self._root_done) {
+      self._root_done = true;
+
+      if (self._index < self._raw.len && is_sep(self._raw[self._index])) {
+        const at = self._index;
+
+        while (self._index < self._raw.len && is_sep(self._raw[self._index])) {
+          self._index += 1;
+        };
+
+        return Option.Some(self._raw[at..at + 1]);
+      };
+    };
+
+    while (self._index < self._raw.len && is_sep(self._raw[self._index])) {
+      self._index += 1;
+    };
+
+    if (self._index >= self._raw.len) {
+      return Option.None;
+    };
+
+    const start = self._index;
+    while (self._index < self._raw.len && !is_sep(self._raw[self._index])) {
+      self._index += 1;
+    };
+
+    return Option.Some(self._raw[start..self._index]);
+  }
+}
+
+pub struct Components {
+  _inner: RawComponents,
+  _first: bool,
+}
+
+implement Components {
+  pub fn new(raw: []const char) Self {
+    return Self { ._inner = RawComponents.new(raw), ._first = true };
+  }
+}
+
+implement Iterator : Components {
+  alias Item = Component;
+
+  pub fn next(*self) Option[Component] {
+    const part = self._inner.next();
+    if (part.is_none()) {
+      return Option.None;
+    };
+
+    const raw = part.unwrap();
+    const first = self._first;
+    self._first = false;
+
+    if (first && has_prefix(raw)) {
+      return Option.Some(Component.Prefix(raw));
+    };
+
+    if (raw.len == 1 && is_sep(raw[0])) {
+      return Option.Some(Component.RootDir);
+    };
+
+    if (raw == ".") {
+      return Option.Some(Component.CurDir);
+    };
+
+    if (raw == "..") {
+      return Option.Some(Component.ParentDir);
+    };
+
+    return Option.Some(Component.Normal(raw));
+  }
+}
+
+pub struct Ancestors {
+  _current: Path,
+  _done: bool,
+}
+
+implement Ancestors {
+  pub fn new(path: Path) Self {
+    return Self { ._current = path, ._done = false };
+  }
+}
+
+implement Iterator : Ancestors {
+  alias Item = Path;
+
+  pub fn next(*self) Option[Path] {
+    if (self._done) {
+      return Option.None;
+    };
+
+    const out = self._current;
+    const up = out.parent();
+
+    if (up.is_some()) {
+      self._current = up.unwrap();
+    } else {
+      self._done = true;
+    };
+
+    return Option.Some(out);
   }
 }
