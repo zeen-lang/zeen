@@ -171,13 +171,13 @@ pub struct PipeReader {
   pub handle: *void,
 }
 
-implement PipeReader {
-  /// Reads the rest of the pipe into `out`.
-  pub fn read_to_string(*self, out: *String) Result[usize, IoError] {
+implement Read : PipeReader {
+  /// Reads some bytes into `buf`. `Ok(0)` means the pipe is closed.
+  fn read(*self, buf: []char) Result[usize, IoError] {
     @os[windows] {
-      return read_handle_to_string(self.handle, out);
+      return read_handle_some(self.handle, buf);
     } else {
-      return read_fd_to_string(self.fd, out);
+      return read_fd_some(self.fd, buf);
     }
   }
 }
@@ -885,6 +885,30 @@ fn merged_env(cmd: *const Command) List[String] {
     return Result.Ok(fd);
   }
 
+  fn read_fd_some(fd: c_int, buf: []char) Result[usize, IoError] {
+    if (buf.len == 0) {
+      return Result.Ok(@as(usize, 0));
+    };
+
+    while (true) {
+      const got = read(fd, @as(*void, buf.ptr), buf.len);
+
+      if (got < 0) {
+        const err_slot = __errno_location();
+
+        if (*err_slot == EINTR) {
+          continue;
+        };
+
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(@as(usize, got));
+    };
+
+    return Result.Ok(@as(usize, 0));
+  }
+
   fn read_fd_to_string(fd: c_int, out: *String) Result[usize, IoError] {
     let total: usize = 0;
 
@@ -1350,6 +1374,25 @@ fn merged_env(cmd: *const Command) List[String] {
     };
 
     return Result.Ok(h);
+  }
+
+  fn read_handle_some(handle: *void, buf: []char) Result[usize, IoError] {
+    if (buf.len == 0) {
+      return Result.Ok(@as(usize, 0));
+    };
+
+    let got: WinDWORD = 0;
+    let ok = ReadFile(@as(WinHANDLE, handle), @as(*void, buf.ptr), @as(WinDWORD, buf.len), &got, nullptr);
+
+    if (ok == WinFALSE) {
+      if (GetLastError() == ERROR_BROKEN_PIPE) {
+        return Result.Ok(@as(usize, 0));
+      };
+
+      return Result.Err(IoError.last_os_error());
+    };
+
+    return Result.Ok(@as(usize, got));
   }
 
   fn read_handle_to_string(handle: *void, out: *String) Result[usize, IoError] {

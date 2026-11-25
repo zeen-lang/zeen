@@ -742,10 +742,14 @@ implement HttpServer {
     let head = String.new();
 
     while (true) {
-      switch ((*stream).read(&head)) {
+      let chunk: [256]char = @uninit();
+
+      switch ((*stream).read(chunk[..])) {
         .Ok(got) => if (got == 0) {
           break;
-        } else {},
+        } else {
+          head.push_str(chunk[0..got]);
+        },
         .Err(e) => {
           return Result.Err(e);
         },
