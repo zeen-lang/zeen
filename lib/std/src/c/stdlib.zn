@@ -80,3 +80,8 @@ pub extern fn llabs(n: c_longlong) c_longlong;
   pub extern fn arc4random_buf(buf: *void, size: c_size_t) void;
   pub extern fn arc4random_uniform(upper_bound: c_uint) c_uint;
 }
+
+// getrandom: linux and android libc.
+@os[linux | android] {
+  pub extern fn getrandom(buf: *void, buflen: c_size_t, flags: c_uint) c_ssize_t;
+}

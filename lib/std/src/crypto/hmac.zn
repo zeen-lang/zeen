@@ -1,0 +1,193 @@
+use std.crypto.sha256;
+use std.crypto.sha512;
+use std.crypto.util;
+
+fn pad_key256(key: []const char) [64]char {
+  let block: [64]char = {'\0'; 64};
+
+  if (key.len > 64) {
+    const hashed = Sha256.digest(key);
+    let i: usize = 0;
+
+    while (i < 32) {
+      block[i] = hashed[i];
+      i += 1;
+    };
+  } else {
+    let i: usize = 0;
+
+    while (i < key.len) {
+      block[i] = key[i];
+      i += 1;
+    };
+  };
+
+  return block;
+}
+
+fn pad_key512(key: []const char) [128]char {
+  let block: [128]char = {'\0'; 128};
+
+  if (key.len > 128) {
+    const hashed = Sha512.digest(key);
+    let i: usize = 0;
+
+    while (i < 64) {
+      block[i] = hashed[i];
+      i += 1;
+    };
+  } else {
+    let i: usize = 0;
+
+    while (i < key.len) {
+      block[i] = key[i];
+      i += 1;
+    };
+  };
+
+  return block;
+}
+
+fn xor_pad256(key: [64]char, pad: u8) [64]char {
+  let out: [64]char = {'\0'; 64};
+  let i: usize = 0;
+
+  while (i < 64) {
+    out[i] = @as(char, @as(u8, key[i]) ^ pad);
+    i += 1;
+  };
+
+  return out;
+}
+
+fn xor_pad512(key: [128]char, pad: u8) [128]char {
+  let out: [128]char = {'\0'; 128};
+  let i: usize = 0;
+
+  while (i < 128) {
+    out[i] = @as(char, @as(u8, key[i]) ^ pad);
+    i += 1;
+  };
+
+  return out;
+}
+
+/// HMAC-SHA-256 (RFC 2104), streaming and one-shot.
+pub struct HmacSha256 {
+  _key: [64]char,
+  _inner: Sha256,
+}
+
+implement HmacSha256 {
+  /// Starts a MAC with `key`.
+  pub fn new(key: []const char) Self {
+    const block = pad_key256(key);
+    let mac = Self { ._key = block, ._inner = Sha256.new() };
+
+    mac.reset();
+    return mac;
+  }
+
+  /// Absorbs a chunk of the message.
+  pub fn update(*self, data: []const char) {
+    self._inner.update(data);
+  }
+
+  /// Returns the tag and restores the initial state.
+  pub fn finalize(*self) [32]char {
+    const inner = self._inner.finalize();
+    const opad = xor_pad256(self._key, 92);
+    let outer = Sha256.new();
+
+    outer.update(opad[..]);
+    outer.update(inner[..]);
+
+    const out = outer.finalize();
+
+    self.reset();
+    return out;
+  }
+
+  /// Restores the initial state, keeping the key.
+  pub fn reset(*self) {
+    const ipad = xor_pad256(self._key, 54);
+
+    self._inner = Sha256.new();
+    self._inner.update(ipad[..]);
+  }
+
+  /// One-shot tag of `data`.
+  pub fn digest(key: []const char, data: []const char) [32]char {
+    let mac = HmacSha256.new(key);
+
+    mac.update(data);
+    return mac.finalize();
+  }
+
+  /// Checks `tag` against the one-shot tag of `data` in constant time.
+  pub fn verify(key: []const char, data: []const char, tag: []const char) bool {
+    const out = HmacSha256.digest(key, data);
+
+    return constant_time_eq(out[..], tag);
+  }
+}
+
+/// HMAC-SHA-512 (RFC 2104), streaming and one-shot.
+pub struct HmacSha512 {
+  _key: [128]char,
+  _inner: Sha512,
+}
+
+implement HmacSha512 {
+  /// Starts a MAC with `key`.
+  pub fn new(key: []const char) Self {
+    const block = pad_key512(key);
+    let mac = Self { ._key = block, ._inner = Sha512.new() };
+
+    mac.reset();
+    return mac;
+  }
+
+  /// Absorbs a chunk of the message.
+  pub fn update(*self, data: []const char) {
+    self._inner.update(data);
+  }
+
+  /// Returns the tag and restores the initial state.
+  pub fn finalize(*self) [64]char {
+    const inner = self._inner.finalize();
+    const opad = xor_pad512(self._key, 92);
+    let outer = Sha512.new();
+
+    outer.update(opad[..]);
+    outer.update(inner[..]);
+
+    const out = outer.finalize();
+
+    self.reset();
+    return out;
+  }
+
+  /// Restores the initial state, keeping the key.
+  pub fn reset(*self) {
+    const ipad = xor_pad512(self._key, 54);
+
+    self._inner = Sha512.new();
+    self._inner.update(ipad[..]);
+  }
+
+  /// One-shot tag of `data`.
+  pub fn digest(key: []const char, data: []const char) [64]char {
+    let mac = HmacSha512.new(key);
+
+    mac.update(data);
+    return mac.finalize();
+  }
+
+  /// Checks `tag` against the one-shot tag of `data` in constant time.
+  pub fn verify(key: []const char, data: []const char, tag: []const char) bool {
+    const out = HmacSha512.digest(key, data);
+
+    return constant_time_eq(out[..], tag);
+  }
+}

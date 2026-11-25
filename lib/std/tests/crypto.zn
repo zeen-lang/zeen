@@ -1,6 +1,9 @@
 use std.crypto.hash;
+use std.crypto.hmac;
+use std.crypto.random;
 use std.crypto.sha256;
 use std.crypto.sha512;
+use std.crypto.util;
 use std.string;
 use std.testing;
 
@@ -58,4 +61,113 @@ pub fn sha512_streaming_matches_one_shot() {
   const out = hasher.finalize();
 
   assert_eq(Hashing.hexdigest(out[..]), String.from("ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"));
+}
+
+/// @test
+pub fn hmac_sha256_rfc4231() {
+  const tag = HmacSha256.digest("Jefe", "what do ya want for nothing?");
+
+  assert_eq(Hashing.hexdigest(tag[..]), String.from("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"));
+  assert(HmacSha256.verify("Jefe", "what do ya want for nothing?", tag[..]));
+  assert(!HmacSha256.verify("Jefe", "what do ya want for nothing", tag[..]));
+}
+
+/// @test
+pub fn hmac_sha512_rfc4231() {
+  const tag = HmacSha512.digest("Jefe", "what do ya want for nothing?");
+
+  assert_eq(Hashing.hexdigest(tag[..]), String.from("164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737"));
+  assert(HmacSha512.verify("Jefe", "what do ya want for nothing?", tag[..]));
+}
+
+/// @test
+pub fn hmac_long_key_is_hashed() {
+  let key: [131]char = {'\0'; 131};
+  let i: usize = 0;
+
+  while (i < 131) {
+    key[i] = @as(char, 170);
+    i += 1;
+  };
+
+  const tag256 = HmacSha256.digest(key[..], "Test Using Larger Than Block-Size Key - Hash Key First");
+  const tag512 = HmacSha512.digest(key[..], "Test Using Larger Than Block-Size Key - Hash Key First");
+
+  assert_eq(Hashing.hexdigest(tag256[..]), String.from("60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"));
+  assert_eq(Hashing.hexdigest(tag512[..]), String.from("80b24263c7c1a3ebb71493c1dd7be8b49b46d1f41b4aeec1121b013783f8f3526b56d037e05f2598bd0fd2215d6a1e5295e64f73f63f0aec8b915a985d786598"));
+}
+
+/// @test
+pub fn hmac_streaming_matches_one_shot() {
+  let mac = HmacSha512.new("Jefe");
+
+  mac.update("what do ya want ");
+  mac.update("for nothing?");
+
+  const out = mac.finalize();
+
+  assert_eq(Hashing.hexdigest(out[..]), String.from("164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737"));
+}
+
+/// @test
+pub fn crypto_util_helpers() {
+  assert(constant_time_eq("abc", "abc"));
+  assert(!constant_time_eq("abc", "abd"));
+  assert(!constant_time_eq("abc", "ab"));
+
+  let buf: [4]char = {'a', 'b', 'c', 'd'};
+
+  secure_zero(buf[..]);
+  assert(buf[0] == '\0');
+  assert(buf[3] == '\0');
+}
+
+/// @test
+pub fn crypto_random_fills_bytes() {
+  let a: [32]char = {'\0'; 32};
+  let b: [32]char = {'\0'; 32};
+  const zeros: [32]char = {'\0'; 32};
+
+  Random.fill_bytes(a[..]);
+  Random.fill_bytes(b[..]);
+
+  assert(!constant_time_eq(a[..], zeros[..]));
+  assert(!constant_time_eq(a[..], b[..]));
+  assert(Random.next_u64() != Random.next_u64());
+}
+
+/// @test
+pub fn crypto_random_ranges() {
+  assert(Random.below(1) == 0);
+  assert(Random.int_range(5, 6) == 5);
+
+  let i: usize = 0;
+
+  while (i < 256) {
+    assert(Random.below(10) < 10);
+    assert(Random.below(4294967296) < 4294967296);
+
+    const value = Random.int_range(7, 11);
+
+    assert(value >= 7);
+    assert(value < 11);
+    i += 1;
+  };
+}
+
+/// @test
+pub fn crypto_random_shuffle_keeps_elements() {
+  let items: [8]i32 = {1, 2, 3, 4, 5, 6, 7, 8};
+
+  Random.shuffle(items[..]);
+
+  let sum: i32 = 0;
+  let i: usize = 0;
+
+  while (i < 8) {
+    sum += items[i];
+    i += 1;
+  };
+
+  assert_eq(sum, 36);
 }

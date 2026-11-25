@@ -1,4 +1,5 @@
 use std.encoding.hex;
+use std.crypto.util;
 
 /// Error raised by a failed cryptographic check.
 pub enum CryptoError {
@@ -29,18 +30,6 @@ pub struct Hashing {
 
   /// Compares two byte strings in constant time.
   pub fn digest_eq(a: []const char, b: []const char) bool {
-    if (a.len != b.len) {
-      return false;
-    };
-
-    let diff: u8 = 0;
-    let i: usize = 0;
-
-    while (i < a.len) {
-      diff |= @as(u8, a[i]) ^ @as(u8, b[i]);
-      i += 1;
-    };
-
-    return diff == 0;
+    return constant_time_eq(a, b);
   }
 }

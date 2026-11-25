@@ -1,0 +1,21 @@
+/// Compares two byte strings in constant time.
+pub fn constant_time_eq(a: []const char, b: []const char) bool {
+  if (a.len != b.len) {
+    return false;
+  };
+
+  let diff: u8 = 0;
+  let i: usize = 0;
+
+  while (i < a.len) {
+    diff |= @as(u8, a[i]) ^ @as(u8, b[i]);
+    i += 1;
+  };
+
+  return diff == 0;
+}
+
+/// Overwrites `buf` with zeros.
+pub fn secure_zero(buf: []char) void {
+  @memset(buf, 0);
+}

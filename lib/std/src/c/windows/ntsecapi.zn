@@ -1,0 +1,5 @@
+use std.c.types;
+
+@os[windows] {
+  pub extern fn SystemFunction036(buffer: *void, length: c_ulong) c_uchar;
+}

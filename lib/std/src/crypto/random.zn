@@ -1,0 +1,96 @@
+use std.c.types;
+use std.c.stdlib;
+
+@os[windows] {
+  use std.c.windows.ntsecapi;
+}
+
+/// Cryptographically secure random numbers from the operating system.
+pub struct Random {
+  /// Fills `buf` with random bytes.
+  pub fn fill_bytes(buf: []char) void {
+    if (buf.len == 0) {
+      return;
+    };
+
+    @os[windows] {
+      if (SystemFunction036(@as(*void, &buf[0]), @as(c_ulong, buf.len)) == 0) {
+        @panic("system random source failed");
+      };
+    } else {
+      @os[linux | android] {
+        let filled: usize = 0;
+
+        while (filled < buf.len) {
+          const got = getrandom(@as(*void, &buf[filled]), buf.len - filled, 0);
+
+          if (got <= 0) {
+            @panic("system random source failed");
+          };
+
+          filled += @as(usize, got);
+        };
+      } else {
+        arc4random_buf(@as(*void, &buf[0]), buf.len);
+      }
+    }
+  }
+
+  /// Random `u64`.
+  pub fn next_u64() u64 {
+    let bytes: [8]char = {'\0'; 8};
+
+    Random.fill_bytes(bytes[..]);
+
+    let value: u64 = 0;
+    let i: usize = 0;
+
+    while (i < 8) {
+      value = (value << 8) | @as(u64, bytes[i]);
+      i += 1;
+    };
+
+    return value;
+  }
+
+  /// Random `u32`.
+  pub fn next_u32() u32 {
+    return @as(u32, Random.next_u64() >> 32);
+  }
+
+  /// Uniform value in `[0, upper)`, no modulo bias.
+  pub fn below(upper: u64) u64 {
+    if (upper <= 1) {
+      return 0;
+    };
+
+    const tail = (@as(u64, 0) - upper) % upper;
+    let value = Random.next_u64();
+
+    while (value < tail) {
+      value = Random.next_u64();
+    };
+
+    return value % upper;
+  }
+
+  /// Uniform value in `[from, to)`.
+  pub fn int_range(from: u64, to: u64) u64 {
+    return from + Random.below(to - from);
+  }
+
+  /// Shuffles `items` in place.
+  pub fn shuffle[T](items: []T) void {
+    let i = items.len;
+
+    while (i > 1) {
+      i -= 1;
+
+      const j = @as(usize, Random.below(@as(u64, i + 1)));
+      const temp: T = items[i];
+
+      items[i] = items[j];
+      items[j] = temp;
+    };
+  }
+}
