@@ -1,0 +1,63 @@
+use std.rand;
+use std.testing;
+
+/// @test
+pub fn c_rand_is_deterministic() {
+  @os[windows] {
+    return;
+  }
+
+  Rand.seed(42);
+  const a = Rand.next_u32();
+  const b = Rand.next_u32();
+
+  Rand.seed(42);
+  assert_eq(a, Rand.next_u32());
+  assert_eq(b, Rand.next_u32());
+  assert(Rand.below(100) < 100);
+}
+
+/// @test
+pub fn rng_seed_repeats_sequence() {
+  let r1 = Rng.from_seed(42);
+  const a = r1.next_u64();
+  const b = r1.next_u32();
+  const c = r1.range(10, 20);
+
+  let r2 = Rng.from_seed(42);
+  assert_eq(a, r2.next_u64());
+  assert_eq(b, r2.next_u32());
+  assert_eq(c, r2.range(10, 20));
+}
+
+/// @test
+pub fn rng_zero_seed_is_replaced() {
+  let generator = Rng.from_seed(0);
+  assert(generator.next_u64() != 0);
+}
+
+/// @test
+pub fn rng_range_stays_in_bounds() {
+  let probe = Rng.from_seed(7);
+  let ok = true;
+  let i: i32 = 0;
+
+  while (i < 500) {
+    const value = probe.range(10, 20);
+    if (value < 10 || value >= 20) {
+      ok = false;
+    };
+    i += 1;
+  };
+
+  assert(ok);
+}
+
+/// @test
+pub fn rng_sample_is_stable() {
+  let first = Rng.from_seed(1);
+  assert_eq(first.next_u64(), 5180492295206395165);
+
+  let second = Rng.from_seed(1);
+  assert_eq(second.next_u32(), 1206177355);
+}
