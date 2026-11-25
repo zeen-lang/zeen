@@ -1,4 +1,4 @@
-use std.crypto.base64;
+use std.encoding.base64;
 
 fn main() i32 {
   @println("[{}][{}][{}][{}][{}][{}][{}]", Base64.encode(""), Base64.encode("f"), Base64.encode("fo"), Base64.encode("foo"), Base64.encode("foob"), Base64.encode("fooba"), Base64.encode("foobar"));

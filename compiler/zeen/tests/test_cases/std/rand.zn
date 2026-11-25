@@ -1,4 +1,4 @@
-use std.crypto.rand;
+use std.rand;
 
 fn main() i32 {
   Rand.seed(42);

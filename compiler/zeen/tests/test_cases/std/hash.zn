@@ -1,4 +1,4 @@
-use std.crypto.hash;
+use std.hash;
 
 fn main() i32 {
   let empty: []const char = "";
