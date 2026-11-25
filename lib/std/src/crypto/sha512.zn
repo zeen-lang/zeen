@@ -1,0 +1,350 @@
+use std.string;
+use std.crypto.hash;
+
+fn rotr64(x: u64, n: u64) u64 {
+  return (x >> n) | (x << (64 - n));
+}
+
+fn compress512(state: *[8]u64, block: []const char) {
+  const k: [80]u64 = {
+    0x428A2F98D728AE22, 0x7137449123EF65CD, (@as(u64, 0xB5C0FBCF) << 32) | 0xEC4D3B2F, (@as(u64, 0xE9B5DBA5) << 32) | 0x8189DBBC,
+    0x3956C25BF348B538, 0x59F111F1B605D019, (@as(u64, 0x923F82A4) << 32) | 0xAF194F9B, (@as(u64, 0xAB1C5ED5) << 32) | 0xDA6D8118,
+    (@as(u64, 0xD807AA98) << 32) | 0xA3030242, 0x12835B0145706FBE, 0x243185BE4EE4B28C, 0x550C7DC3D5FFB4E2,
+    0x72BE5D74F27B896F, (@as(u64, 0x80DEB1FE) << 32) | 0x3B1696B1, (@as(u64, 0x9BDC06A7) << 32) | 0x25C71235, (@as(u64, 0xC19BF174) << 32) | 0xCF692694,
+    (@as(u64, 0xE49B69C1) << 32) | 0x9EF14AD2, (@as(u64, 0xEFBE4786) << 32) | 0x384F25E3, 0x0FC19DC68B8CD5B5, 0x240CA1CC77AC9C65,
+    0x2DE92C6F592B0275, 0x4A7484AA6EA6E483, 0x5CB0A9DCBD41FBD4, 0x76F988DA831153B5,
+    (@as(u64, 0x983E5152) << 32) | 0xEE66DFAB, (@as(u64, 0xA831C66D) << 32) | 0x2DB43210, (@as(u64, 0xB00327C8) << 32) | 0x98FB213F, (@as(u64, 0xBF597FC7) << 32) | 0xBEEF0EE4,
+    (@as(u64, 0xC6E00BF3) << 32) | 0x3DA88FC2, (@as(u64, 0xD5A79147) << 32) | 0x930AA725, 0x06CA6351E003826F, 0x142929670A0E6E70,
+    0x27B70A8546D22FFC, 0x2E1B21385C26C926, 0x4D2C6DFC5AC42AED, 0x53380D139D95B3DF,
+    0x650A73548BAF63DE, 0x766A0ABB3C77B2A8, (@as(u64, 0x81C2C92E) << 32) | 0x47EDAEE6, (@as(u64, 0x92722C85) << 32) | 0x1482353B,
+    (@as(u64, 0xA2BFE8A1) << 32) | 0x4CF10364, (@as(u64, 0xA81A664B) << 32) | 0xBC423001, (@as(u64, 0xC24B8B70) << 32) | 0xD0F89791, (@as(u64, 0xC76C51A3) << 32) | 0x0654BE30,
+    (@as(u64, 0xD192E819) << 32) | 0xD6EF5218, (@as(u64, 0xD6990624) << 32) | 0x5565A910, (@as(u64, 0xF40E3585) << 32) | 0x5771202A, 0x106AA07032BBD1B8,
+    0x19A4C116B8D2D0C8, 0x1E376C085141AB53, 0x2748774CDF8EEB99, 0x34B0BCB5E19B48A8,
+    0x391C0CB3C5C95A63, 0x4ED8AA4AE3418ACB, 0x5B9CCA4F7763E373, 0x682E6FF3D6B2B8A3,
+    0x748F82EE5DEFB2FC, 0x78A5636F43172F60, (@as(u64, 0x84C87814) << 32) | 0xA1F0AB72, (@as(u64, 0x8CC70208) << 32) | 0x1A6439EC,
+    (@as(u64, 0x90BEFFFA) << 32) | 0x23631E28, (@as(u64, 0xA4506CEB) << 32) | 0xDE82BDE9, (@as(u64, 0xBEF9A3F7) << 32) | 0xB2C67915, (@as(u64, 0xC67178F2) << 32) | 0xE372532B,
+    (@as(u64, 0xCA273ECE) << 32) | 0xEA26619C, (@as(u64, 0xD186B8C7) << 32) | 0x21C0C207, (@as(u64, 0xEADA7DD6) << 32) | 0xCDE0EB1E, (@as(u64, 0xF57D4F7F) << 32) | 0xEE6ED178,
+    0x06F067AA72176FBA, 0x0A637DC5A2C898A6, 0x113F9804BEF90DAE, 0x1B710B35131C471B,
+    0x28DB77F523047D84, 0x32CAAB7B40C72493, 0x3C9EBE0A15C9BEBC, 0x431D67C49C100D4C,
+    0x4CC5D4BECB3E42B6, 0x597F299CFC657E2A, 0x5FCB6FAB3AD6FAEC, 0x6C44198C4A475817,
+  };
+  let w: [80]u64 = {0; 80};
+
+  let word: usize = 0;
+  while (word < 16) {
+    const offset = word * 8;
+    let value: u64 = 0;
+    let byte: usize = 0;
+
+    while (byte < 8) {
+      value = (value << 8) | @as(u64, block[offset + byte]);
+      byte += 1;
+    };
+
+    w[word] = value;
+    word += 1;
+  }
+
+  let sched: usize = 16;
+  while (sched < 80) {
+    const s0 = rotr64(w[sched - 15], 1) ^ rotr64(w[sched - 15], 8) ^ (w[sched - 15] >> 7);
+    const s1 = rotr64(w[sched - 2], 19) ^ rotr64(w[sched - 2], 61) ^ (w[sched - 2] >> 6);
+
+    w[sched] = w[sched - 16] + s0 + w[sched - 7] + s1;
+    sched += 1;
+  }
+
+  let a = state[0];
+  let b = state[1];
+  let c = state[2];
+  let d = state[3];
+  let e = state[4];
+  let f = state[5];
+  let g = state[6];
+  let h = state[7];
+
+  let round: usize = 0;
+  while (round < 80) {
+    const s1 = rotr64(e, 14) ^ rotr64(e, 18) ^ rotr64(e, 41);
+    const ch = (e & f) ^ ((e ^ (@as(u64, 0) - 1)) & g);
+    const t1 = ((h + s1 + ch) + k[round]) + w[round];
+    const s0 = rotr64(a, 28) ^ rotr64(a, 34) ^ rotr64(a, 39);
+    const maj = ((a & b) ^ (a & c)) ^ (b & c);
+    const t2 = s0 + maj;
+
+    h = g;
+    g = f;
+    f = e;
+    e = d + t1;
+    d = c;
+    c = b;
+    b = a;
+    a = t1 + t2;
+    round += 1;
+  }
+
+  state[0] += a;
+  state[1] += b;
+  state[2] += c;
+  state[3] += d;
+  state[4] += e;
+  state[5] += f;
+  state[6] += g;
+  state[7] += h;
+}
+
+/// SHA-512 (FIPS 180-4), streaming and one-shot.
+pub struct Sha512 {
+  _state: [8]u64,
+  _buffer: [128]char,
+  _buffered: usize,
+  _length: u64,
+}
+
+implement Sha512 {
+  /// Initial hasher.
+  pub fn new() Self {
+    const state: [8]u64 = {0; 8};
+    let hasher = Self { ._state = state, ._buffer = {'\0'; 128}, ._buffered = 0, ._length = 0 };
+
+    hasher.reset();
+    return hasher;
+  }
+
+  /// One-shot digest of `data`.
+  pub fn digest(data: []const char) [64]char {
+    let hasher = Sha512.new();
+
+    hasher.update(data);
+    return hasher.finalize();
+  }
+
+  /// Hex digest of `data`.
+  pub fn hexdigest(data: []const char) String {
+    const out = Sha512.digest(data);
+
+    return Hashing.hexdigest(out[..]);
+  }
+}
+
+implement Digest : Sha512 {
+  alias Output = [64]char;
+
+  pub fn update(*self, data: []const char) {
+    let i: usize = 0;
+
+    while (i < data.len) {
+      self._buffer[self._buffered] = data[i];
+      self._buffered += 1;
+      self._length += 1;
+
+      if (self._buffered == 128) {
+        compress512(&self._state, self._buffer[..]);
+        self._buffered = 0;
+      };
+
+      i += 1;
+    }
+  }
+
+  pub fn finalize(*self) [64]char {
+    const bit_length = self._length * 8;
+
+    self._buffer[self._buffered] = @as(char, 128);
+    self._buffered += 1;
+
+    if (self._buffered > 112) {
+      while (self._buffered < 128) {
+        self._buffer[self._buffered] = '\0';
+        self._buffered += 1;
+      };
+
+      compress512(&self._state, self._buffer[..]);
+      self._buffered = 0;
+    };
+
+    while (self._buffered < 112) {
+      self._buffer[self._buffered] = '\0';
+      self._buffered += 1;
+    };
+
+    let zero: usize = 0;
+    while (zero < 8) {
+      self._buffer[self._buffered] = '\0';
+      self._buffered += 1;
+      zero += 1;
+    };
+
+    let length_shift: u64 = 56;
+    while (true) {
+      self._buffer[self._buffered] = @as(char, bit_length >> length_shift);
+      self._buffered += 1;
+
+      if (length_shift == 0) {
+        break;
+      };
+
+      length_shift -= 8;
+    };
+
+    compress512(&self._state, self._buffer[..]);
+
+    let out: [64]char = {'\0'; 64};
+    let word: usize = 0;
+    while (word < 8) {
+      const value = self._state[word];
+      let shift: u64 = 56;
+      let byte: usize = 0;
+
+      while (true) {
+        out[word * 8 + byte] = @as(char, value >> shift);
+        byte += 1;
+
+        if (shift == 0) {
+          break;
+        };
+
+        shift -= 8;
+      };
+
+      word += 1;
+    };
+
+    self.reset();
+    return out;
+  }
+
+  pub fn reset(*self) {
+    self._state = {0x6A09E667F3BCC908, (@as(u64, 0xBB67AE85) << 32) | 0x84CAA73B, 0x3C6EF372FE94F82B, (@as(u64, 0xA54FF53A) << 32) | 0x5F1D36F1, 0x510E527FADE682D1, (@as(u64, 0x9B05688C) << 32) | 0x2B3E6C1F, 0x1F83D9ABFB41BD6B, 0x5BE0CD19137E2179};
+    self._buffered = 0;
+    self._length = 0;
+  }
+}
+
+/// SHA-384 (FIPS 180-4), streaming and one-shot.
+pub struct Sha384 {
+  _state: [8]u64,
+  _buffer: [128]char,
+  _buffered: usize,
+  _length: u64,
+}
+
+implement Sha384 {
+  /// Initial hasher.
+  pub fn new() Self {
+    const state: [8]u64 = {0; 8};
+    let hasher = Self { ._state = state, ._buffer = {'\0'; 128}, ._buffered = 0, ._length = 0 };
+
+    hasher.reset();
+    return hasher;
+  }
+
+  /// One-shot digest of `data`.
+  pub fn digest(data: []const char) [48]char {
+    let hasher = Sha384.new();
+
+    hasher.update(data);
+    return hasher.finalize();
+  }
+
+  /// Hex digest of `data`.
+  pub fn hexdigest(data: []const char) String {
+    const out = Sha384.digest(data);
+
+    return Hashing.hexdigest(out[..]);
+  }
+}
+
+implement Digest : Sha384 {
+  alias Output = [48]char;
+
+  pub fn update(*self, data: []const char) {
+    let i: usize = 0;
+
+    while (i < data.len) {
+      self._buffer[self._buffered] = data[i];
+      self._buffered += 1;
+      self._length += 1;
+
+      if (self._buffered == 128) {
+        compress512(&self._state, self._buffer[..]);
+        self._buffered = 0;
+      };
+
+      i += 1;
+    }
+  }
+
+  pub fn finalize(*self) [48]char {
+    const bit_length = self._length * 8;
+
+    self._buffer[self._buffered] = @as(char, 128);
+    self._buffered += 1;
+
+    if (self._buffered > 112) {
+      while (self._buffered < 128) {
+        self._buffer[self._buffered] = '\0';
+        self._buffered += 1;
+      };
+
+      compress512(&self._state, self._buffer[..]);
+      self._buffered = 0;
+    };
+
+    while (self._buffered < 112) {
+      self._buffer[self._buffered] = '\0';
+      self._buffered += 1;
+    };
+
+    let zero: usize = 0;
+    while (zero < 8) {
+      self._buffer[self._buffered] = '\0';
+      self._buffered += 1;
+      zero += 1;
+    };
+
+    let length_shift: u64 = 56;
+    while (true) {
+      self._buffer[self._buffered] = @as(char, bit_length >> length_shift);
+      self._buffered += 1;
+
+      if (length_shift == 0) {
+        break;
+      };
+
+      length_shift -= 8;
+    };
+
+    compress512(&self._state, self._buffer[..]);
+
+    let out: [48]char = {'\0'; 48};
+    let word: usize = 0;
+    while (word < 6) {
+      const value = self._state[word];
+      let shift: u64 = 56;
+      let byte: usize = 0;
+
+      while (true) {
+        out[word * 8 + byte] = @as(char, value >> shift);
+        byte += 1;
+
+        if (shift == 0) {
+          break;
+        };
+
+        shift -= 8;
+      };
+
+      word += 1;
+    };
+
+    self.reset();
+    return out;
+  }
+
+  pub fn reset(*self) {
+    self._state = {(@as(u64, 0xCBBB9D5D) << 32) | 0xC1059ED8, 0x629A292A367CD507, (@as(u64, 0x9159015A) << 32) | 0x3070DD17, 0x152FECD8F70E5939, 0x67332667FFC00B31, (@as(u64, 0x8EB44A87) << 32) | 0x68581511, (@as(u64, 0xDB0C2E0D) << 32) | 0x64F98FA7, 0x47B5481DBEFA4FA4};
+    self._buffered = 0;
+    self._length = 0;
+  }
+}
