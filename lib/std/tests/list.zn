@@ -1,0 +1,115 @@
+use std.collections.list;
+use std.string;
+use std.testing;
+
+struct Payload {
+  pub value: i32,
+}
+
+implement Clone : Payload {
+  pub fn clone(*const self) Payload {
+    return Payload { .value = self.value };
+  }
+}
+
+/// @test
+pub fn list_from_copies_slices() {
+  const nums = List.from({1, 2, 3}[..]);
+
+  assert_eq(nums.len(), @as(usize, 3));
+  assert_eq(nums.get(0).unwrap(), 1);
+
+  const payloads = {Payload { .value = 7 }, Payload { .value = 8 }};
+  const cloned = List.from(payloads[..]);
+
+  assert_eq(cloned.len(), @as(usize, 2));
+  assert_eq(cloned.get_ptr(0).unwrap().value, 7);
+}
+
+/// @test
+pub fn string_to_list_keeps_bytes() {
+  const text = String.from("abc");
+  const chars = text.to_list();
+
+  assert_eq(chars.len(), @as(usize, 3));
+}
+
+/// @test
+pub fn iter_borrows_without_consuming() {
+  let items: List[String] = List.new();
+
+  items.push(String.from("a"));
+  items.push(String.from("bb"));
+  items.push(String.from("ccc"));
+
+  let probe = items.iter();
+  const first = probe.next();
+
+  assert(first.is_some());
+  assert_eq(first.unwrap().len(), @as(usize, 1));
+  assert_eq(items.len(), @as(usize, 3));
+}
+
+/// @test
+pub fn into_iter_moves_elements() {
+  let items: List[String] = List.new();
+
+  items.push(String.from("a"));
+  items.push(String.from("bb"));
+  items.push(String.from("ccc"));
+
+  let moved: List[String] = List.new();
+  let it = items.into_iter();
+
+  while (true) {
+    const next = it.next();
+
+    if (next.is_none()) {
+      break;
+    };
+    moved.push(next.unwrap());
+  };
+
+  assert_eq(moved.len(), @as(usize, 3));
+  assert_eq(moved.get_ptr(0).unwrap().len(), @as(usize, 1));
+}
+
+/// @test
+pub fn into_iter_sums_numbers() {
+  let nums: List[i32] = List.new();
+
+  nums.push(1);
+  nums.push(2);
+  nums.push(3);
+
+  let sum: i32 = 0;
+  let it = nums.into_iter();
+
+  while (true) {
+    const next = it.next();
+
+    if (next.is_none()) {
+      break;
+    };
+    sum += next.unwrap();
+  };
+
+  assert_eq(sum, 6);
+}
+
+/// @test
+pub fn iter_mut_updates_in_place() {
+  let scores: List[i32] = List.new();
+
+  scores.push(4);
+  scores.push(5);
+
+  for (score : scores.iter_mut()) {
+    *score = *score * 10;
+  };
+
+  scores.iter_mut().for_each(|score: *i32| -> void { *score += 1; });
+
+  assert_eq(*scores.get_ptr(0).unwrap(), 41);
+  assert_eq(*scores.get_ptr(1).unwrap(), 51);
+}

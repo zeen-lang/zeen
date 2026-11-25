@@ -1,0 +1,53 @@
+use std.string;
+use std.testing;
+
+/// @test
+pub fn replace_grows_the_buffer() {
+  let grow = String.from("aaaa");
+
+  grow.replace("a", "BBBB");
+
+  assert_eq(grow.len(), @as(usize, 16));
+  assert(grow.contains_cstr("BBBB"));
+  assert_eq(grow, String.from("BBBBBBBBBBBBBBBB"));
+}
+
+/// @test
+pub fn replace_handles_missing_and_empty() {
+  let exact = String.from("ab");
+
+  exact.replace("ab", "12345678");
+  exact.push('!');
+  assert_eq(exact, String.from("12345678!"));
+
+  let dropped = String.from("a.b.c");
+
+  dropped.replace(".", "");
+  assert_eq(dropped, String.from("abc"));
+
+  let longer_from = String.from("abc");
+
+  longer_from.replace("abcd", "x");
+  assert_eq(longer_from, String.from("abc"));
+
+  let blank = String.from("");
+
+  blank.replace("a", "bb");
+  assert_eq(blank, String.from(""));
+
+  let none = String.from("abc");
+
+  none.replace("", "x");
+  assert_eq(none, String.from("abc"));
+}
+
+/// @test
+pub fn replace_shrinks_and_finds() {
+  let shrink = String.from("hello world");
+
+  shrink.replace("world", "zeen");
+
+  assert_eq(shrink.len(), @as(usize, 10));
+  assert_eq(shrink.find_cstr("zeen").unwrap_or(99), @as(usize, 6));
+  assert_eq(shrink, String.from("hello zeen"));
+}
