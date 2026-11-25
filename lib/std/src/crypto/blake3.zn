@@ -1,0 +1,237 @@
+use std.string;
+use std.crypto.hash;
+
+const BLAKE3_IV: [8]u32 = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+const BLAKE3_PERMUTATION: [16]usize = {2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8};
+
+const CHUNK_START: u32 = 1;
+const CHUNK_END: u32 = 2;
+const PARENT: u32 = 4;
+const ROOT: u32 = 8;
+
+fn rotr32(x: u32, n: u32) u32 {
+  return (x >> n) | (x << (32 - n));
+}
+
+fn g32(v: *[16]u32, a: usize, b: usize, c: usize, d: usize, x: u32, y: u32) {
+  v[a] = v[a] + v[b] + x;
+  v[d] = rotr32(v[d] ^ v[a], 16);
+  v[c] = v[c] + v[d];
+  v[b] = rotr32(v[b] ^ v[c], 12);
+  v[a] = v[a] + v[b] + y;
+  v[d] = rotr32(v[d] ^ v[a], 8);
+  v[c] = v[c] + v[d];
+  v[b] = rotr32(v[b] ^ v[c], 7);
+}
+
+fn compress(cv: [8]u32, block: [16]u32, counter: u64, block_len: u32, flags: u32) [16]u32 {
+  let m: [16]u32 = block;
+  let v: [16]u32 = {0; 16};
+  let i: usize = 0;
+
+  while (i < 8) {
+    v[i] = cv[i];
+    i += 1;
+  };
+
+  i = 0;
+  while (i < 4) {
+    v[8 + i] = BLAKE3_IV[i];
+    i += 1;
+  };
+
+  v[12] = @as(u32, counter & 0xFFFFFFFF);
+  v[13] = @as(u32, counter >> 32);
+  v[14] = block_len;
+  v[15] = flags;
+
+  let round: usize = 0;
+  while (round < 7) {
+    g32(&v, 0, 4, 8, 12, m[0], m[1]);
+    g32(&v, 1, 5, 9, 13, m[2], m[3]);
+    g32(&v, 2, 6, 10, 14, m[4], m[5]);
+    g32(&v, 3, 7, 11, 15, m[6], m[7]);
+    g32(&v, 0, 5, 10, 15, m[8], m[9]);
+    g32(&v, 1, 6, 11, 12, m[10], m[11]);
+    g32(&v, 2, 7, 8, 13, m[12], m[13]);
+    g32(&v, 3, 4, 9, 14, m[14], m[15]);
+
+    if (round < 6) {
+      let next: [16]u32 = {0; 16};
+      i = 0;
+      while (i < 16) {
+        next[i] = m[BLAKE3_PERMUTATION[i]];
+        i += 1;
+      };
+      m = next;
+    };
+
+    round += 1;
+  };
+
+  let out: [16]u32 = {0; 16};
+
+  i = 0;
+  while (i < 8) {
+    out[i] = v[i] ^ v[i + 8];
+    out[8 + i] = v[8 + i] ^ cv[i];
+    i += 1;
+  };
+
+  return out;
+}
+
+fn chunk_output(input: []const char, counter: u64, root: bool) [16]u32 {
+  let cv: [8]u32 = BLAKE3_IV;
+  let blocks = (input.len + 63) / 64;
+
+  if (blocks == 0) {
+    blocks = 1;
+  };
+
+  let block: usize = 0;
+  while (block < blocks) {
+    const offset = block * 64;
+    let take = input.len - offset;
+
+    if (take > 64) {
+      take = 64;
+    };
+
+    const last = block + 1 == blocks;
+    let flags: u32 = 0;
+
+    if (block == 0) {
+      flags = flags | CHUNK_START;
+    };
+
+    if (last) {
+      flags = flags | CHUNK_END;
+    };
+
+    if (last && root) {
+      flags = flags | ROOT;
+    };
+
+    let m: [16]u32 = {0; 16};
+    let i: usize = 0;
+
+    while (i < take) {
+      const shift = @as(u32, (i % 4) * 8);
+
+      m[i / 4] = m[i / 4] | (@as(u32, input[offset + i]) << shift);
+      i += 1;
+    };
+
+    const out = compress(cv, m, counter, @as(u32, take), flags);
+
+    if (last) {
+      return out;
+    };
+
+    i = 0;
+    while (i < 8) {
+      cv[i] = out[i];
+      i += 1;
+    };
+
+    block += 1;
+  };
+
+  return compress(cv, {0; 16}, counter, 0, CHUNK_END);
+}
+
+fn left_len(len: usize) usize {
+  const full_chunks = (len - 1) / 1024;
+  let power: usize = 1;
+
+  while (power * 2 <= full_chunks) {
+    power *= 2;
+  };
+
+  return power * 1024;
+}
+
+fn parent_output(left: [8]u32, right: [8]u32, root: bool) [16]u32 {
+  let m: [16]u32 = {0; 16};
+  let i: usize = 0;
+
+  while (i < 8) {
+    m[i] = left[i];
+    m[8 + i] = right[i];
+    i += 1;
+  };
+
+  let flags: u32 = PARENT;
+
+  if (root) {
+    flags = flags | ROOT;
+  };
+
+  return compress(BLAKE3_IV, m, 0, 64, flags);
+}
+
+fn subtree_cv(input: []const char, counter: u64) [8]u32 {
+  if (input.len <= 1024) {
+    const out = chunk_output(input, counter, false);
+    let cv: [8]u32 = {0; 8};
+    let i: usize = 0;
+
+    while (i < 8) {
+      cv[i] = out[i];
+      i += 1;
+    };
+
+    return cv;
+  };
+
+  const split = left_len(input.len);
+  const left = subtree_cv(input[0..split], counter);
+  const right = subtree_cv(input[split..], counter + @as(u64, split / 1024));
+  const out = parent_output(left, right, false);
+  let cv: [8]u32 = {0; 8};
+  let i: usize = 0;
+
+  while (i < 8) {
+    cv[i] = out[i];
+    i += 1;
+  };
+
+  return cv;
+}
+
+fn root_output(input: []const char) [16]u32 {
+  if (input.len <= 1024) {
+    return chunk_output(input, 0, true);
+  };
+
+  const split = left_len(input.len);
+  const left = subtree_cv(input[0..split], 0);
+  const right = subtree_cv(input[split..], @as(u64, split / 1024));
+
+  return parent_output(left, right, true);
+}
+
+pub struct Blake3 {
+}
+
+implement Blake3 {
+  pub fn digest(data: []const char) [32]char {
+    const full = root_output(data);
+    let out: [32]char = {'\0'; 32};
+    let i: usize = 0;
+
+    while (i < 32) {
+      out[i] = @as(char, full[i / 4] >> @as(u32, (i % 4) * 8));
+      i += 1;
+    };
+
+    return out;
+  }
+
+  pub fn hexdigest(data: []const char) String {
+    const out = Blake3.digest(data);
+
+    return Hashing.hexdigest(out[..]);
+  }
+}

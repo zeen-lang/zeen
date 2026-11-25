@@ -1,4 +1,5 @@
 use std.crypto.blake2;
+use std.crypto.blake3;
 use std.crypto.hash;
 use std.crypto.hmac;
 use std.crypto.random;
@@ -271,4 +272,48 @@ pub fn blake2_streaming_matches_one_shot() {
 
   assert_eq(Hashing.hexdigest(big.finalize()[..]), String.from("ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923"));
   assert_eq(Hashing.hexdigest(small.finalize()[..]), String.from("508c5e8c327c14e2e1a72ba34eeb452f37458b209ed63a294d999b4c86675982"));
+}
+
+fn fill_blake3_pattern(data: []char) {
+  let i: usize = 0;
+
+  while (i < data.len) {
+    data[i] = @as(char, i % 251);
+    i += 1;
+  };
+}
+
+/// @test
+pub fn blake3_vectors() {
+  let a64: [64]char = {'\0'; 64};
+  let a1024: [1024]char = {'\0'; 1024};
+
+  fill_blake3_pattern(a64[..]);
+  fill_blake3_pattern(a1024[..]);
+
+  assert_eq(Blake3.hexdigest(""), String.from("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"));
+  assert_eq(Blake3.hexdigest("abc"), String.from("6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"));
+  assert_eq(Blake3.hexdigest(a64[..]), String.from("4eed7141ea4a5cd4b788606bd23f46e212af9cacebacdc7d1f4c6dc7f2511b98"));
+  assert_eq(Blake3.hexdigest(a1024[..]), String.from("42214739f095a406f3fc83deb889744ac00df831c10daa55189b5d121c855af7"));
+}
+
+/// @test
+pub fn blake3_tree_vectors() {
+  let a1025: [1025]char = {'\0'; 1025};
+  let a2048: [2048]char = {'\0'; 2048};
+  let a2049: [2049]char = {'\0'; 2049};
+  let a3072: [3072]char = {'\0'; 3072};
+  let a4096: [4096]char = {'\0'; 4096};
+
+  fill_blake3_pattern(a1025[..]);
+  fill_blake3_pattern(a2048[..]);
+  fill_blake3_pattern(a2049[..]);
+  fill_blake3_pattern(a3072[..]);
+  fill_blake3_pattern(a4096[..]);
+
+  assert_eq(Blake3.hexdigest(a1025[..]), String.from("d00278ae47eb27b34faecf67b4fe263f82d5412916c1ffd97c8cb7fb814b8444"));
+  assert_eq(Blake3.hexdigest(a2048[..]), String.from("e776b6028c7cd22a4d0ba182a8bf62205d2ef576467e838ed6f2529b85fba24a"));
+  assert_eq(Blake3.hexdigest(a2049[..]), String.from("5f4d72f40d7a5f82b15ca2b2e44b1de3c2ef86c426c95c1af0b6879522563030"));
+  assert_eq(Blake3.hexdigest(a3072[..]), String.from("b98cb0ff3623be03326b373de6b9095218513e64f1ee2edd2525c7ad1e5cffd2"));
+  assert_eq(Blake3.hexdigest(a4096[..]), String.from("015094013f57a5277b59d8475c0501042c0b642e531b0a1c8f58d2163229e969"));
 }
