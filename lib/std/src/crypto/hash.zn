@@ -1,0 +1,46 @@
+use std.encoding.hex;
+
+/// Error raised by a failed cryptographic check.
+pub enum CryptoError {
+  /// Compared values differ.
+  Mismatch,
+}
+
+/// Streaming hash algorithm.
+pub interface Digest {
+  alias Output;
+
+  /// Absorbs a chunk of input.
+  pub fn update(*self, data: []const char);
+
+  /// Returns the digest and restores the initial state.
+  pub fn finalize(*self) Output;
+
+  /// Restores the initial state.
+  pub fn reset(*self);
+}
+
+/// Helpers shared by hash algorithms.
+pub struct Hashing {
+  /// Lowercase hex encoding of `bytes`.
+  pub fn hexdigest(bytes: []const char) String {
+    return Hex.encode(bytes);
+  }
+
+  /// Compares two byte strings in constant time.
+  pub fn digest_eq(a: []const char, b: []const char) bool {
+    if (a.len != b.len) {
+      return false;
+    };
+
+    let diff: u8 = 0;
+    let i: usize = 0;
+
+    while (i < a.len) {
+      diff |= @as(u8, a[i]) ^ @as(u8, b[i]);
+      i += 1;
+    };
+
+    return diff == 0;
+  }
+}

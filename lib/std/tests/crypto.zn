@@ -1,3 +1,4 @@
+use std.crypto.hash;
 use std.crypto.sha256;
 use std.string;
 use std.testing;
@@ -6,4 +7,30 @@ use std.testing;
 pub fn sha256_vectors() {
   assert_eq(Sha256.hexdigest(""), String.from("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
   assert_eq(Sha256.hexdigest("abc"), String.from("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+}
+
+/// @test
+pub fn sha256_streaming_matches_one_shot() {
+  let hasher = Sha256.new();
+
+  hasher.update("a");
+  hasher.update("bc");
+
+  const out = hasher.finalize();
+
+  assert_eq(Hashing.hexdigest(out[..]), String.from("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+}
+
+/// @test
+pub fn sha224_vectors() {
+  assert_eq(Sha224.hexdigest(""), String.from("d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f"));
+  assert_eq(Sha224.hexdigest("abc"), String.from("23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7"));
+}
+
+/// @test
+pub fn hash_helpers() {
+  assert(Hashing.digest_eq("abc", "abc"));
+  assert(!Hashing.digest_eq("abc", "abd"));
+  assert(!Hashing.digest_eq("abc", "ab"));
+  assert_eq(Hashing.hexdigest("abc"), String.from("616263"));
 }
