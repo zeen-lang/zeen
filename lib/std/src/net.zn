@@ -152,7 +152,7 @@ fn write_u32[W: StrWriter](out: *W, value: u32) void {
 
 @os[linux | android] {
   fn fill_v4(addr: *const SocketAddr, sa: *c_SockAddrIn) void {
-    let _ = memset(@as(*void, sa), 0, @as(c_size_t, 16));
+    @memset(@as(*[16]u8, sa), 0);
     (*sa).sin_family = @as(c_ushort, AF_INET);
     (*sa).sin_port = htons((*addr).port());
     (*sa).sin_addr.s_addr = htonl((*addr).ip());
@@ -165,7 +165,7 @@ fn write_u32[W: StrWriter](out: *W, value: u32) void {
 
 @os[darwin | freebsd] {
   fn fill_v4(addr: *const SocketAddr, sa: *c_SockAddrIn) void {
-    let _ = memset(@as(*void, sa), 0, @as(c_size_t, 16));
+    @memset(@as(*[16]u8, sa), 0);
     (*sa).sin_len = @as(u8, 16);
     (*sa).sin_family = @as(u8, AF_INET);
     (*sa).sin_port = htons((*addr).port());
@@ -179,7 +179,7 @@ fn write_u32[W: StrWriter](out: *W, value: u32) void {
 
 @os[windows] {
   fn fill_v4(addr: *const SocketAddr, sa: *c_SockAddrInWin) void {
-    let _ = memset(@as(*void, sa), 0, @as(c_size_t, 16));
+    @memset(@as(*[16]u8, sa), 0);
     (*sa).family = @as(c_ushort, AF_INET);
     (*sa).port = htons((*addr).port());
     (*sa).addr = htonl((*addr).ip());
