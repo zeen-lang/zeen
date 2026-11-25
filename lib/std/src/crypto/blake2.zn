@@ -1,0 +1,337 @@
+use std.string;
+use std.crypto.hash;
+
+const BLAKE2B_IV_HI: [8]u32 = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+const BLAKE2B_IV_LO: [8]u32 = {0xf3bcc908, 0x84caa73b, 0xfe94f82b, 0x5f1d36f1, 0xade682d1, 0x2b3e6c1f, 0xfb41bd6b, 0x137e2179};
+const BLAKE2S_IV: [8]u32 = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+const BLAKE2_SIGMA: [160]usize = {
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+  14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3,
+  11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4,
+  7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8,
+  9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13,
+  2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9,
+  12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11,
+  13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10,
+  6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5,
+  10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0,
+};
+
+fn rotr64(x: u64, n: u64) u64 {
+  return (x >> n) | (x << (64 - n));
+}
+
+fn rotr32(x: u32, n: u32) u32 {
+  return (x >> n) | (x << (32 - n));
+}
+
+fn g64(v: *[16]u64, a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) {
+  v[a] = v[a] + v[b] + x;
+  v[d] = rotr64(v[d] ^ v[a], 32);
+  v[c] = v[c] + v[d];
+  v[b] = rotr64(v[b] ^ v[c], 24);
+  v[a] = v[a] + v[b] + y;
+  v[d] = rotr64(v[d] ^ v[a], 16);
+  v[c] = v[c] + v[d];
+  v[b] = rotr64(v[b] ^ v[c], 63);
+}
+
+fn g32(v: *[16]u32, a: usize, b: usize, c: usize, d: usize, x: u32, y: u32) {
+  v[a] = v[a] + v[b] + x;
+  v[d] = rotr32(v[d] ^ v[a], 16);
+  v[c] = v[c] + v[d];
+  v[b] = rotr32(v[b] ^ v[c], 12);
+  v[a] = v[a] + v[b] + y;
+  v[d] = rotr32(v[d] ^ v[a], 8);
+  v[c] = v[c] + v[d];
+  v[b] = rotr32(v[b] ^ v[c], 7);
+}
+
+fn compress_b(h: *[8]u64, block: []const u8, t: u64, last: bool) {
+  const all: u64 = @as(u64, 0) - 1;
+  let m: [16]u64 = {0; 16};
+  let v: [16]u64 = {0; 16};
+  let i: usize = 0;
+
+  while (i < 16) {
+    let word: u64 = 0;
+    let b: usize = 0;
+
+    while (b < 8) {
+      word |= @as(u64, block[i * 8 + b]) << @as(u64, b * 8);
+      b += 1;
+    };
+
+    m[i] = word;
+    i += 1;
+  };
+
+  i = 0;
+  while (i < 8) {
+    v[i] = h[i];
+    v[i + 8] = (@as(u64, BLAKE2B_IV_HI[i]) << 32) | @as(u64, BLAKE2B_IV_LO[i]);
+    i += 1;
+  };
+
+  v[12] = v[12] ^ t;
+  if (last) {
+    v[14] = v[14] ^ all;
+  };
+
+  let round: usize = 0;
+  while (round < 12) {
+    const s = (round % 10) * 16;
+
+    g64(&v, 0, 4, 8, 12, m[BLAKE2_SIGMA[s]], m[BLAKE2_SIGMA[s + 1]]);
+    g64(&v, 1, 5, 9, 13, m[BLAKE2_SIGMA[s + 2]], m[BLAKE2_SIGMA[s + 3]]);
+    g64(&v, 2, 6, 10, 14, m[BLAKE2_SIGMA[s + 4]], m[BLAKE2_SIGMA[s + 5]]);
+    g64(&v, 3, 7, 11, 15, m[BLAKE2_SIGMA[s + 6]], m[BLAKE2_SIGMA[s + 7]]);
+    g64(&v, 0, 5, 10, 15, m[BLAKE2_SIGMA[s + 8]], m[BLAKE2_SIGMA[s + 9]]);
+    g64(&v, 1, 6, 11, 12, m[BLAKE2_SIGMA[s + 10]], m[BLAKE2_SIGMA[s + 11]]);
+    g64(&v, 2, 7, 8, 13, m[BLAKE2_SIGMA[s + 12]], m[BLAKE2_SIGMA[s + 13]]);
+    g64(&v, 3, 4, 9, 14, m[BLAKE2_SIGMA[s + 14]], m[BLAKE2_SIGMA[s + 15]]);
+    round += 1;
+  };
+
+  i = 0;
+  while (i < 8) {
+    h[i] = (h[i] ^ v[i]) ^ v[i + 8];
+    i += 1;
+  };
+}
+
+fn compress_s(h: *[8]u32, block: []const u8, t: u64, last: bool) {
+  const all: u32 = @as(u32, 0) - 1;
+  let m: [16]u32 = {0; 16};
+  let v: [16]u32 = {0; 16};
+  let i: usize = 0;
+
+  while (i < 16) {
+    let word: u32 = 0;
+    let b: usize = 0;
+
+    while (b < 4) {
+      word |= @as(u32, block[i * 4 + b]) << @as(u32, b * 8);
+      b += 1;
+    };
+
+    m[i] = word;
+    i += 1;
+  };
+
+  i = 0;
+  while (i < 8) {
+    v[i] = h[i];
+    v[i + 8] = BLAKE2S_IV[i];
+    i += 1;
+  };
+
+  v[12] = v[12] ^ @as(u32, t & 0xFFFFFFFF);
+  v[13] = v[13] ^ @as(u32, t >> 32);
+  if (last) {
+    v[14] = v[14] ^ all;
+  };
+
+  let round: usize = 0;
+  while (round < 10) {
+    const s = round * 16;
+
+    g32(&v, 0, 4, 8, 12, m[BLAKE2_SIGMA[s]], m[BLAKE2_SIGMA[s + 1]]);
+    g32(&v, 1, 5, 9, 13, m[BLAKE2_SIGMA[s + 2]], m[BLAKE2_SIGMA[s + 3]]);
+    g32(&v, 2, 6, 10, 14, m[BLAKE2_SIGMA[s + 4]], m[BLAKE2_SIGMA[s + 5]]);
+    g32(&v, 3, 7, 11, 15, m[BLAKE2_SIGMA[s + 6]], m[BLAKE2_SIGMA[s + 7]]);
+    g32(&v, 0, 5, 10, 15, m[BLAKE2_SIGMA[s + 8]], m[BLAKE2_SIGMA[s + 9]]);
+    g32(&v, 1, 6, 11, 12, m[BLAKE2_SIGMA[s + 10]], m[BLAKE2_SIGMA[s + 11]]);
+    g32(&v, 2, 7, 8, 13, m[BLAKE2_SIGMA[s + 12]], m[BLAKE2_SIGMA[s + 13]]);
+    g32(&v, 3, 4, 9, 14, m[BLAKE2_SIGMA[s + 14]], m[BLAKE2_SIGMA[s + 15]]);
+    round += 1;
+  };
+
+  i = 0;
+  while (i < 8) {
+    h[i] = (h[i] ^ v[i]) ^ v[i + 8];
+    i += 1;
+  };
+}
+
+pub struct Blake2b {
+  _h: [8]u64,
+  _buffer: [128]u8,
+  _buffered: usize,
+  _t: u64,
+}
+
+implement Blake2b {
+  pub fn new() Self {
+    const h: [8]u64 = {0; 8};
+    let hasher = Self { ._h = h, ._buffer = {0; 128}, ._buffered = 0, ._t = 0 };
+
+    hasher.reset();
+    return hasher;
+  }
+
+  pub fn digest(data: []const char) [64]char {
+    let hasher = Blake2b.new();
+
+    hasher.update(data);
+    return hasher.finalize();
+  }
+
+  pub fn hexdigest(data: []const char) String {
+    const out = Blake2b.digest(data);
+
+    return Hashing.hexdigest(out[..]);
+  }
+}
+
+implement Digest : Blake2b {
+  alias Output = [64]char;
+
+  pub fn update(*self, data: []const char) {
+    let i: usize = 0;
+
+    while (i < data.len) {
+      if (self._buffered == 128) {
+        self._t += 128;
+        compress_b(&self._h, self._buffer[..], self._t, false);
+        self._buffered = 0;
+      };
+
+      self._buffer[self._buffered] = @as(u8, data[i]);
+      self._buffered += 1;
+      i += 1;
+    };
+  }
+
+  pub fn finalize(*self) [64]char {
+    self._t += @as(u64, self._buffered);
+
+    let i: usize = self._buffered;
+
+    while (i < 128) {
+      self._buffer[i] = 0;
+      i += 1;
+    };
+
+    compress_b(&self._h, self._buffer[..], self._t, true);
+
+    let out: [64]char = {'\0'; 64};
+    let word: usize = 0;
+
+    while (word < 8) {
+      const value = self._h[word];
+      let b: usize = 0;
+
+      while (b < 8) {
+        out[word * 8 + b] = @as(char, value >> @as(u64, b * 8));
+        b += 1;
+      };
+
+      word += 1;
+    };
+
+    self.reset();
+    return out;
+  }
+
+  pub fn reset(*self) {
+    let i: usize = 0;
+
+    while (i < 8) {
+      self._h[i] = (@as(u64, BLAKE2B_IV_HI[i]) << 32) | @as(u64, BLAKE2B_IV_LO[i]);
+      i += 1;
+    };
+
+    self._h[0] = self._h[0] ^ 0x01010040;
+    self._buffered = 0;
+    self._t = 0;
+  }
+}
+
+pub struct Blake2s {
+  _h: [8]u32,
+  _buffer: [64]u8,
+  _buffered: usize,
+  _t: u64,
+}
+
+implement Blake2s {
+  pub fn new() Self {
+    const h: [8]u32 = {0; 8};
+    let hasher = Self { ._h = h, ._buffer = {0; 64}, ._buffered = 0, ._t = 0 };
+
+    hasher.reset();
+    return hasher;
+  }
+
+  pub fn digest(data: []const char) [32]char {
+    let hasher = Blake2s.new();
+
+    hasher.update(data);
+    return hasher.finalize();
+  }
+
+  pub fn hexdigest(data: []const char) String {
+    const out = Blake2s.digest(data);
+
+    return Hashing.hexdigest(out[..]);
+  }
+}
+
+implement Digest : Blake2s {
+  alias Output = [32]char;
+
+  pub fn update(*self, data: []const char) {
+    let i: usize = 0;
+
+    while (i < data.len) {
+      if (self._buffered == 64) {
+        self._t += 64;
+        compress_s(&self._h, self._buffer[..], self._t, false);
+        self._buffered = 0;
+      };
+
+      self._buffer[self._buffered] = @as(u8, data[i]);
+      self._buffered += 1;
+      i += 1;
+    };
+  }
+
+  pub fn finalize(*self) [32]char {
+    self._t += @as(u64, self._buffered);
+
+    let i: usize = self._buffered;
+
+    while (i < 64) {
+      self._buffer[i] = 0;
+      i += 1;
+    };
+
+    compress_s(&self._h, self._buffer[..], self._t, true);
+
+    let out: [32]char = {'\0'; 32};
+    let word: usize = 0;
+
+    while (word < 8) {
+      const value = self._h[word];
+      let b: usize = 0;
+
+      while (b < 4) {
+        out[word * 4 + b] = @as(char, value >> @as(u32, b * 8));
+        b += 1;
+      };
+
+      word += 1;
+    };
+
+    self.reset();
+    return out;
+  }
+
+  pub fn reset(*self) {
+    self._h = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    self._h[0] = self._h[0] ^ 0x01010020;
+    self._buffered = 0;
+    self._t = 0;
+  }
+}

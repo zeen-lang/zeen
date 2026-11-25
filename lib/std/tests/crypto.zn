@@ -1,3 +1,4 @@
+use std.crypto.blake2;
 use std.crypto.hash;
 use std.crypto.hmac;
 use std.crypto.random;
@@ -238,4 +239,36 @@ pub fn shake256_vectors() {
 
   Shake256.hash("abc", out[..]);
   assert_eq(Hashing.hexdigest(out[..]), String.from("483366601360a8771c6863080cc4114d8db44530f8f1e1ee4f94ea37e78b5739d5a15bef186a5386c75744c0527e1faa9f8726e462a12a4feb06bd8801e751e4"));
+}
+
+/// @test
+pub fn blake2b_vectors() {
+  let data: [200]char = {'a'; 200};
+
+  assert_eq(Blake2b.hexdigest(""), String.from("786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce"));
+  assert_eq(Blake2b.hexdigest("abc"), String.from("ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923"));
+  assert_eq(Blake2b.hexdigest(data[..]), String.from("932355851d75f09c18646a9da87c25e055bc57f113121ad1ec63d45e7a1d62ab9133f8b7d1d7de9e0afa784eb6a8a11d78683013d0a672611f17668d9577d209"));
+}
+
+/// @test
+pub fn blake2s_vectors() {
+  let data: [200]char = {'a'; 200};
+
+  assert_eq(Blake2s.hexdigest(""), String.from("69217a3079908094e11121d042354a7c1f55b6482ca1a51e1b250dfd1ed0eef9"));
+  assert_eq(Blake2s.hexdigest("abc"), String.from("508c5e8c327c14e2e1a72ba34eeb452f37458b209ed63a294d999b4c86675982"));
+  assert_eq(Blake2s.hexdigest(data[..]), String.from("2b033f9f5ba9cf20671da79e492f41545e673b562603945ffed09662fd92321a"));
+}
+
+/// @test
+pub fn blake2_streaming_matches_one_shot() {
+  let big = Blake2b.new();
+  let small = Blake2s.new();
+
+  big.update("a");
+  big.update("bc");
+  small.update("a");
+  small.update("bc");
+
+  assert_eq(Hashing.hexdigest(big.finalize()[..]), String.from("ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923"));
+  assert_eq(Hashing.hexdigest(small.finalize()[..]), String.from("508c5e8c327c14e2e1a72ba34eeb452f37458b209ed63a294d999b4c86675982"));
 }
