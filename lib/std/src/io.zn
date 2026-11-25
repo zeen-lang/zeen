@@ -305,3 +305,408 @@ pub struct Stderr {
     let _ = fflush(stderr);
   }
 }
+
+/// Offset for `Seek`.
+pub enum SeekFrom {
+  Start: u64,
+  End: i64,
+  Current: i64,
+}
+
+/// Byte source.
+pub interface Read {
+  /// Reads some bytes into `buf`, returning how many were read. `Ok(0)` means end.
+  pub fn read(*self, buf: []char) Result[usize, IoError];
+
+  /// Reads exactly `n` bytes, appending them to `buf`.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.Interrupted
+  /// * IoErrorKind.UnexpectedEof
+  /// * IoErrorKind.Uncategorized
+  pub fn read_exact(*self, buf: *String, n: usize) Result[usize, IoError] {
+    let total: usize = 0;
+
+    while (total < n) {
+      let chunk: [256]char = @uninit();
+      let want: usize = 256;
+
+      if (n - total < want) {
+        want = n - total;
+      };
+
+      switch (self.read(chunk[0..want])) {
+        .Ok(got) => if (got == 0) {
+          return Result.Err(IoError.new(IoErrorKind.UnexpectedEof, "early end of file"));
+        } else {
+          (*buf).push_str(chunk[0..got]);
+          total += got;
+        },
+        .Err(e) => {
+          return Result.Err(e);
+        },
+      };
+    };
+
+    return Result.Ok(total);
+  }
+
+  /// Reads everything up to the end, appending it to `buf`.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.Interrupted
+  /// * IoErrorKind.Uncategorized
+  pub fn read_to_string(*self, buf: *String) Result[usize, IoError] {
+    let total: usize = 0;
+
+    while (true) {
+      let chunk: [256]char = @uninit();
+
+      switch (self.read(chunk[..])) {
+        .Ok(got) => if (got == 0) {
+          break;
+        } else {
+          (*buf).push_str(chunk[0..got]);
+          total += got;
+        },
+        .Err(e) => {
+          return Result.Err(e);
+        },
+      };
+    };
+
+    return Result.Ok(total);
+  }
+
+  /// Reads up to and including the next newline, appending it to `buf`.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.Interrupted
+  /// * IoErrorKind.Uncategorized
+  pub fn read_line(*self, buf: *String) Result[usize, IoError] {
+    let total: usize = 0;
+
+    while (true) {
+      let one: [1]char = @uninit();
+
+      switch (self.read(one[..])) {
+        .Ok(got) => if (got == 0) {
+          return Result.Ok(total);
+        } else {
+          (*buf).push(one[0]);
+          total += 1;
+
+          if (one[0] == '\n') {
+            return Result.Ok(total);
+          }
+        },
+        .Err(e) => {
+          return Result.Err(e);
+        },
+      };
+    };
+
+    return Result.Ok(total);
+  }
+}
+
+/// Byte sink.
+pub interface Write {
+  /// Writes some bytes from `buf`, returning how many were written.
+  pub fn write(*self, buf: []const char) Result[usize, IoError];
+
+  /// Flushes buffered bytes to the underlying sink.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.Interrupted
+  /// * IoErrorKind.Uncategorized
+  pub fn flush(*self) Result[void, IoError] {
+    return Result.Ok(.{});
+  }
+
+  /// Writes the whole slice, retrying short writes.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.Interrupted
+  /// * IoErrorKind.WriteZero
+  /// * IoErrorKind.Uncategorized
+  pub fn write_all(*self, buf: []const char) Result[usize, IoError] {
+    let total: usize = 0;
+
+    while (total < buf.len) {
+      switch (self.write(buf[total..buf.len])) {
+        .Ok(n) => if (n == 0) {
+          return Result.Err(IoError.new(IoErrorKind.WriteZero, "failed to write whole buffer"));
+        } else {
+          total += n;
+        },
+        .Err(e) => {
+          return Result.Err(e);
+        },
+      };
+    };
+
+    return Result.Ok(total);
+  }
+}
+
+/// Byte cursor.
+pub interface Seek {
+  /// Moves the read/write position, returning the new offset.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.InvalidInput
+  /// * IoErrorKind.Uncategorized
+  pub fn seek(*self, from: SeekFrom) Result[u64, IoError];
+}
+
+/// Readable and seekable view over a slice.
+pub struct Cursor {
+  _data: []const char,
+  _pos: usize,
+}
+
+implement Cursor {
+  /// Cursor starting at the beginning of `data`.
+  pub fn new(data: []const char) Self {
+    return Self {
+      ._data = data,
+      ._pos = 0,
+    };
+  }
+
+  /// Current offset.
+  pub fn position(*const self) usize {
+    return self._pos;
+  }
+
+  /// Moves the offset without bounds checks.
+  pub fn set_position(*self, pos: usize) {
+    self._pos = pos;
+  }
+
+  /// Borrowed contents.
+  pub fn get_ref(*const self) []const char {
+    return self._data;
+  }
+}
+
+implement Read : Cursor {
+  fn read(*self, buf: []char) Result[usize, IoError] {
+    if (self._pos >= self._data.len || buf.len == 0) {
+      return Result.Ok(@as(usize, 0));
+    };
+
+    let take = self._data.len - self._pos;
+
+    if (buf.len < take) {
+      take = buf.len;
+    };
+
+    let i: usize = 0;
+
+    while (i < take) {
+      buf[i] = self._data[self._pos + i];
+      i += 1;
+    };
+
+    self._pos += take;
+
+    return Result.Ok(take);
+  }
+}
+
+implement Seek : Cursor {
+  fn seek(*self, from: SeekFrom) Result[u64, IoError] {
+    let target: i64 = 0;
+
+    switch (from) {
+      .Start(value) => {
+        target = @as(i64, value);
+      },
+      .End(value) => {
+        target = @as(i64, self._data.len) + value;
+      },
+      .Current(value) => {
+        target = @as(i64, self._pos) + value;
+      },
+    };
+
+    if (target < 0) {
+      return Result.Err(IoError.new(IoErrorKind.InvalidInput, "negative seek"));
+    };
+
+    self._pos = @as(usize, target);
+
+    return Result.Ok(@as(u64, target));
+  }
+}
+
+/// Reader with an internal buffer.
+pub struct BufReader[R: Read] {
+  _inner: R,
+  _buf: [8192]char,
+  _pos: usize,
+  _filled: usize,
+}
+
+implement[R: Read] BufReader[R] {
+  /// Wraps `inner` with a fresh buffer.
+  pub fn new(inner: R) Self {
+    return Self {
+      ._inner = inner,
+      ._buf = @uninit(),
+      ._pos = 0,
+      ._filled = 0,
+    };
+  }
+}
+
+implement[R: Read] Read : BufReader[R] {
+  fn read(*self, buf: []char) Result[usize, IoError] {
+    if (buf.len == 0) {
+      return Result.Ok(@as(usize, 0));
+    };
+
+    if (self._pos == self._filled) {
+      switch (self._inner.read(self._buf[..])) {
+        .Ok(got) => {
+          if (got == 0) {
+            return Result.Ok(@as(usize, 0));
+          };
+
+          self._pos = 0;
+          self._filled = got;
+        },
+        .Err(e) => {
+          return Result.Err(e);
+        },
+      };
+    };
+
+    let take = self._filled - self._pos;
+
+    if (buf.len < take) {
+      take = buf.len;
+    };
+
+    let i: usize = 0;
+
+    while (i < take) {
+      buf[i] = self._buf[self._pos + i];
+      i += 1;
+    };
+
+    self._pos += take;
+
+    return Result.Ok(take);
+  }
+}
+
+/// Writer with an internal buffer.
+pub struct BufWriter[W: Write] {
+  _inner: W,
+  _buf: [8192]char,
+  _len: usize,
+}
+
+implement[W: Write] BufWriter[W] {
+  /// Wraps `inner` with a fresh buffer.
+  pub fn new(inner: W) Self {
+    return Self {
+      ._inner = inner,
+      ._buf = @uninit(),
+      ._len = 0,
+    };
+  }
+}
+
+implement[W: Write] BufWriter[W] {
+  /// Unwraps the writer without flushing it.
+  pub fn into_inner(self) W {
+    return self._inner;
+  }
+}
+
+implement[W: Write] Write : BufWriter[W] {
+  fn write(*self, buf: []const char) Result[usize, IoError] {
+    if (buf.len >= 8192) {
+      switch (self.flush()) {
+        .Ok(_) => {},
+        .Err(e) => {
+          return Result.Err(e);
+        },
+      };
+
+      return self._inner.write_all(buf);
+    };
+
+    if (self._len + buf.len > 8192) {
+      switch (self.flush()) {
+        .Ok(_) => {},
+        .Err(e) => {
+          return Result.Err(e);
+        },
+      };
+    };
+
+    let i: usize = 0;
+
+    while (i < buf.len) {
+      self._buf[self._len + i] = buf[i];
+      i += 1;
+    };
+
+    self._len += buf.len;
+
+    return Result.Ok(buf.len);
+  }
+
+  fn flush(*self) Result[void, IoError] {
+    if (self._len > 0) {
+      switch (self._inner.write_all(self._buf[0..self._len])) {
+        .Ok(_) => {
+          self._len = 0;
+        },
+        .Err(e) => {
+          return Result.Err(e);
+        },
+      };
+    };
+
+    return self._inner.flush();
+  }
+}
+
+/// Copies the rest of `reader` into `writer`, returning the byte count.
+///
+/// Possible IoError variants:
+/// * IoErrorKind.Interrupted
+/// * IoErrorKind.WriteZero
+/// * IoErrorKind.Uncategorized
+pub fn copy[R: Read, W: Write](reader: *R, writer: *W) Result[u64, IoError] {
+  let chunk: [4096]char = @uninit();
+  let total: u64 = 0;
+
+  while (true) {
+    switch ((*reader).read(chunk[..])) {
+      .Ok(got) => if (got == 0) {
+        break;
+      } else {
+        switch ((*writer).write_all(chunk[0..got])) {
+          .Ok(_) => {
+            total += @as(u64, got);
+          },
+          .Err(e) => {
+            return Result.Err(e);
+          },
+        }
+      },
+      .Err(e) => {
+        return Result.Err(e);
+      },
+    };
+  };
+
+  return Result.Ok(total);
+}

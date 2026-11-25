@@ -18,3 +18,73 @@ pub fn io_error_keeps_custom_message() {
   assert_eq(error.kind(), IoErrorKind.TimedOut);
   assert_eq(error.message(), String.from("timed out"));
 }
+
+/// @test
+pub fn io_cursor_reads_and_seeks() {
+  let cursor = Cursor.new("hello\nworld");
+  let chunk: [5]char = @uninit();
+
+  assert_eq(cursor.read(chunk[..]).unwrap(), @as(usize, 5));
+  assert_eq(String.from(chunk[..]), String.from("hello"));
+
+  let line = String.new();
+  assert_eq(cursor.read_line(&line).unwrap(), @as(usize, 1));
+  assert_eq(line, String.from("\n"));
+
+  assert_eq(cursor.seek(SeekFrom.End(-5)).unwrap(), @as(u64, 6));
+
+  let rest = String.new();
+  assert_eq(cursor.read_to_string(&rest).unwrap(), @as(usize, 5));
+  assert_eq(rest, String.from("world"));
+  assert_eq(cursor.position(), @as(usize, 11));
+}
+
+/// @test
+pub fn io_cursor_reports_short_reads() {
+  let cursor = Cursor.new("abc");
+  let buf = String.new();
+
+  assert_eq(cursor.read_exact(&buf, 3).unwrap(), @as(usize, 3));
+  assert_eq(buf, String.from("abc"));
+
+  let eof = String.new();
+  assert_eq(cursor.read_exact(&eof, 1).unwrap_err().kind(), IoErrorKind.UnexpectedEof);
+  assert_eq(cursor.seek(SeekFrom.Current(-2)).unwrap(), @as(u64, 1));
+}
+
+struct Sink {
+  pub data: String,
+}
+
+implement Write : Sink {
+  fn write(*self, buf: []const char) Result[usize, IoError] {
+    self.data.push_str(buf);
+
+    return Result.Ok(buf.len);
+  }
+}
+
+/// @test
+pub fn io_buffers_and_copies() {
+  let writer = BufWriter#[Sink].new(Sink { .data = String.new() });
+
+  assert_eq(writer.write_all("hello ").unwrap(), @as(usize, 6));
+  assert_eq(writer.write_all("world").unwrap(), @as(usize, 5));
+  writer.flush().unwrap();
+
+  const sink = writer.into_inner();
+
+  assert_eq(sink.data, String.from("hello world"));
+
+  let reader = BufReader#[Cursor].new(Cursor.new("hello world"));
+  let line = String.new();
+
+  assert_eq(reader.read_line(&line).unwrap(), @as(usize, 11));
+  assert_eq(line, String.from("hello world"));
+
+  let dst = Sink { .data = String.new() };
+  let src = Cursor.new("copy me");
+
+  assert_eq(copy(&src, &dst).unwrap(), @as(u64, 7));
+  assert_eq(dst.data, String.from("copy me"));
+}
