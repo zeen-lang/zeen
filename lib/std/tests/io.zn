@@ -1,0 +1,35 @@
+use std.io;
+use std.string;
+use std.testing;
+
+/// @test
+pub fn io_error_maps_errno() {
+  assert_eq(IoError.from_errno(2).kind(), IoErrorKind.NotFound);
+  assert_eq(IoError.from_errno(13).kind(), IoErrorKind.PermissionDenied);
+  assert_eq(IoError.from_errno(17).kind(), IoErrorKind.AlreadyExists);
+  assert_eq(IoError.from_errno(22).kind(), IoErrorKind.InvalidInput);
+  assert_eq(IoError.from_errno(9999).kind(), IoErrorKind.Uncategorized);
+}
+
+/// @test
+pub fn io_error_keeps_custom_message() {
+  const error = IoError.new(IoErrorKind.TimedOut, "timed out");
+
+  assert_eq(error.kind(), IoErrorKind.TimedOut);
+  assert_eq(error.message(), String.from("timed out"));
+}
+
+/// @test
+pub fn stdio_writes_both_streams() {
+  @os[windows] {
+    return;
+  }
+
+  const text = String.from("str\n");
+
+  Stdout.write("out\n");
+  Stdout.write_string(&text);
+  Stdout.flush();
+  Stderr.write("err\n");
+  Stderr.flush();
+}

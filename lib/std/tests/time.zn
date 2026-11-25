@@ -1,0 +1,25 @@
+use std.time;
+use std.testing;
+
+/// @test
+pub fn duration_converts_units() {
+  const duration = Duration.from_millis(1500);
+
+  assert_eq(duration.as_secs(), @as(u64, 1));
+  assert_eq(duration.as_millis(), @as(u64, 1500));
+  assert_eq(duration.subsec_nanos(), @as(u32, 500000000));
+  assert(Duration.from_secs(0).is_zero());
+}
+
+/// @test
+pub fn sleep_advances_elapsed() {
+  @os[windows] {
+    return;
+  }
+
+  const start = Instant.now();
+  Time.sleep(Duration.from_millis(60));
+
+  assert(start.elapsed().as_millis() >= 50);
+  assert(Time.now() > 1700000000);
+}
