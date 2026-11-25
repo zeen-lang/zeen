@@ -1,0 +1,8 @@
+use std.encoding.percent;
+
+fn main() i32 {
+  @println("[{}][{}][{}]", Percent.encode("hello world"), Percent.encode("a~b.c_d-e"), Percent.encode("?x=1&y=2"));
+  @println("{}", Percent.decode("hello%20world").unwrap());
+  @println("{} {} {}", Percent.decode("%2").is_none(), Percent.decode("%zz").is_none(), Percent.decode("100%25").unwrap());
+  return 0;
+}

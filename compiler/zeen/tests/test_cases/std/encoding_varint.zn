@@ -1,0 +1,29 @@
+use std.encoding.varint;
+
+fn main() i32 {
+  let buf: [32]char = @uninit();
+  let off: usize = 0;
+  Varint.write_u32(buf[..], &off, 0);
+  Varint.write_u32(buf[..], &off, 127);
+  Varint.write_u32(buf[..], &off, 128);
+  Varint.write_u32(buf[..], &off, 300);
+  Varint.write_u64(buf[..], &off, 4294967296);
+  Varint.write_i32(buf[..], &off, -1);
+  Varint.write_i32(buf[..], &off, -64);
+  Varint.write_i64(buf[..], &off, -123456789);
+  @println("len={}", off);
+
+  let pos: usize = 0;
+  @println("{} {} {} {}", Varint.read_u32(buf[0..off], &pos).unwrap(), Varint.read_u32(buf[0..off], &pos).unwrap(), Varint.read_u32(buf[0..off], &pos).unwrap(), Varint.read_u32(buf[0..off], &pos).unwrap());
+  @println("{}", Varint.read_u64(buf[0..off], &pos).unwrap());
+  @println("{} {} {}", Varint.read_i32(buf[0..off], &pos).unwrap(), Varint.read_i32(buf[0..off], &pos).unwrap(), Varint.read_i64(buf[0..off], &pos).unwrap());
+
+  let wide: usize = 0;
+  let skip: usize = 0;
+  while (skip < 4) {
+    let _ = Varint.read_u32(buf[0..off], &wide);
+    skip += 1;
+  };
+  @println("pos={} overflow={} truncated={}", pos, Varint.read_u32(buf[0..off], &wide).is_none(), Varint.read_u64(buf[0..0], &wide).is_none());
+  return 0;
+}

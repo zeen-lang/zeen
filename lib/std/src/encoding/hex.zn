@@ -1,0 +1,40 @@
+/// Hexadecimal encoding.
+pub struct Hex {
+  /// Encode bytes as lowercase hex text.
+  pub fn encode(data: []const char) String {
+    const digits: []const char = "0123456789abcdef";
+    let out = String.new();
+    let i: usize = 0;
+
+    while (i < data.len) {
+      const byte = @as(u32, data[i]);
+      out.push(digits[@as(usize, byte >> 4)]);
+      out.push(digits[@as(usize, byte & 15)]);
+      i += 1;
+    }
+
+    return out;
+  }
+
+  /// Decode hex text, `None` on malformed input.
+  pub fn decode(data: []const char) Option[String] {
+    if (data.len % 2 != 0) {
+      return Option.None;
+    };
+
+    let out = String.new();
+    let i: usize = 0;
+
+    while (i < data.len) {
+      const hi = data[i].to_digit(16);
+      const lo = data[i + 1].to_digit(16);
+      if (hi.is_none() || lo.is_none()) {
+        return Option.None;
+      };
+      out.push(@as(char, (hi.unwrap() << 4) | lo.unwrap()));
+      i += 2;
+    }
+
+    return Option.Some(out);
+  }
+}
