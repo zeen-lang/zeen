@@ -3,6 +3,7 @@ use std.crypto.blake3;
 use std.crypto.hash;
 use std.crypto.hmac;
 use std.crypto.random;
+use std.crypto.sha1;
 use std.crypto.sha256;
 use std.crypto.sha3;
 use std.crypto.sha512;
@@ -316,4 +317,23 @@ pub fn blake3_tree_vectors() {
   assert_eq(Blake3.hexdigest(a2049[..]), String.from("5f4d72f40d7a5f82b15ca2b2e44b1de3c2ef86c426c95c1af0b6879522563030"));
   assert_eq(Blake3.hexdigest(a3072[..]), String.from("b98cb0ff3623be03326b373de6b9095218513e64f1ee2edd2525c7ad1e5cffd2"));
   assert_eq(Blake3.hexdigest(a4096[..]), String.from("015094013f57a5277b59d8475c0501042c0b642e531b0a1c8f58d2163229e969"));
+}
+
+/// @test
+pub fn sha1_vectors() {
+  let data: [200]char = {'a'; 200};
+
+  assert_eq(Sha1.hexdigest(""), String.from("da39a3ee5e6b4b0d3255bfef95601890afd80709"));
+  assert_eq(Sha1.hexdigest("abc"), String.from("a9993e364706816aba3e25717850c26c9cd0d89d"));
+  assert_eq(Sha1.hexdigest(data[..]), String.from("e61cfffe0d9195a525fc6cf06ca2d77119c24a40"));
+}
+
+/// @test
+pub fn sha1_streaming_matches_one_shot() {
+  let hasher = Sha1.new();
+
+  hasher.update("a");
+  hasher.update("bc");
+
+  assert_eq(Hashing.hexdigest(hasher.finalize()[..]), String.from("a9993e364706816aba3e25717850c26c9cd0d89d"));
 }

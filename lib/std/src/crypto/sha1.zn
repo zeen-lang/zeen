@@ -1,0 +1,177 @@
+use std.string;
+use std.crypto.hash;
+
+fn rotr32(x: u32, n: u32) u32 {
+  return (x >> n) | (x << (32 - n));
+}
+
+fn compress160(state: *[5]u32, block: []const char) {
+  let w: [80]u32 = {0; 80};
+
+  let word: usize = 0;
+  while (word < 16) {
+    const offset = word * 4;
+    const byte0 = @as(u32, block[offset]) << 24;
+    const byte1 = @as(u32, block[offset + 1]) << 16;
+    const byte2 = @as(u32, block[offset + 2]) << 8;
+    const byte3 = @as(u32, block[offset + 3]);
+
+    w[word] = (byte0 | byte1) | (byte2 | byte3);
+    word += 1;
+  }
+
+  let sched: usize = 16;
+  while (sched < 80) {
+    w[sched] = rotr32(w[sched - 3] ^ w[sched - 8] ^ w[sched - 14] ^ w[sched - 16], 31);
+    sched += 1;
+  }
+
+  let a = state[0];
+  let b = state[1];
+  let c = state[2];
+  let d = state[3];
+  let e = state[4];
+
+  let round: usize = 0;
+  while (round < 80) {
+    let f: u32 = 0;
+    let k: u32 = 0;
+
+    if (round < 20) {
+      f = (b & c) | ((b ^ 0xFFFFFFFF) & d);
+      k = 0x5a827999;
+    } else if (round < 40) {
+      f = b ^ c ^ d;
+      k = 0x6ed9eba1;
+    } else if (round < 60) {
+      f = (b & c) | (b & d) | (c & d);
+      k = 0x8f1bbcdc;
+    } else {
+      f = b ^ c ^ d;
+      k = 0xca62c1d6;
+    };
+
+    const temp = (rotr32(a, 27) + f + e + k) + w[round];
+
+    e = d;
+    d = c;
+    c = rotr32(b, 2);
+    b = a;
+    a = temp;
+    round += 1;
+  }
+
+  state[0] += a;
+  state[1] += b;
+  state[2] += c;
+  state[3] += d;
+  state[4] += e;
+}
+
+pub struct Sha1 {
+  _state: [5]u32,
+  _buffer: [64]char,
+  _buffered: usize,
+  _length: u64,
+}
+
+implement Sha1 {
+  pub fn new() Self {
+    const state: [5]u32 = {0; 5};
+    let hasher = Self { ._state = state, ._buffer = {'\0'; 64}, ._buffered = 0, ._length = 0 };
+
+    hasher.reset();
+    return hasher;
+  }
+
+  pub fn digest(data: []const char) [20]char {
+    let hasher = Sha1.new();
+
+    hasher.update(data);
+    return hasher.finalize();
+  }
+
+  pub fn hexdigest(data: []const char) String {
+    const out = Sha1.digest(data);
+
+    return Hashing.hexdigest(out[..]);
+  }
+}
+
+implement Digest : Sha1 {
+  alias Output = [20]char;
+
+  pub fn update(*self, data: []const char) {
+    let i: usize = 0;
+
+    while (i < data.len) {
+      self._buffer[self._buffered] = data[i];
+      self._buffered += 1;
+      self._length += 1;
+
+      if (self._buffered == 64) {
+        compress160(&self._state, self._buffer[..]);
+        self._buffered = 0;
+      };
+
+      i += 1;
+    }
+  }
+
+  pub fn finalize(*self) [20]char {
+    const bit_length = self._length * 8;
+
+    self._buffer[self._buffered] = @as(char, 128);
+    self._buffered += 1;
+
+    if (self._buffered > 56) {
+      while (self._buffered < 64) {
+        self._buffer[self._buffered] = '\0';
+        self._buffered += 1;
+      };
+
+      compress160(&self._state, self._buffer[..]);
+      self._buffered = 0;
+    };
+
+    while (self._buffered < 56) {
+      self._buffer[self._buffered] = '\0';
+      self._buffered += 1;
+    };
+
+    let shift: u64 = 56;
+    while (true) {
+      self._buffer[self._buffered] = @as(char, bit_length >> shift);
+      self._buffered += 1;
+
+      if (shift == 0) {
+        break;
+      };
+
+      shift -= 8;
+    };
+
+    compress160(&self._state, self._buffer[..]);
+
+    let out: [20]char = {'\0'; 20};
+    let word: usize = 0;
+    while (word < 5) {
+      const value = self._state[word];
+
+      out[word * 4] = @as(char, value >> 24);
+      out[word * 4 + 1] = @as(char, value >> 16);
+      out[word * 4 + 2] = @as(char, value >> 8);
+      out[word * 4 + 3] = @as(char, value);
+      word += 1;
+    };
+
+    self.reset();
+    return out;
+  }
+
+  pub fn reset(*self) {
+    self._state = {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0};
+    self._buffered = 0;
+    self._length = 0;
+  }
+}
