@@ -15,9 +15,18 @@ env:
 
 jobs:
   std-check:
-    name: Standard Library Check
+    name: Standard Library Check (${{ matrix.os }})
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-2025 ]
+
+    defaults:
+      run:
+        shell: bash
 
     steps:
 
@@ -34,10 +43,16 @@ jobs:
       with:
         llvm-version: 22
 
+    # LLVM on Windows links xml2 through the import library
+    - name: Provide xml2s.lib
+      if: runner.os == 'Windows'
+      working-directory: ./compiler
+      run: cp xml2s.lib "$(llvm-config --libdir)/xml2s.lib"
+
     - name: Cache Rust
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
-        key: std-check
+        key: std-check-${{ matrix.os }}
 
     - name: Build Zeen
       working-directory: ./compiler
@@ -46,7 +61,7 @@ jobs:
     - name: Install Zeen and Zora
       run: |
         mkdir -p "$GITHUB_WORKSPACE/dist/bin"
-        cp compiler/target/release/zeen "$GITHUB_WORKSPACE/dist/bin/zeen"
+        cp compiler/target/release/zeen* "$GITHUB_WORKSPACE/dist/bin/"
         echo "$GITHUB_WORKSPACE/dist/bin" >> "$GITHUB_PATH"
         cargo install --git https://github.com/zeen-lang/zora --locked --root "$GITHUB_WORKSPACE/dist" --force zora
 
@@ -60,3 +75,9 @@ jobs:
       env:
         ZEEN_STD: ${{ github.workspace }}/lib/std
       run: zora check --all
+
+    - name: Test Standard Library
+      working-directory: ./lib/std
+      env:
+        ZEEN_STD: ${{ github.workspace }}/lib/std
+      run: zora test
