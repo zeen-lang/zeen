@@ -1,0 +1,99 @@
+use std.json;
+use std.string;
+use std.testing;
+
+fn parse(text: []const char) JsonValue {
+  return JsonValue.parse(text).unwrap();
+}
+
+fn assert_error(text: []const char, unexpected_char: bool, pos: usize) {
+  const doc = JsonValue.parse(text);
+
+  assert(doc.is_err());
+
+  const error = doc.unwrap_err();
+  assert_eq(error.kind == JsonErrorKind.UnexpectedChar, unexpected_char);
+  assert_eq(error.pos, pos);
+}
+
+/// @test
+pub fn json_parses_values() {
+  assert_eq(parse("{}").stringify(), String.from("{}"));
+  assert_eq(parse("[]").stringify(), String.from("[]"));
+  assert_eq(parse("{\"a\": [1, -2.5e3, true, null, \"x\"]}").stringify(), String.from("{\"a\":[1,-2.5e3,true,null,\"x\"]}"));
+  assert_eq(parse("\"a\\\"b\\\\c\\/d\\b\\f\\n\\r\\t\"").stringify(), String.from("\"a\\\"b\\\\c/d\\b\\f\\n\\r\\t\""));
+  assert_eq(parse("[0, -0, 123, -45.67, 1e10, 2E-3, 1.5e+2]").stringify(), String.from("[0,-0,123,-45.67,1e10,2E-3,1.5e+2]"));
+  assert_eq(parse("{\"k\": 1, \"k\": 2}").stringify(), String.from("{\"k\":2}"));
+  assert_eq(parse("  { \"a\" : 1 }  ").stringify(), String.from("{\"a\":1}"));
+}
+
+/// @test
+pub fn json_allows_trailing_commas() {
+  assert_eq(parse("[1, 2,]").stringify(), String.from("[1,2]"));
+  assert_eq(parse("{\"a\": 1,}").stringify(), String.from("{\"a\":1}"));
+  assert_eq(parse("{\"a\": [1,],}").stringify(), String.from("{\"a\":[1]}"));
+}
+
+/// @test
+pub fn json_rejects_malformed() {
+  assert_error("{,}", true, 1);
+  assert_error("[1,,2]", true, 3);
+  assert_error("[1,,]", true, 3);
+  assert_error("{\"a\"}", true, 4);
+  assert_error("{\"a\": 01}", true, 7);
+  assert_error("[1, 2", true, 5);
+  assert_error("\"\\x\"", false, 3);
+  assert_error("\"abc", false, 4);
+  assert_error("[1 2]", true, 3);
+  assert_error("{\"a\": 1} trailing", false, 9);
+  assert_error("", false, 0);
+  assert_error("nul", true, 3);
+  assert_error("12.", false, 0);
+}
+
+/// @test
+pub fn json_unicode_escapes() {
+  let doc = parse("\"\\u0041\\u00e9\"");
+  const text = doc.as_str().unwrap();
+
+  assert_eq(text.len(), 3);
+  assert_eq(@as(u32, text[2]), 169);
+
+  const big = JsonValue.parse("\"\\u4e2d\"");
+
+  assert(big.is_ok());
+  assert_eq(big.unwrap().as_str().unwrap().len(), 3);
+}
+
+/// @test
+pub fn json_accessors() {
+  let root = parse("{\"n\": -42, \"f\": 2.5, \"b\": false, \"z\": null, \"a\": [10, 20]}");
+
+  assert_eq(root.get("n").unwrap().as_i64().unwrap(), -42);
+  assert(root.get("f").unwrap().as_f64().unwrap() == 2.5);
+  assert(!root.get("b").unwrap().as_bool().unwrap());
+  assert(root.get("z").unwrap().is_null());
+  assert(root.get("nope").is_none());
+  assert_eq(root.len(), 5);
+  assert_eq(root.get("a").unwrap().len(), 2);
+  assert_eq(root.get("a").unwrap().at(1).unwrap().as_i64().unwrap(), 20);
+  assert(root.get("a").unwrap().at(9).is_none());
+  assert(root.get("n").unwrap().as_str().is_none());
+  assert(root.get("a").unwrap().is_array());
+  assert(root.is_object());
+  assert(root.get("n").unwrap().is_num());
+  assert(root.get("b").unwrap().is_bool());
+}
+
+/// @test
+pub fn json_stringify_roundtrip() {
+  let root = parse("{\"n\": -42, \"f\": 2.5, \"b\": false, \"z\": null, \"a\": [10, 20]}");
+
+  assert_eq(root.stringify(), String.from("{\"n\":-42,\"f\":2.5,\"b\":false,\"z\":null,\"a\":[10,20]}"));
+
+  const scalar = parse("\"hi\"");
+
+  assert(scalar.is_str());
+  assert(!scalar.is_num());
+  assert_eq(scalar.as_str().unwrap().len(), 2);
+}
