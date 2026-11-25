@@ -147,7 +147,8 @@ impl Toolchain {
                     .arg("/ENTRY:mainCRTStartup")
                     .arg("/NODEFAULTLIB:msvcrt.lib")
                     .arg("libcmt.lib")
-                    .arg("kernel32.lib");
+                    .arg("kernel32.lib")
+                    .arg("advapi32.lib");
 
                 for lib in link_libs {
                     command.arg(format!("{lib}.lib"));
