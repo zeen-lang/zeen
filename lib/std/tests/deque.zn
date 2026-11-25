@@ -1,0 +1,46 @@
+use std.collections.deque;
+use std.testing;
+
+/// @test
+pub fn deque_pushes_and_pops_both_ends() {
+  let deque = Deque#[i32].new();
+
+  deque.push_back(2);
+  deque.push_back(3);
+  deque.push_front(1);
+
+  assert_eq(deque.len(), @as(usize, 3));
+  assert_eq(*deque.front().unwrap(), 1);
+  assert_eq(*deque.back().unwrap(), 3);
+  assert_eq(*deque.get(1).unwrap(), 2);
+
+  assert_eq(deque.pop_front().unwrap(), 1);
+  assert_eq(deque.pop_back().unwrap(), 3);
+  assert_eq(deque.len(), @as(usize, 1));
+  assert_eq(deque.pop_front().unwrap(), 2);
+  assert(deque.is_empty());
+  assert(deque.pop_front().is_none());
+}
+
+/// @test
+pub fn deque_drains_from_either_end() {
+  let deque = Deque#[i32].new();
+
+  let i: i32 = 0;
+  while (i < 4) {
+    deque.push_back(i);
+    i += 1;
+  };
+
+  assert_eq(deque.pop_front().unwrap(), 0);
+  assert_eq(deque.pop_front().unwrap(), 1);
+  assert_eq(deque.pop_back().unwrap(), 3);
+  assert_eq(deque.pop_back().unwrap(), 2);
+  assert(deque.pop_back().is_none());
+
+  deque.push_front(7);
+  *deque.get_mut(0).unwrap() = 9;
+  assert_eq(*deque.get(0).unwrap(), 9);
+  deque.clear();
+  assert(deque.is_empty());
+}

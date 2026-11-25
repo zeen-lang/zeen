@@ -1,0 +1,179 @@
+use std.collections.list;
+
+/// Max-heap over ordered items.
+pub struct BinaryHeap[T: Ord] {
+  _items: List[T],
+}
+
+implement[T: Ord] BinaryHeap[T] {
+  /// Empty heap.
+  pub fn new() Self {
+    return Self { ._items = List#[T].new() };
+  }
+
+  /// Number of items.
+  pub fn len(*const self) usize {
+    return self._items.len();
+  }
+
+  /// Checks that the heap holds nothing.
+  pub fn is_empty(*const self) bool {
+    return self._items.is_empty();
+  }
+
+  /// Borrows the largest item.
+  pub fn peek(*const self) Option[*T] {
+    return self._items.get_ptr(0);
+  }
+
+  /// Adds `value`.
+  pub fn push(*self, value: T) {
+    self._items.push(value);
+    self.sift_up(self._items.len() - 1);
+  }
+
+  /// Removes and returns the largest item.
+  pub fn pop(*self) Option[T] {
+    if (self._items.is_empty()) {
+      return Option.None;
+    };
+
+    const last = self._items.len() - 1;
+    self._items.swap(0, last);
+
+    switch (self._items.pop()) {
+      .Some(out) => {
+        self.sift_down(0);
+        return Option.Some(out);
+      },
+      .None => Option.None,
+    }
+  }
+
+  /// Drops every item.
+  pub fn clear(*self) {
+    while (true) {
+      switch (self._items.pop()) {
+        .Some(value) => {
+          let _drop = value;
+        },
+        .None => {
+          break;
+        },
+      };
+    }
+  }
+
+  fn sift_up(*self, start: usize) {
+    let child = start;
+
+    while (child > 0) {
+      const parent = (child - 1) / 2;
+      let greater = false;
+
+      switch (self._items.get_ptr(parent)) {
+        .Some(p) => switch (self._items.get_ptr(child)) {
+          .Some(c) => switch ((*c).cmp(p)) {
+            .Greater => {
+              greater = true;
+            },
+            _ => {},
+          },
+          .None => {},
+        },
+        .None => {},
+      };
+
+      if (!greater) {
+        break;
+      };
+
+      self._items.swap(parent, child);
+      child = parent;
+    };
+  }
+
+  fn sift_down(*self, start: usize) {
+    let parent = start;
+
+    while (true) {
+      const left = parent * 2 + 1;
+      const right = left + 1;
+      let best = parent;
+
+      switch (self._items.get_ptr(left)) {
+        .Some(l) => switch (self._items.get_ptr(best)) {
+          .Some(b) => switch ((*l).cmp(b)) {
+            .Greater => {
+              best = left;
+            },
+            _ => {},
+          },
+          .None => {},
+        },
+        .None => {},
+      };
+
+      switch (self._items.get_ptr(right)) {
+        .Some(r) => switch (self._items.get_ptr(best)) {
+          .Some(b) => switch ((*r).cmp(b)) {
+            .Greater => {
+              best = right;
+            },
+            _ => {},
+          },
+          .None => {},
+        },
+        .None => {},
+      };
+
+      if (best == parent) {
+        break;
+      };
+
+      self._items.swap(parent, best);
+      parent = best;
+    };
+  }
+}
+
+implement[T: Ord] Drop : BinaryHeap[T] {
+  fn drop(self) {
+    self.clear();
+  }
+}
+
+implement[T: Ord] FromIterator : BinaryHeap[T] {
+  alias Item = T;
+
+  fn empty() Self {
+    return BinaryHeap.new();
+  }
+
+  fn push(*self, item: T) {
+    self.push(item);
+  }
+}
+
+/// Reverses the ordering of `T`.
+pub struct Reverse[T: Ord] {
+  pub value: T,
+}
+
+implement[T: Ord] Reverse[T] {
+  /// Wraps `value`.
+  pub fn new(value: T) Self {
+    return Self { .value = value };
+  }
+
+  /// Returns the wrapped value.
+  pub fn into_inner(self) T {
+    return self.value;
+  }
+}
+
+implement[T: Ord] Ord : Reverse[T] {
+  fn cmp(*const self, other: *const Self) Ordering {
+    return other.value.cmp(&self.value);
+  }
+}

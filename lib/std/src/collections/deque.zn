@@ -1,0 +1,157 @@
+use std.collections.list;
+
+/// Double ended queue with amortized constant time ends.
+pub struct Deque[T] {
+  _front: List[T],
+  _back: List[T],
+}
+
+implement[T] Deque[T] {
+  /// Empty deque.
+  pub fn new() Self {
+    return Self {
+      ._front = List#[T].new(),
+      ._back = List#[T].new(),
+    };
+  }
+
+  /// Number of items.
+  pub fn len(*const self) usize {
+    return self._front.len() + self._back.len();
+  }
+
+  /// Checks that the deque holds nothing.
+  pub fn is_empty(*const self) bool {
+    return self.len() == 0;
+  }
+
+  /// Prepends `value`.
+  pub fn push_front(*self, value: T) {
+    self._front.push(value);
+  }
+
+  /// Appends `value`.
+  pub fn push_back(*self, value: T) {
+    self._back.push(value);
+  }
+
+  /// Borrows the first item.
+  pub fn front(*const self) Option[*T] {
+    if (!self._front.is_empty()) {
+      return self._front.get_ptr(self._front.len() - 1);
+    };
+
+    if (!self._back.is_empty()) {
+      return self._back.get_ptr(0);
+    };
+
+    return Option.None;
+  }
+
+  /// Borrows the last item.
+  pub fn back(*const self) Option[*T] {
+    if (!self._back.is_empty()) {
+      return self._back.get_ptr(self._back.len() - 1);
+    };
+
+    if (!self._front.is_empty()) {
+      return self._front.get_ptr(0);
+    };
+
+    return Option.None;
+  }
+
+  /// Removes and returns the first item.
+  pub fn pop_front(*self) Option[T] {
+    if (self._front.is_empty()) {
+      self.refill_front();
+    };
+
+    return self._front.pop();
+  }
+
+  /// Removes and returns the last item.
+  pub fn pop_back(*self) Option[T] {
+    if (self._back.is_empty()) {
+      self.refill_back();
+    };
+
+    return self._back.pop();
+  }
+
+  /// Borrows the item at `index`.
+  pub fn get(*const self, index: usize) Option[*T] {
+    if (index >= self.len()) {
+      return Option.None;
+    };
+
+    if (index < self._front.len()) {
+      return self._front.get_ptr(self._front.len() - 1 - index);
+    };
+
+    return self._back.get_ptr(index - self._front.len());
+  }
+
+  /// Borrows the item at `index` for writing.
+  pub fn get_mut(*self, index: usize) Option[*T] {
+    if (index >= self.len()) {
+      return Option.None;
+    };
+
+    if (index < self._front.len()) {
+      return self._front.get_ptr(self._front.len() - 1 - index);
+    };
+
+    return self._back.get_ptr(index - self._front.len());
+  }
+
+  /// Drops every item.
+  pub fn clear(*self) {
+    while (true) {
+      switch (self.pop_front()) {
+        .Some(value) => {
+          let _drop = value;
+        },
+        .None => {
+          break;
+        },
+      };
+    };
+  }
+
+  fn refill_front(*self) {
+    while (!self._back.is_empty()) {
+      switch (self._back.pop()) {
+        .Some(value) => self._front.push(value),
+        .None => {},
+      };
+    };
+  }
+
+  fn refill_back(*self) {
+    while (!self._front.is_empty()) {
+      switch (self._front.pop()) {
+        .Some(value) => self._back.push(value),
+        .None => {},
+      };
+    };
+  }
+}
+
+implement[T] Drop : Deque[T] {
+  fn drop(self) {
+    self.clear();
+  }
+}
+
+implement[T] FromIterator : Deque[T] {
+  alias Item = T;
+
+  fn empty() Self {
+    return Deque.new();
+  }
+
+  fn push(*self, item: T) {
+    self.push_back(item);
+  }
+}

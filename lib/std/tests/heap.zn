@@ -1,0 +1,33 @@
+use std.collections.heap;
+use std.testing;
+
+/// @test
+pub fn heap_orders_items() {
+  let heap = BinaryHeap#[i32].new();
+
+  heap.push(3);
+  heap.push(1);
+  heap.push(5);
+  heap.push(4);
+
+  assert_eq(heap.len(), @as(usize, 4));
+  assert_eq(*heap.peek().unwrap(), 5);
+  assert_eq(heap.pop().unwrap(), 5);
+  assert_eq(heap.pop().unwrap(), 4);
+  assert_eq(heap.pop().unwrap(), 3);
+  assert_eq(heap.pop().unwrap(), 1);
+  assert(heap.pop().is_none());
+}
+
+/// @test
+pub fn heap_reverse_becomes_min_heap() {
+  let heap = BinaryHeap#[Reverse[i32]].new();
+
+  heap.push(Reverse.new(2));
+  heap.push(Reverse.new(7));
+  heap.push(Reverse.new(4));
+
+  assert_eq(heap.pop().unwrap().into_inner(), 2);
+  assert_eq(heap.pop().unwrap().into_inner(), 4);
+  assert_eq(heap.pop().unwrap().into_inner(), 7);
+}
