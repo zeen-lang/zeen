@@ -2,7 +2,25 @@
 pub struct Base64 {
   /// Encode bytes as base64 text.
   pub fn encode(data: []const char) String {
-    const alphabet: []const char = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    return Base64.encode_with(data, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/");
+  }
+
+  /// Encode bytes as URL-safe base64 text.
+  pub fn encode_url(data: []const char) String {
+    return Base64.encode_with(data, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_");
+  }
+
+  /// Decode base64 text, `None` on malformed input.
+  pub fn decode(data: []const char) Option[String] {
+    return Base64.decode_with(data, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/");
+  }
+
+  /// Decode URL-safe base64 text, `None` on malformed input.
+  pub fn decode_url(data: []const char) Option[String] {
+    return Base64.decode_with(data, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_");
+  }
+
+  fn encode_with(data: []const char, alphabet: []const char) String {
     let out = String.new();
 
     let i: usize = 0;
@@ -33,60 +51,89 @@ pub struct Base64 {
     return out;
   }
 
-  /// Decode base64 text, `None` on malformed input.
-  pub fn decode(data: []const char) Option[String] {
-    if (data.len % 4 != 0) {
+  fn decode_with(data: []const char, alphabet: []const char) Option[String] {
+    let end = data.len;
+    let pad: usize = 0;
+    while (end > 0 && data[end - 1] == '=') {
+      pad += 1;
+      end -= 1;
+    };
+
+    if (pad > 2) {
+      return Option.None;
+    };
+    if (pad > 0 && (data.len % 4 != 0 || end % 4 + pad != 4)) {
+      return Option.None;
+    };
+
+    const tail = end % 4;
+    if (tail == 1) {
       return Option.None;
     };
 
     let out = String.new();
-    const groups = data.len / 4;
+    const groups = end / 4;
     let group: usize = 0;
 
     while (group < groups) {
-      const last = group + 1 == groups;
-      let sextets: [4]u32 = {0; 4};
-      let pad: usize = 0;
-
-      let pos: usize = 0;
-      while (pos < 4) {
-        const ch = data[group * 4 + pos];
-        if (ch == '=') {
-          pad += 1;
-        } else {
-          const value = Base64.sextet(ch);
-          if (value.is_none()) {
-            return Option.None;
-          };
-          sextets[pos] = value.unwrap();
-        };
-        pos += 1;
-      }
-
-      if (pad > 2) {
+      const base = group * 4;
+      const sextets = Base64.group(data, base, 4, alphabet);
+      if (sextets.is_none()) {
         return Option.None;
       };
-      if (pad > 0 && !last) {
-        return Option.None;
-      };
-
-      const triplet = ((sextets[0] << 18) | (sextets[1] << 12)) | ((sextets[2] << 6) | sextets[3]);
+      const s = sextets.unwrap();
+      const triplet = ((s[0] << 18) | (s[1] << 12)) | ((s[2] << 6) | s[3]);
       out.push(@as(char, triplet >> 16));
-      if (pad < 2) {
-        out.push(@as(char, (triplet >> 8) & 255));
-      };
-      if (pad < 1) {
-        out.push(@as(char, triplet & 255));
-      };
-
+      out.push(@as(char, (triplet >> 8) & 255));
+      out.push(@as(char, triplet & 255));
       group += 1;
     }
+
+    if (tail == 2) {
+      const sextets = Base64.group(data, end - 2, 2, alphabet);
+      if (sextets.is_none()) {
+        return Option.None;
+      };
+      const s = sextets.unwrap();
+      if ((s[1] & 15) != 0) {
+        return Option.None;
+      };
+      const triplet = (s[0] << 18) | (s[1] << 12);
+      out.push(@as(char, triplet >> 16));
+    } else if (tail == 3) {
+      const sextets = Base64.group(data, end - 3, 3, alphabet);
+      if (sextets.is_none()) {
+        return Option.None;
+      };
+      const s = sextets.unwrap();
+      if ((s[2] & 3) != 0) {
+        return Option.None;
+      };
+      const triplet = ((s[0] << 18) | (s[1] << 12)) | (s[2] << 6);
+      out.push(@as(char, triplet >> 16));
+      out.push(@as(char, (triplet >> 8) & 255));
+    };
 
     return Option.Some(out);
   }
 
-  fn sextet(ch: char) Option[u32] {
-    const alphabet: []const char = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  fn group(data: []const char, start: usize, count: usize, alphabet: []const char) Option[[4]u32] {
+    let sextets: [4]u32 = {0; 4};
+    let i: usize = 0;
+
+    while (i < count) {
+      const value = Base64.sextet(data[start + i], alphabet);
+      if (value.is_none()) {
+        return Option.None;
+      };
+      sextets[i] = value.unwrap();
+      i += 1;
+    }
+
+    return Option.Some(sextets);
+  }
+
+  fn sextet(ch: char, alphabet: []const char) Option[u32] {
     let i: usize = 0;
 
     while (i < alphabet.len) {

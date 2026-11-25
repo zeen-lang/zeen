@@ -6,6 +6,12 @@ fn main() i32 {
   if (back.is_some()) {
     @println("roundtrip={}", back.unwrap());
   };
-  @println("bad1={} bad2={}", Base64.decode("abc").is_none(), Base64.decode("!!!!").is_none());
+  @println("bad={} {}", Base64.decode("!!!!").is_none(), Base64.decode("a").is_none());
+  @println("nopad={} {}", Base64.decode("Zg").unwrap(), Base64.decode("Zm8").unwrap());
+  @println("strict={} {} {}", Base64.decode("Z===").is_none(), Base64.decode("Zg=").is_none(), Base64.decode("Zh==").is_none());
+  const raw: [2]char = {@as(char, 251), @as(char, 255)};
+  const url = Base64.encode_url(raw[..]);
+  @println("url={} back={}", url, Base64.decode_url(url.trim()).unwrap().len());
+  @println("urlbad={}", Base64.decode_url("+/8=").is_none());
   return 0;
 }
