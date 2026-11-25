@@ -123,6 +123,13 @@ use std.c.windows.windef;
     options: WinDWORD,
   ) WinBOOL;
 
+  pub const FILE_ATTRIBUTE_READONLY: WinDWORD = 0x00000001;
+
+  pub extern fn SetFileAttributesA(path: [*]const c_char, attrs: WinDWORD) WinBOOL;
+  pub extern fn CreateHardLinkA(new_file: [*]const c_char, existing: [*]const c_char, attrs: *void) WinBOOL;
+  pub extern fn CreateSymbolicLinkA(link_name: [*]const c_char, target: [*]const c_char, flags: WinDWORD) WinBOOL;
+  pub extern fn GetFullPathNameA(path: [*]const c_char, len: WinDWORD, buf: [*]c_char, file_part: *[*]c_char) WinDWORD;
+
   pub extern fn DeleteFileW(name: [*]const c_wchar_t) WinBOOL;
   pub extern fn DeleteFileA(name: [*]const c_char) WinBOOL;
   pub extern fn MoveFileW(existing: [*]const c_wchar_t, new_file: [*]const c_wchar_t) WinBOOL;

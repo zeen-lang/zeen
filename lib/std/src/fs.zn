@@ -1,10 +1,12 @@
 use std.alloc;
 use std.string;
+use std.path;
 use std.collections.list;
 use std.io;
 use std.c.types;
 use std.c.string;
 use std.c.stdio;
+use std.c.stdlib;
 use std.c.errno;
 
 @os[windows] {
@@ -841,6 +843,11 @@ implement DirEntry {
     self._path
   }
 
+  /// Full path of the entry as a borrowed slice.
+  pub fn path(*const self) []const char {
+    self._path.slice(..)
+  }
+
   /// Checks a directory.
   pub fn is_dir(*const self) bool {
     self._is_dir
@@ -854,6 +861,33 @@ implement DirEntry {
   /// Checks a symlink.
   pub fn is_symlink(*const self) bool {
     self._is_symlink
+  }
+}
+
+/// Permission flags of a filesystem entry.
+pub struct Permissions {
+  _readonly: bool,
+}
+
+implement Permissions {
+  /// Writable permissions.
+  pub fn new() Self {
+    return Self { ._readonly = false };
+  }
+
+  /// Read-only or writable.
+  pub fn from_readonly(value: bool) Self {
+    return Self { ._readonly = value };
+  }
+
+  /// Checks that writes are denied.
+  pub fn readonly(*const self) bool {
+    return self._readonly;
+  }
+
+  /// Makes the entry read-only or writable.
+  pub fn set_readonly(*self, value: bool) {
+    self._readonly = value;
   }
 }
 
@@ -1217,5 +1251,361 @@ pub struct Fs {
         return Result.Err(e);
       }
     }
+  }
+
+  /// Create a directory and any missing parents.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.PermissionDenied
+  /// * IoErrorKind.NotADirectory
+  /// * IoErrorKind.Uncategorized
+  pub fn create_dir_all(path: []const char) Result[void, IoError] {
+    if (path.len == 0) {
+      return Result.Ok(.{});
+    };
+
+    switch (Fs.metadata(path)) {
+      .Ok(meta) => {
+        if (meta.is_dir()) {
+          return Result.Ok(.{});
+        };
+
+        return Result.Err(IoError.new(IoErrorKind.NotADirectory, "path exists and is not a directory"));
+      },
+      .Err(&_) => {},
+    }
+
+    const up = Path.new(path).parent();
+
+    if (up.is_some()) {
+      const base = up.unwrap().as_str();
+
+      if (base.len > 0) {
+        switch (Fs.create_dir_all(base)) {
+          .Ok(_) => {},
+          .Err(e) => {
+            return Result.Err(e);
+          },
+        }
+      };
+    };
+
+    switch (Fs.create_dir(path)) {
+      .Ok(_) => Result.Ok(.{}),
+      .Err(e) => {
+        if (Fs.exists(path)) {
+          return Result.Ok(.{});
+        };
+
+        return Result.Err(e);
+      },
+    }
+  }
+
+  /// Delete a directory with everything inside it.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.NotFound
+  /// * IoErrorKind.PermissionDenied
+  /// * IoErrorKind.NotADirectory
+  /// * IoErrorKind.Uncategorized
+  pub fn remove_dir_all(path: []const char) Result[void, IoError] {
+    let is_link = false;
+
+    switch (Fs.symlink_metadata(path)) {
+      .Ok(meta) => {
+        is_link = meta.is_symlink();
+      },
+      .Err(&_) => {},
+    }
+
+    switch (Fs.metadata(path)) {
+      .Ok(meta) => {
+        if (is_link || !meta.is_dir()) {
+          return Fs.remove_file(path);
+        };
+      },
+      .Err(e) => {
+        return Result.Err(e);
+      },
+    }
+
+    switch (Fs.read_dir(path)) {
+      .Ok(entries) => {
+        let rest = entries;
+
+        while (true) {
+          const next = rest.pop();
+
+          if (next.is_none()) {
+            break;
+          };
+
+          const entry = next.unwrap();
+          const is_dir = entry.is_dir();
+          const is_entry_link = entry.is_symlink();
+          const child = entry.into_path();
+
+          if (is_dir && !is_entry_link) {
+            switch (Fs.remove_dir_all(child.slice(..))) {
+              .Ok(_) => {},
+              .Err(e) => {
+                return Result.Err(e);
+              },
+            }
+          } else {
+            switch (Fs.remove_file(child.slice(..))) {
+              .Ok(_) => {},
+              .Err(e) => {
+                return Result.Err(e);
+              },
+            }
+          };
+        };
+      },
+      .Err(e) => {
+        return Result.Err(e);
+      },
+    }
+
+    return Fs.remove_dir(path);
+  }
+
+  /// Copy the file at `from` over `to`, returning the copied size.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.NotFound
+  /// * IoErrorKind.PermissionDenied
+  /// * IoErrorKind.IsADirectory
+  /// * IoErrorKind.Uncategorized
+  pub fn copy(from: []const char, to: []const char) Result[u64, IoError] {
+    switch (Fs.read_to_string(from)) {
+      .Ok(contents) => {
+        switch (Fs.write(to, contents.slice(..))) {
+          .Ok(size) => Result.Ok(@as(u64, size)),
+          .Err(e) => Result.Err(e),
+        }
+      },
+      .Err(e) => Result.Err(e),
+    }
+  }
+
+  /// Create an additional directory entry for an existing file.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.NotFound
+  /// * IoErrorKind.PermissionDenied
+  /// * IoErrorKind.AlreadyExists
+  /// * IoErrorKind.Uncategorized
+  pub fn hard_link(from: []const char, to: []const char) Result[void, IoError] {
+    @os[windows] {
+      let cfrom = cpath(from);
+      let cto = cpath(to);
+
+      if (CreateHardLinkA(@as([*]const c_char, cto.slice(..).ptr), @as([*]const c_char, cfrom.slice(..).ptr), nullptr) == 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(.{});
+    } else {
+      let cfrom = cpath(from);
+      let cto = cpath(to);
+
+      if (linkat(AT_FDCWD, @as([*]const char, cfrom.slice(..).ptr), AT_FDCWD, @as([*]const char, cto.slice(..).ptr), 0) != 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(.{});
+    }
+  }
+
+  /// Create a symbolic link at `link_path` pointing to `target`.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.PermissionDenied
+  /// * IoErrorKind.AlreadyExists
+  /// * IoErrorKind.Uncategorized
+  pub fn symlink(target: []const char, link_path: []const char) Result[void, IoError] {
+    @os[windows] {
+      let ctarget = cpath(target);
+      let clink = cpath(link_path);
+
+      if (CreateSymbolicLinkA(@as([*]const c_char, clink.slice(..).ptr), @as([*]const c_char, ctarget.slice(..).ptr), 0) == 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(.{});
+    } else {
+      let ctarget = cpath(target);
+      let clink = cpath(link_path);
+
+      if (symlink(@as([*]const char, ctarget.slice(..).ptr), @as([*]const char, clink.slice(..).ptr)) != 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(.{});
+    }
+  }
+
+  /// Target of the symbolic link at `path`.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.NotFound
+  /// * IoErrorKind.InvalidInput
+  /// * IoErrorKind.Unsupported
+  /// * IoErrorKind.Uncategorized
+  pub fn read_link(path: []const char) Result[String, IoError] {
+    @os[windows] {
+      return Result.Err(IoError.new(IoErrorKind.Unsupported, "read_link needs reparse points"));
+    } else {
+      let c = cpath(path);
+      let buf: [4096]char = @uninit();
+      const got = readlink(@as([*]const char, c.slice(..).ptr), @as([*]char, &buf[0]), 4096);
+
+      if (got < 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(String.from(buf[0..@as(usize, got)]));
+    }
+  }
+
+  /// Absolute path with `.` and `..` resolved.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.NotFound
+  /// * IoErrorKind.PermissionDenied
+  /// * IoErrorKind.InvalidInput
+  /// * IoErrorKind.Uncategorized
+  pub fn canonicalize(path: []const char) Result[String, IoError] {
+    @os[windows] {
+      let c = cpath(path);
+      let buf: [4096]char = @uninit();
+      const got = GetFullPathNameA(@as([*]const c_char, c.slice(..).ptr), 4096, &buf[0], nullptr);
+
+      if (got == 0 || got >= 4096) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(String.from(buf[0..@as(usize, got)]));
+    } else {
+      let c = cpath(path);
+      const resolved = realpath(@as([*]const char, c.slice(..).ptr), @as([*]char, nullptr));
+
+      if (resolved == nullptr) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      const out = String.from_cstr(@as([*]const char, resolved));
+      let _ = free(@as(*void, resolved));
+
+      return Result.Ok(out);
+    }
+  }
+
+  /// Replace the permission flags of `path`.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.NotFound
+  /// * IoErrorKind.PermissionDenied
+  /// * IoErrorKind.Uncategorized
+  pub fn set_permissions(path: []const char, perms: Permissions) Result[void, IoError] {
+    @os[windows] {
+      let c = cpath(path);
+      let attrs = GetFileAttributesA(@as([*]const c_char, c.slice(..).ptr));
+
+      if (attrs == INVALID_FILE_ATTRIBUTES) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      if (perms.readonly()) {
+        attrs = attrs | FILE_ATTRIBUTE_READONLY;
+      } else {
+        attrs = attrs & ~FILE_ATTRIBUTE_READONLY;
+      };
+
+      if (SetFileAttributesA(@as([*]const c_char, c.slice(..).ptr), attrs) == 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(.{});
+    } else {
+      let c = cpath(path);
+      let st: c_Stat = @uninit();
+
+      if (stat(@as([*]const char, c.slice(..).ptr), &st) != 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      let mode = @as(u32, st.st_mode) & 0o777;
+
+      if (perms.readonly()) {
+        mode = mode & ~@as(u32, 0o222);
+      } else {
+        mode = mode | 0o200;
+      };
+
+      if (chmod(@as([*]const char, c.slice(..).ptr), @as(c_mode_t, mode)) != 0) {
+        return Result.Err(IoError.last_os_error());
+      };
+
+      return Result.Ok(.{});
+    }
+  }
+
+  /// Every entry below `path`, parents before children.
+  ///
+  /// Possible IoError variants:
+  /// * IoErrorKind.NotFound
+  /// * IoErrorKind.PermissionDenied
+  /// * IoErrorKind.NotADirectory
+  /// * IoErrorKind.Uncategorized
+  pub fn walk(path: []const char) Result[List[DirEntry], IoError] {
+    let out = List#[DirEntry].new();
+
+    switch (Fs.walk_into(path, &out)) {
+      .Ok(_) => Result.Ok(out),
+      .Err(e) => Result.Err(e),
+    }
+  }
+
+  fn walk_into(path: []const char, out: *List[DirEntry]) Result[void, IoError] {
+    switch (Fs.read_dir(path)) {
+      .Ok(entries) => {
+        let rest = entries;
+
+        while (true) {
+          const next = rest.pop();
+
+          if (next.is_none()) {
+            break;
+          };
+
+          const entry = next.unwrap();
+          const is_dir = entry.is_dir();
+          const is_entry_link = entry.is_symlink();
+
+          if (is_dir && !is_entry_link) {
+            const child = String.from(entry.path());
+
+            (*out).push(entry);
+
+            switch (Fs.walk_into(child.slice(..), out)) {
+              .Ok(_) => {},
+              .Err(e) => {
+                return Result.Err(e);
+              },
+            }
+          } else {
+            (*out).push(entry);
+          };
+        };
+      },
+      .Err(e) => {
+        return Result.Err(e);
+      },
+    }
+
+    return Result.Ok(.{});
   }
 }

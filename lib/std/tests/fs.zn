@@ -211,3 +211,86 @@ pub fn fs_reports_types_and_times() {
 
   clean();
 }
+
+/// @test
+pub fn fs_creates_and_removes_trees() {
+  @os[windows] {
+    return;
+  }
+
+  clean();
+  Fs.create_dir_all("/tmp/zeen_test_fs_basic/a/b").unwrap();
+  Fs.write(file(), "hello").unwrap();
+  Fs.write("/tmp/zeen_test_fs_basic/a/b/nested.txt", "nested").unwrap();
+
+  assert(Fs.exists("/tmp/zeen_test_fs_basic/a/b/nested.txt"));
+
+  const listed = Fs.walk(base()).unwrap();
+
+  assert_eq(listed.len(), @as(usize, 4));
+
+  Fs.remove_dir_all(base()).unwrap();
+  assert(!Fs.exists(base()));
+}
+
+/// @test
+pub fn fs_copies_and_hard_links() {
+  @os[windows] {
+    return;
+  }
+
+  clean();
+  Fs.create_dir(base()).unwrap();
+  Fs.write(file(), "hello").unwrap();
+
+  assert_eq(Fs.copy(file(), moved()).unwrap(), @as(u64, 5));
+  assert_eq(Fs.read_to_string(moved()).unwrap(), String.from("hello"));
+
+  Fs.hard_link(moved(), "/tmp/zeen_test_fs_basic/hard.txt").unwrap();
+  assert_eq(Fs.read_to_string("/tmp/zeen_test_fs_basic/hard.txt").unwrap(), String.from("hello"));
+
+  Fs.remove_file("/tmp/zeen_test_fs_basic/hard.txt").unwrap();
+  Fs.remove_file(moved()).unwrap();
+  Fs.remove_file(file()).unwrap();
+  Fs.remove_dir(base()).unwrap();
+}
+
+/// @test
+pub fn fs_links_and_canonicalizes() {
+  @os[windows] {
+    return;
+  }
+
+  clean();
+  Fs.create_dir(base()).unwrap();
+  Fs.write(file(), "hello").unwrap();
+  Fs.symlink(file(), "/tmp/zeen_test_fs_basic/link.txt").unwrap();
+
+  assert_eq(Fs.read_link("/tmp/zeen_test_fs_basic/link.txt").unwrap(), String.from(file()));
+
+  const resolved = Fs.canonicalize(base()).unwrap();
+
+  assert(resolved.slice(..).ends_with("zeen_test_fs_basic"));
+
+  Fs.remove_file("/tmp/zeen_test_fs_basic/link.txt").unwrap();
+  clean();
+}
+
+/// @test
+pub fn fs_sets_permissions() {
+  @os[windows] {
+    return;
+  }
+
+  clean();
+  Fs.create_dir(base()).unwrap();
+  Fs.write(file(), "hello").unwrap();
+
+  Fs.set_permissions(file(), Permissions.from_readonly(true)).unwrap();
+  assert_eq(Fs.metadata(file()).unwrap().mode() & 0o222, @as(u32, 0));
+
+  Fs.set_permissions(file(), Permissions.new()).unwrap();
+  assert((Fs.metadata(file()).unwrap().mode() & 0o200) != 0);
+
+  clean();
+}

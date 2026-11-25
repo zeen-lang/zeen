@@ -34,6 +34,12 @@ use std.c.types;
   pub const F_SETFL: c_int = 4;
   pub const FD_CLOEXEC: c_int = 1;
 
+  @os[linux | android | freebsd] {
+    pub const AT_FDCWD: c_int = -100;
+  } else {
+    pub const AT_FDCWD: c_int = -2;
+  }
+
   pub const SEEK_SET: c_int = 0;
   pub const SEEK_CUR: c_int = 1;
   pub const SEEK_END: c_int = 2;

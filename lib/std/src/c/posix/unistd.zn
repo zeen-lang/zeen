@@ -38,6 +38,8 @@ use std.c.types;
   pub extern fn unlink(path: [*]const char) c_int;
   pub extern fn rmdir(path: [*]const char) c_int;
   pub extern fn readlink(path: [*]const char, buf: [*]char, size: c_size_t) c_ssize_t;
+  pub extern fn symlink(target: [*]const char, link_path: [*]const char) c_int;
+  pub extern fn linkat(old_dir: c_int, old_path: [*]const char, new_dir: c_int, new_path: [*]const char, flags: c_int) c_int;
 
   pub extern let environ: [*][*]char;
 
