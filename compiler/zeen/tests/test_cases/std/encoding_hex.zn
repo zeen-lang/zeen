@@ -1,8 +1,0 @@
-use std.encoding.hex;
-
-fn main() i32 {
-  @println("[{}][{}]", Hex.encode(""), Hex.encode("Hello"));
-  @println("{} {}", Hex.decode("48656c6c6f").unwrap(), Hex.decode("48656C6C6F").unwrap());
-  @println("{} {} {}", Hex.decode("0g").is_none(), Hex.decode("abc").is_none(), Hex.decode("zz").is_none());
-  return 0;
-}

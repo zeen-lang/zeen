@@ -1,0 +1,12 @@
+use std.testing;
+
+/// @test
+pub fn passing_assertion() {
+  assert(true);
+}
+
+/// @test
+/// @should-fail
+pub fn failing_assertion() {
+  assert(false);
+}

@@ -1,0 +1,46 @@
+use std.hash;
+use std.string;
+use std.testing;
+
+/// @test
+pub fn fnv1a_vectors() {
+  assert_eq(@format("{:x}", Fnv1a64.hash("")), String.from("cbf29ce484222325"));
+  assert_eq(@format("{:x}", Fnv1a64.hash("a")), String.from("af63dc4c8601ec8c"));
+  assert_eq(@format("{:x}", Fnv1a64.hash("foobar")), String.from("85944171f73967e8"));
+  assert_eq(@format("{:x}", Fnv1a64.hash("hello world")), String.from("779a65e7023cd2e7"));
+
+  assert_eq(Fnv1a32.hash(""), 2166136261);
+  assert_eq(Fnv1a32.hash("a"), 3826002220);
+  assert_eq(Fnv1a32.hash("foobar"), 3214735720);
+  assert_eq(Fnv1a32.hash("hello world"), 3582672807);
+}
+
+/// @test
+pub fn crc32_vectors() {
+  assert_eq(Crc32.hash(""), 0);
+  assert_eq(Crc32.hash("123456789"), 3421780262);
+  assert_eq(Crc32.hash("hello world"), 222957957);
+}
+
+/// @test
+pub fn crc64_vectors() {
+  assert_eq(@format("{:x}", Crc64.hash("")), String.from("0"));
+  assert_eq(@format("{:x}", Crc64.hash("123456789")), String.from("995dc9bbdf1939fa"));
+  assert_eq(@format("{:x}", Crc64.hash("hello world")), String.from("53037ecdef2352da"));
+}
+
+/// @test
+pub fn xxhash64_vectors() {
+  assert_eq(@format("{:x}", XxHash64.hash("")), String.from("ef46db3751d8e999"));
+  assert_eq(@format("{:x}", XxHash64.hash("abc")), String.from("44bc2cf5ad770999"));
+  assert_eq(@format("{:x}", XxHash64.hash("hello world")), String.from("45ab6734b21e6968"));
+}
+
+/// @test
+pub fn siphash64_vectors() {
+  const key: [2]u64 = {0x0706050403020100, 0x0F0E0D0C0B0A0908};
+
+  assert_eq(@format("{:x}", SipHash64.hash(key, "")), String.from("726fdb47dd0e0e31"));
+  assert_eq(@format("{:x}", SipHash64.hash(key, "a")), String.from("2ba3e8e9a71148ca"));
+  assert_eq(@format("{:x}", SipHash64.hash(key, "hello world")), String.from("ed5159c956cd5602"));
+}

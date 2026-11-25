@@ -1,0 +1,131 @@
+use std.encoding.base64;
+use std.encoding.hex;
+use std.encoding.percent;
+use std.encoding.varint;
+use std.string;
+use std.testing;
+
+/// @test
+pub fn base64_rfc4648_vectors() {
+  assert_eq(Base64.encode(""), String.from(""));
+  assert_eq(Base64.encode("f"), String.from("Zg=="));
+  assert_eq(Base64.encode("fo"), String.from("Zm8="));
+  assert_eq(Base64.encode("foo"), String.from("Zm9v"));
+  assert_eq(Base64.encode("foob"), String.from("Zm9vYg=="));
+  assert_eq(Base64.encode("fooba"), String.from("Zm9vYmE="));
+  assert_eq(Base64.encode("foobar"), String.from("Zm9vYmFy"));
+}
+
+/// @test
+pub fn base64_decodes_padded_and_unpadded() {
+  assert_eq(Base64.decode("Zm9vYmFy").unwrap(), String.from("foobar"));
+  assert_eq(Base64.decode("Zg").unwrap(), String.from("f"));
+  assert_eq(Base64.decode("Zm8").unwrap(), String.from("fo"));
+}
+
+/// @test
+pub fn base64_rejects_malformed() {
+  assert(Base64.decode("!!!!").is_none());
+  assert(Base64.decode("a").is_none());
+  assert(Base64.decode("Z===").is_none());
+  assert(Base64.decode("Zg=").is_none());
+  assert(Base64.decode("Zh==").is_none());
+}
+
+/// @test
+pub fn base64_url_alphabet() {
+  const raw: [2]char = {@as(char, 251), @as(char, 255)};
+  const encoded = Base64.encode_url(raw[..]);
+
+  assert_eq(Base64.decode_url(encoded.trim()).unwrap().len(), 2);
+  assert_eq(encoded, String.from("-_8="));
+  assert(Base64.decode_url("+/8=").is_none());
+}
+
+/// @test
+pub fn hex_encodes_lowercase() {
+  assert_eq(Hex.encode(""), String.from(""));
+  assert_eq(Hex.encode("Hello"), String.from("48656c6c6f"));
+}
+
+/// @test
+pub fn hex_decodes_both_cases() {
+  assert_eq(Hex.decode("48656c6c6f").unwrap(), String.from("Hello"));
+  assert_eq(Hex.decode("48656C6C6F").unwrap(), String.from("Hello"));
+}
+
+/// @test
+pub fn hex_rejects_malformed() {
+  assert(Hex.decode("0g").is_none());
+  assert(Hex.decode("abc").is_none());
+  assert(Hex.decode("zz").is_none());
+}
+
+/// @test
+pub fn percent_encodes_unreserved() {
+  assert_eq(Percent.encode("a~b.c_d-e"), String.from("a~b.c_d-e"));
+  assert_eq(Percent.encode("hello world"), String.from("hello%20world"));
+  assert_eq(Percent.encode("?x=1&y=2"), String.from("%3Fx%3D1%26y%3D2"));
+}
+
+/// @test
+pub fn percent_decodes_escapes() {
+  assert_eq(Percent.decode("hello%20world").unwrap(), String.from("hello world"));
+  assert_eq(Percent.decode("100%25").unwrap(), String.from("100%"));
+}
+
+/// @test
+pub fn percent_rejects_malformed() {
+  assert(Percent.decode("%2").is_none());
+  assert(Percent.decode("%zz").is_none());
+}
+
+/// @test
+pub fn varint_roundtrips_unsigned() {
+  let buf: [32]char = @uninit();
+  let written: usize = 0;
+
+  Varint.write_u32(buf[..], &written, 0);
+  Varint.write_u32(buf[..], &written, 127);
+  Varint.write_u32(buf[..], &written, 128);
+  Varint.write_u32(buf[..], &written, 300);
+  Varint.write_u64(buf[..], &written, 4294967296);
+  assert_eq(written, 11);
+
+  let read: usize = 0;
+  assert_eq(Varint.read_u32(buf[0..written], &read).unwrap(), 0);
+  assert_eq(Varint.read_u32(buf[0..written], &read).unwrap(), 127);
+  assert_eq(Varint.read_u32(buf[0..written], &read).unwrap(), 128);
+  assert_eq(Varint.read_u32(buf[0..written], &read).unwrap(), 300);
+  assert_eq(Varint.read_u64(buf[0..written], &read).unwrap(), 4294967296);
+  assert_eq(read, 11);
+}
+
+/// @test
+pub fn varint_roundtrips_signed() {
+  let buf: [16]char = @uninit();
+  let written: usize = 0;
+
+  Varint.write_i32(buf[..], &written, -1);
+  Varint.write_i32(buf[..], &written, -64);
+  Varint.write_i64(buf[..], &written, -123456789);
+
+  let read: usize = 0;
+  assert_eq(Varint.read_i32(buf[0..written], &read).unwrap(), -1);
+  assert_eq(Varint.read_i32(buf[0..written], &read).unwrap(), -64);
+  assert_eq(Varint.read_i64(buf[0..written], &read).unwrap(), -123456789);
+}
+
+/// @test
+pub fn varint_rejects_truncated_and_overflow() {
+  let buf: [16]char = @uninit();
+  let written: usize = 0;
+  Varint.write_u64(buf[..], &written, 4294967296);
+
+  let read: usize = 0;
+  assert(Varint.read_u32(buf[0..written], &read).is_none());
+
+  const empty: []const char = "";
+  let none: usize = 0;
+  assert(Varint.read_u64(empty, &none).is_none());
+}
