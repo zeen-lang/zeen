@@ -1,0 +1,66 @@
+use std.collections.map;
+use std.string;
+use std.testing;
+
+/// @test
+pub fn map_inserts_updates_and_removes() {
+  let map = HashMap#[String, i32].new();
+  let key = String.from("one");
+
+  assert(map.insert(key.clone(), 10).is_none());
+  assert_eq(map.len(), @as(usize, 1));
+  assert_eq(*map.get(&key).unwrap(), 10);
+
+  assert_eq(map.insert(String.from("one"), 11).unwrap(), 10);
+  assert_eq(*map.get(&key).unwrap(), 11);
+  assert_eq(map.remove(&key).unwrap(), 11);
+  assert(map.remove(&key).is_none());
+  assert(map.is_empty());
+}
+
+/// @test
+pub fn map_entry_accumulates() {
+  let map = HashMap#[String, i32].new();
+  let slot = map.entry(String.from("count")).or_insert(0);
+
+  *slot += 5;
+  *slot += 2;
+  assert_eq(*map.get(&String.from("count")).unwrap(), 7);
+
+  const made = map.entry(String.from("made")).or_insert_with(|| -> i32 {
+    return 42;
+  });
+
+  assert_eq(*made, 42);
+
+  let again = map.entry(String.from("count"));
+  again.and_modify(|value: *i32| -> void {
+    *value = *value + 1;
+  });
+  assert_eq(*map.get(&String.from("count")).unwrap(), 8);
+}
+
+/// @test
+pub fn map_iterates_and_mutates_values() {
+  let map = HashMap#[String, i32].new();
+
+  map.insert(String.from("a"), 1);
+  map.insert(String.from("b"), 2);
+  map.insert(String.from("c"), 3);
+
+  assert_eq(map.iter().count(), @as(usize, 3));
+  assert_eq(map.keys().count(), @as(usize, 3));
+  assert_eq(map.values().count(), @as(usize, 3));
+
+  const total = map.values().fold(0, |acc: i32, value: *const i32| -> i32 {
+    return acc + *value;
+  });
+
+  assert_eq(total, 6);
+
+  map.iter_mut().for_each(|value: *i32| -> void {
+    *value = *value * 2;
+  });
+
+  assert_eq(*map.get(&String.from("b")).unwrap(), 4);
+}

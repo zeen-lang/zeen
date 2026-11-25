@@ -17,7 +17,7 @@ fn bucket_index(hash: u64, cap: usize) usize {
   @as(usize, hash % @as(u64, cap))
 }
 
-fn find_in_bucket[K: Hash + Eq, V](bucket: *List[Entry[K, V]], key: *const K, hash: u64) Option[usize] {
+fn find_in_bucket[K: Hash + Eq, V](bucket: *List[BucketEntry[K, V]], key: *const K, hash: u64) Option[usize] {
   const len = bucket.len();
   let idx: usize = 0;
 
@@ -36,13 +36,13 @@ fn find_in_bucket[K: Hash + Eq, V](bucket: *List[Entry[K, V]], key: *const K, ha
 }
 
 /// Bucket record holding a key, its hash and the value.
-pub struct Entry[K, V] {
+pub struct BucketEntry[K, V] {
   pub hash: u64,
   pub value: V,
   pub key: K,
 }
 
-implement[K, V] Entry[K, V] {
+implement[K, V] BucketEntry[K, V] {
   /// Writable pointer to the value.
   pub fn value_ptr(*self) *V {
     &self.value
@@ -52,11 +52,16 @@ implement[K, V] Entry[K, V] {
   pub fn value_const_ptr(*const self) *const V {
     &self.value
   }
+
+  /// Readonly pointer to the key.
+  pub fn key_ptr(*const self) *const K {
+    &self.key
+  }
 }
 
 /// Hash table mapping keys to values.
 pub struct HashMap[K: Hash + Eq, V] {
-  buckets: List[List[Entry[K, V]]],
+  buckets: List[List[BucketEntry[K, V]]],
   _len: usize,
   _capacity: usize,
 }
@@ -65,11 +70,11 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
   /// Empty map.
   pub fn new() Self {
     const cap: usize = InitialMapCapacity;
-    let buckets = List#[List[Entry[K, V]]].with_capacity(cap);
+    let buckets = List#[List[BucketEntry[K, V]]].with_capacity(cap);
 
     let idx: usize = 0;
     while (idx < cap) {
-      buckets.push(List#[Entry[K, V]].new());
+      buckets.push(List#[BucketEntry[K, V]].new());
       idx += 1;
     };
 
@@ -83,11 +88,11 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
   /// Empty map with room for `cap` entries.
   pub fn with_capacity(cap: usize) Self {
     let cap = next_pow2(if (cap < InitialMapCapacity) { InitialMapCapacity } else { cap });
-    let buckets = List#[List[Entry[K, V]]].with_capacity(cap);
+    let buckets = List#[List[BucketEntry[K, V]]].with_capacity(cap);
 
     let idx: usize = 0;
     while (idx < cap) {
-      buckets.push(List#[Entry[K, V]].new());
+      buckets.push(List#[BucketEntry[K, V]].new());
       idx += 1;
     };
 
@@ -201,18 +206,7 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
 
   /// Stores `value` under `key`, returns the previous value.
   pub fn insert(*self, key: K, value: V) Option[V] {
-    if (self._capacity == 0) {
-      let new_buckets = List#[List[Entry[K, V]]].with_capacity(InitialMapCapacity);
-
-      let idx: usize = 0;
-      while (idx < InitialMapCapacity) {
-        new_buckets.push(List#[Entry[K, V]].new());
-        idx += 1;
-      };
-
-      self.buckets = new_buckets;
-      self._capacity = InitialMapCapacity;
-    };
+    self.ensure_capacity();
 
     const hash = key.hash();
     const idx = bucket_index(hash, self._capacity);
@@ -235,12 +229,8 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
           .None => {},
         };
 
-        bucket.push(Entry { .hash = hash, .key = key, .value = value });
+        bucket.push(BucketEntry { .hash = hash, .key = key, .value = value });
         self._len += 1;
-
-        if (self._len * @as(usize, 4) > self._capacity * @as(usize, 3)) {
-          self.grow();
-        };
 
         return Option.None;
       },
@@ -248,13 +238,69 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
     }
   }
 
+  /// Entry for `key`, filled later with `or_insert`.
+  pub fn entry(*self, key: K) Entry[K, V] {
+    const hash = key.hash();
+    let found = @as(*BucketEntry[K, V], nullptr);
+
+    if (self._capacity > 0) {
+      const idx = bucket_index(hash, self._capacity);
+
+      switch (self.buckets.get_ptr(idx)) {
+        .Some(bucket) => switch (find_in_bucket(bucket, &key, hash)) {
+          .Some(pos) => {
+            switch (bucket.get_ptr(pos)) {
+              .Some(entry) => {
+                found = entry;
+              },
+              .None => {},
+            };
+          },
+          .None => {},
+        },
+        .None => {},
+      };
+    };
+
+    return Entry {
+      ._map = self,
+      ._key = key,
+      ._hash = hash,
+      ._found = found,
+    };
+  }
+
+  fn init_buckets(*self, cap: usize) {
+    let new_buckets = List#[List[BucketEntry[K, V]]].with_capacity(cap);
+
+    let idx: usize = 0;
+    while (idx < cap) {
+      new_buckets.push(List#[BucketEntry[K, V]].new());
+      idx += 1;
+    };
+
+    self.buckets = new_buckets;
+    self._capacity = cap;
+  }
+
+  fn ensure_capacity(*self) {
+    if (self._capacity == 0) {
+      self.init_buckets(InitialMapCapacity);
+      return;
+    };
+
+    if ((self._len + 1) * @as(usize, 4) > self._capacity * @as(usize, 3)) {
+      self.grow();
+    };
+  }
+
   fn grow(*self) {
     const new_cap = self._capacity * @as(usize, 2);
-    let new_buckets = List#[List[Entry[K, V]]].with_capacity(new_cap);
+    let new_buckets = List#[List[BucketEntry[K, V]]].with_capacity(new_cap);
 
     let idx: usize = 0;
     while (idx < new_cap) {
-      new_buckets.push(List#[Entry[K, V]].new());
+      new_buckets.push(List#[BucketEntry[K, V]].new());
       idx += 1;
     };
 
@@ -317,7 +363,7 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
   }
 
   /// Removes `key` and returns its entry.
-  pub fn remove_entry(*self, key: *const K) Option[Entry[K, V]] {
+  pub fn remove_entry(*self, key: *const K) Option[BucketEntry[K, V]] {
     if (self._capacity == 0) {
       return Option.None;
     };
@@ -342,6 +388,260 @@ implement[K: Hash + Eq, V] HashMap[K, V] {
       },
       .None => Option.None,
     }
+  }
+}
+
+/// In-place entry for one key.
+pub struct Entry[K: Hash + Eq, V] {
+  _map: *HashMap[K, V],
+  _key: K,
+  _hash: u64,
+  _found: *BucketEntry[K, V],
+}
+
+implement[K: Hash + Eq, V] Entry[K, V] {
+  /// Applies `f` to the value when the key is present.
+  pub fn and_modify[F: Callable(*V) void](self, f: F) Self {
+    if (self._found != nullptr) {
+      f((*self._found).value_ptr());
+    };
+
+    return self;
+  }
+
+  /// Returns the value, inserting `default` when the key is absent.
+  pub fn or_insert(self, default: V) *V {
+    if (self._found != nullptr) {
+      return (*self._found).value_ptr();
+    };
+
+    return (*self._map).push_entry(self._hash, self._key, default);
+  }
+
+  /// Returns the value, inserting `f()` when the key is absent.
+  pub fn or_insert_with[F: CallableOnce() V](self, f: F) *V {
+    if (self._found != nullptr) {
+      return (*self._found).value_ptr();
+    };
+
+    return (*self._map).push_entry(self._hash, self._key, f());
+  }
+}
+
+/// Iterator over map entries.
+pub struct HashMapIter[K: Hash + Eq, V] {
+  _map: *const HashMap[K, V],
+  _bucket: usize,
+  _pos: usize,
+}
+
+implement[K: Hash + Eq, V] Iterator : HashMapIter[K, V] {
+  alias Item = *const BucketEntry[K, V];
+
+  fn next(*self) Option[*const BucketEntry[K, V]] {
+    while (self._bucket < (*self._map).bucket_count()) {
+      if (self._pos >= (*self._map).bucket_len(self._bucket)) {
+        self._bucket += 1;
+        self._pos = 0;
+        continue;
+      };
+
+      const at = self._pos;
+      self._pos += 1;
+
+      switch ((*self._map).slot(self._bucket, at)) {
+        .Some(entry) => {
+          return Option.Some(entry);
+        },
+        .None => {},
+      };
+    };
+
+    return Option.None;
+  }
+}
+
+implement[K: Hash + Eq, V] PtrIterator : HashMap[K, V] {
+  alias Iter = HashMapIter[K, V];
+
+  fn iter(*const self) HashMapIter[K, V] {
+    return HashMapIter {
+      ._map = self,
+      ._bucket = 0,
+      ._pos = 0,
+    };
+  }
+}
+
+/// Mutable iterator over map values.
+pub struct HashMapIterMut[K: Hash + Eq, V] {
+  _map: *HashMap[K, V],
+  _bucket: usize,
+  _pos: usize,
+}
+
+implement[K: Hash + Eq, V] Iterator : HashMapIterMut[K, V] {
+  alias Item = *V;
+
+  fn next(*self) Option[*V] {
+    while (self._bucket < (*self._map).bucket_count()) {
+      if (self._pos >= (*self._map).bucket_len(self._bucket)) {
+        self._bucket += 1;
+        self._pos = 0;
+        continue;
+      };
+
+      const at = self._pos;
+      self._pos += 1;
+
+      switch ((*self._map).value_at(self._bucket, at)) {
+        .Some(value) => {
+          return Option.Some(value);
+        },
+        .None => {},
+      };
+    };
+
+    return Option.None;
+  }
+}
+
+implement[K: Hash + Eq, V] MutPtrIterator : HashMap[K, V] {
+  alias Iter = HashMapIterMut[K, V];
+
+  fn iter_mut(*self) HashMapIterMut[K, V] {
+    return HashMapIterMut {
+      ._map = self,
+      ._bucket = 0,
+      ._pos = 0,
+    };
+  }
+}
+
+/// Iterator over map keys.
+pub struct HashMapKeys[K: Hash + Eq, V] {
+  _inner: HashMapIter[K, V],
+}
+
+implement[K: Hash + Eq, V] Iterator : HashMapKeys[K, V] {
+  alias Item = *const K;
+
+  fn next(*self) Option[*const K] {
+    switch (self._inner.next()) {
+      .Some(entry) => {
+        return Option.Some((*entry).key_ptr());
+      },
+      .None => {
+        return Option.None;
+      },
+    };
+  }
+}
+
+/// Iterator over map values.
+pub struct HashMapValues[K: Hash + Eq, V] {
+  _inner: HashMapIter[K, V],
+}
+
+implement[K: Hash + Eq, V] Iterator : HashMapValues[K, V] {
+  alias Item = *const V;
+
+  fn next(*self) Option[*const V] {
+    switch (self._inner.next()) {
+      .Some(entry) => {
+        return Option.Some((*entry).value_const_ptr());
+      },
+      .None => {
+        return Option.None;
+      },
+    };
+  }
+}
+
+implement[K: Hash + Eq, V] HashMap[K, V] {
+  /// Number of hash buckets.
+  pub fn bucket_count(*const self) usize {
+    return self._capacity;
+  }
+
+  /// Number of entries in bucket `index`.
+  pub fn bucket_len(*const self, index: usize) usize {
+    switch (self.buckets.get_ptr(index)) {
+      .Some(bucket) => {
+        return bucket.len();
+      },
+      .None => {},
+    };
+
+    return 0;
+  }
+
+  /// Entry at `pos` inside bucket `index`.
+  pub fn slot(*const self, index: usize, pos: usize) Option[*const BucketEntry[K, V]] {
+    switch (self.buckets.get_ptr(index)) {
+      .Some(bucket) => switch (bucket.get_ptr(pos)) {
+        .Some(entry) => {
+          return Option.Some(entry);
+        },
+        .None => {},
+      },
+      .None => {},
+    };
+
+    return Option.None;
+  }
+
+  /// Value at `pos` inside bucket `index`, writable.
+  pub fn value_at(*self, index: usize, pos: usize) Option[*V] {
+    switch (self.buckets.get_ptr(index)) {
+      .Some(bucket) => switch (bucket.get_ptr(pos)) {
+        .Some(entry) => {
+          return Option.Some((*entry).value_ptr());
+        },
+        .None => {},
+      },
+      .None => {},
+    };
+
+    return Option.None;
+  }
+
+  /// Stores an entry that is known to be absent, returning its value.
+  pub fn push_entry(*self, hash: u64, key: K, value: V) *V {
+    self.ensure_capacity();
+
+    const idx = bucket_index(hash, self._capacity);
+
+    switch (self.buckets.get_ptr(idx)) {
+      .Some(bucket) => {
+        bucket.push(BucketEntry {
+          .hash = hash,
+          .key = key,
+          .value = value,
+        });
+        self._len += 1;
+
+        switch (bucket.get_ptr(bucket.len() - 1)) {
+          .Some(entry) => {
+            return (*entry).value_ptr();
+          },
+          .None => {},
+        };
+      },
+      .None => {},
+    };
+
+    return @as(*V, nullptr);
+  }
+
+  /// Iterator over keys.
+  pub fn keys(*const self) HashMapKeys[K, V] {
+    return HashMapKeys { ._inner = self.iter() };
+  }
+
+  /// Iterator over values.
+  pub fn values(*const self) HashMapValues[K, V] {
+    return HashMapValues { ._inner = self.iter() };
   }
 }
 

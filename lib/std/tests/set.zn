@@ -1,0 +1,24 @@
+use std.collections.set;
+use std.string;
+use std.testing;
+
+/// @test
+pub fn set_inserts_and_iterates() {
+  let set = HashSet#[i32].new();
+
+  assert(set.insert(1));
+  assert(set.insert(2));
+  assert(!set.insert(1));
+  assert_eq(set.len(), @as(usize, 2));
+  assert(set.contains(&2));
+  assert(!set.contains(&3));
+
+  const total = set.iter().fold(0, |acc: i32, value: *const i32| -> i32 {
+    return acc + *value;
+  });
+
+  assert_eq(total, 3);
+  assert(set.remove(&1));
+  assert(!set.remove(&1));
+  assert_eq(set.iter().count(), @as(usize, 1));
+}

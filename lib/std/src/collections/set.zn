@@ -39,6 +39,13 @@ pub struct SetEntry[T] {
   pub key: T,
 }
 
+implement[T] SetEntry[T] {
+  /// Readonly pointer to the key.
+  pub fn key_ptr(*const self) *const T {
+    return &self.key;
+  }
+}
+
 /// Hash set of unique values.
 pub struct HashSet[T: Hash + Eq] {
   buckets: List[List[SetEntry[T]]],
@@ -276,6 +283,85 @@ implement[T: Hash + Eq] FromIterator : HashSet[T] {
 
   fn push(*self, item: T) {
     self.insert(item);
+  }
+}
+
+/// Iterator over set values.
+pub struct HashSetIter[T: Hash + Eq] {
+  _set: *const HashSet[T],
+  _bucket: usize,
+  _pos: usize,
+}
+
+implement[T: Hash + Eq] Iterator : HashSetIter[T] {
+  alias Item = *const T;
+
+  fn next(*self) Option[*const T] {
+    while (self._bucket < (*self._set).bucket_count()) {
+      if (self._pos >= (*self._set).bucket_len(self._bucket)) {
+        self._bucket += 1;
+        self._pos = 0;
+        continue;
+      };
+
+      const at = self._pos;
+      self._pos += 1;
+
+      switch ((*self._set).slot(self._bucket, at)) {
+        .Some(entry) => {
+          return Option.Some((*entry).key_ptr());
+        },
+        .None => {},
+      };
+    };
+
+    return Option.None;
+  }
+}
+
+implement[T: Hash + Eq] PtrIterator : HashSet[T] {
+  alias Iter = HashSetIter[T];
+
+  fn iter(*const self) HashSetIter[T] {
+    return HashSetIter {
+      ._set = self,
+      ._bucket = 0,
+      ._pos = 0,
+    };
+  }
+}
+
+implement[T: Hash + Eq] HashSet[T] {
+  /// Number of hash buckets.
+  pub fn bucket_count(*const self) usize {
+    return self._capacity;
+  }
+
+  /// Number of entries in bucket `index`.
+  pub fn bucket_len(*const self, index: usize) usize {
+    switch (self.buckets.get_ptr(index)) {
+      .Some(bucket) => {
+        return bucket.len();
+      },
+      .None => {},
+    };
+
+    return 0;
+  }
+
+  /// Entry at `pos` inside bucket `index`.
+  pub fn slot(*const self, index: usize, pos: usize) Option[*const SetEntry[T]] {
+    switch (self.buckets.get_ptr(index)) {
+      .Some(bucket) => switch (bucket.get_ptr(pos)) {
+        .Some(entry) => {
+          return Option.Some(entry);
+        },
+        .None => {},
+      },
+      .None => {},
+    };
+
+    return Option.None;
   }
 }
 
