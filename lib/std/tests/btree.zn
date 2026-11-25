@@ -1,0 +1,63 @@
+use std.collections.btree;
+use std.string;
+use std.testing;
+
+/// @test
+pub fn btree_map_keeps_keys_sorted() {
+  let map = BTreeMap#[i32, String].new();
+
+  map.insert(3, String.from("c"));
+  map.insert(1, String.from("a"));
+  map.insert(2, String.from("b"));
+
+  assert_eq(map.len(), @as(usize, 3));
+  assert(map.contains_key(&2));
+  assert_eq(String.from(map.get(&2).unwrap().slice(..)), String.from("b"));
+
+  let keys = map.keys();
+  assert_eq(*keys.next().unwrap(), 1);
+  assert_eq(*keys.next().unwrap(), 2);
+  assert_eq(*keys.next().unwrap(), 3);
+
+  assert_eq(map.insert(2, String.from("bb")).unwrap(), String.from("b"));
+
+  const slot = map.get_mut(&2).unwrap();
+  *slot = String.from("bbb");
+  assert_eq(String.from(map.get(&2).unwrap().slice(..)), String.from("bbb"));
+}
+
+/// @test
+pub fn btree_map_removes_entries() {
+  let map = BTreeMap#[i32, i32].new();
+
+  map.insert(1, 10);
+  map.insert(2, 20);
+  map.insert(3, 30);
+
+  assert_eq(map.remove(&2).unwrap(), 20);
+  assert(map.remove(&2).is_none());
+  assert_eq(map.len(), @as(usize, 2));
+
+  map.clear();
+  assert(map.is_empty());
+}
+
+/// @test
+pub fn btree_set_dedupes_in_order() {
+  let set = BTreeSet#[i32].new();
+
+  assert(set.insert(5));
+  assert(set.insert(1));
+  assert(set.insert(3));
+  assert(!set.insert(3));
+  assert_eq(set.len(), @as(usize, 3));
+
+  let items = set.iter();
+  assert_eq(*items.next().unwrap(), 1);
+  assert_eq(*items.next().unwrap(), 3);
+  assert_eq(*items.next().unwrap(), 5);
+
+  assert(set.remove(&3));
+  assert(!set.remove(&3));
+  assert(!set.contains(&3));
+}

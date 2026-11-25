@@ -1,0 +1,26 @@
+use std.collections.bitset;
+use std.testing;
+
+/// @test
+pub fn bitset_sets_and_clears_bits() {
+  let bits = BitSet.new();
+
+  assert(bits.is_empty());
+  assert(!bits.contains(0));
+
+  assert(bits.insert(0));
+  assert(bits.insert(70));
+  assert(!bits.insert(70));
+  assert_eq(bits.len(), @as(usize, 2));
+  assert(bits.contains(0));
+  assert(bits.contains(70));
+  assert(!bits.contains(1));
+
+  assert(bits.remove(0));
+  assert(!bits.remove(0));
+  assert_eq(bits.len(), @as(usize, 1));
+
+  bits.clear();
+  assert(bits.is_empty());
+  assert(!bits.contains(70));
+}

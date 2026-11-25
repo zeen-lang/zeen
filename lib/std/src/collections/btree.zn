@@ -1,0 +1,227 @@
+use std.collections.list;
+
+/// Sorted map keyed by ordered keys.
+pub struct BTreeMap[K: Ord, V] {
+  _keys: List[K],
+  _values: List[V],
+}
+
+implement[K: Ord, V] BTreeMap[K, V] {
+  /// Empty map.
+  pub fn new() Self {
+    return Self {
+      ._keys = List#[K].new(),
+      ._values = List#[V].new(),
+    };
+  }
+
+  /// Number of entries.
+  pub fn len(*const self) usize {
+    return self._keys.len();
+  }
+
+  /// Checks that the map holds nothing.
+  pub fn is_empty(*const self) bool {
+    return self._keys.is_empty();
+  }
+
+  /// Checks that `key` is present.
+  pub fn contains_key(*const self, key: *const K) bool {
+    return self._keys.binary_search(key).is_some();
+  }
+
+  /// Borrows the value under `key`.
+  pub fn get(*const self, key: *const K) Option[*V] {
+    switch (self._keys.binary_search(key)) {
+      .Some(pos) => {
+        return self._values.get_ptr(pos);
+      },
+      .None => {},
+    };
+
+    return Option.None;
+  }
+
+  /// Borrows the value under `key` for writing.
+  pub fn get_mut(*self, key: *const K) Option[*V] {
+    switch (self._keys.binary_search(key)) {
+      .Some(pos) => {
+        return self._values.get_ptr(pos);
+      },
+      .None => {},
+    };
+
+    return Option.None;
+  }
+
+  /// Stores `value` under `key`, returning the previous value.
+  pub fn insert(*self, key: K, value: V) Option[V] {
+    switch (self._keys.binary_search(&key)) {
+      .Some(pos) => {
+        switch (self._values.get_ptr(pos)) {
+          .Some(slot) => {
+            const old = *slot;
+            *slot = value;
+            let _drop_key = key;
+
+            return Option.Some(old);
+          },
+          .None => {},
+        };
+      },
+      .None => {},
+    };
+
+    const pos = self.insert_position(&key);
+    self._keys.insert(pos, key);
+    self._values.insert(pos, value);
+
+    return Option.None;
+  }
+
+  /// Removes `key` and returns its value.
+  pub fn remove(*self, key: *const K) Option[V] {
+    switch (self._keys.binary_search(key)) {
+      .Some(pos) => {
+        let _drop_key = self._keys.remove(pos);
+
+        return self._values.remove(pos);
+      },
+      .None => {},
+    };
+
+    return Option.None;
+  }
+
+  /// Drops every entry.
+  pub fn clear(*self) {
+    self._keys.clear();
+    self._values.clear();
+  }
+
+  /// Iterator over keys.
+  pub fn keys(*const self) ListIter[K] {
+    return self._keys.iter();
+  }
+
+  /// Iterator over values.
+  pub fn values(*const self) ListIter[V] {
+    return self._values.iter();
+  }
+
+  fn insert_position(*const self, key: *const K) usize {
+    let low: usize = 0;
+    let high: usize = self._keys.len();
+
+    while (low < high) {
+      const mid = (low + high) / 2;
+
+      switch (self._keys.get_ptr(mid)) {
+        .Some(at) => switch ((*at).cmp(key)) {
+          .Less => {
+            low = mid + 1;
+          },
+          _ => {
+            high = mid;
+          },
+        },
+        .None => {
+          high = mid;
+        },
+      };
+    };
+
+    return low;
+  }
+}
+
+/// Sorted set of ordered values.
+pub struct BTreeSet[T: Ord] {
+  _items: List[T],
+}
+
+implement[T: Ord] BTreeSet[T] {
+  /// Empty set.
+  pub fn new() Self {
+    return Self { ._items = List#[T].new() };
+  }
+
+  /// Number of values.
+  pub fn len(*const self) usize {
+    return self._items.len();
+  }
+
+  /// Checks that the set holds nothing.
+  pub fn is_empty(*const self) bool {
+    return self._items.is_empty();
+  }
+
+  /// Checks that `value` is present.
+  pub fn contains(*const self, value: *const T) bool {
+    return self._items.binary_search(value).is_some();
+  }
+
+  /// Adds `value`, returning `true` when it was absent.
+  pub fn insert(*self, value: T) bool {
+    switch (self._items.binary_search(&value)) {
+      .Some(_) => {
+        return false;
+      },
+      .None => {},
+    };
+
+    const pos = self.insert_position(&value);
+    self._items.insert(pos, value);
+
+    return true;
+  }
+
+  /// Removes `value`, returning `true` when it was present.
+  pub fn remove(*self, value: *const T) bool {
+    switch (self._items.binary_search(value)) {
+      .Some(pos) => {
+        let _drop = self._items.remove(pos);
+
+        return true;
+      },
+      .None => {},
+    };
+
+    return false;
+  }
+
+  /// Drops every value.
+  pub fn clear(*self) {
+    self._items.clear();
+  }
+
+  /// Iterator over values in order.
+  pub fn iter(*const self) ListIter[T] {
+    return self._items.iter();
+  }
+
+  fn insert_position(*const self, value: *const T) usize {
+    let low: usize = 0;
+    let high: usize = self._items.len();
+
+    while (low < high) {
+      const mid = (low + high) / 2;
+
+      switch (self._items.get_ptr(mid)) {
+        .Some(at) => switch ((*at).cmp(value)) {
+          .Less => {
+            low = mid + 1;
+          },
+          _ => {
+            high = mid;
+          },
+        },
+        .None => {
+          high = mid;
+        },
+      };
+    };
+
+    return low;
+  }
+}

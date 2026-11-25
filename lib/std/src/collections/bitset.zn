@@ -1,0 +1,105 @@
+use std.collections.list;
+
+/// Growable set of bits.
+pub struct BitSet {
+  _words: List[u64],
+  _set: usize,
+}
+
+implement BitSet {
+  /// Empty set.
+  pub fn new() Self {
+    return Self {
+      ._words = List#[u64].new(),
+      ._set = 0,
+    };
+  }
+
+  /// Number of set bits.
+  pub fn len(*const self) usize {
+    return self._set;
+  }
+
+  /// Checks that no bit is set.
+  pub fn is_empty(*const self) bool {
+    return self._set == 0;
+  }
+
+  /// Checks that bit `index` is set.
+  pub fn contains(*const self, index: usize) bool {
+    const word = index / 64;
+
+    if (word >= self._words.len()) {
+      return false;
+    };
+
+    switch (self._words.get_ptr(word)) {
+      .Some(ptr) => {
+        return ((*ptr) & (@as(u64, 1) << @as(u64, @as(u32, index % 64)))) != 0;
+      },
+      .None => {},
+    };
+
+    return false;
+  }
+
+  /// Sets bit `index`, returning `true` when it was clear.
+  pub fn insert(*self, index: usize) bool {
+    const word = index / 64;
+
+    while (self._words.len() <= word) {
+      self._words.push(@as(u64, 0));
+    };
+
+    switch (self._words.get_ptr(word)) {
+      .Some(ptr) => {
+        const bit = @as(u64, 1) << @as(u64, @as(u32, index % 64));
+
+        if (((*ptr) & bit) != 0) {
+          return false;
+        };
+
+        (*ptr) = (*ptr) | bit;
+        self._set += 1;
+
+        return true;
+      },
+      .None => {},
+    };
+
+    return false;
+  }
+
+  /// Clears bit `index`, returning `true` when it was set.
+  pub fn remove(*self, index: usize) bool {
+    const word = index / 64;
+
+    if (word >= self._words.len()) {
+      return false;
+    };
+
+    switch (self._words.get_ptr(word)) {
+      .Some(ptr) => {
+        const bit = @as(u64, 1) << @as(u64, @as(u32, index % 64));
+
+        if (((*ptr) & bit) == 0) {
+          return false;
+        };
+
+        (*ptr) = (*ptr) & ~bit;
+        self._set -= 1;
+
+        return true;
+      },
+      .None => {},
+    };
+
+    return false;
+  }
+
+  /// Clears every bit.
+  pub fn clear(*self) {
+    self._words.clear();
+    self._set = 0;
+  }
+}
