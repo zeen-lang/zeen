@@ -61,7 +61,7 @@ fn salsa_double_round(v: *[16]u32) {
   salsa_quarter(v, 15, 12, 13, 14);
 }
 
-pub fn salsa20_8_core(block: *[16]u32) {
+fn salsa20_8_core(block: *[16]u32) {
   let working: [16]u32 = {0; 16};
   let i: usize = 0;
 
@@ -79,6 +79,29 @@ pub fn salsa20_8_core(block: *[16]u32) {
   i = 0;
   while (i < 16) {
     block[i] = block[i] + working[i];
+    i += 1;
+  };
+}
+
+pub fn salsa20_8(block: []char) {
+  if (block.len != 64) {
+    @panic("salsa20/8 works on a 64-byte block");
+  };
+
+  let words: [16]u32 = {0; 16};
+  let i: usize = 0;
+
+  while (i < 16) {
+    words[i] = load32(block, i * 4);
+    i += 1;
+  };
+
+  salsa20_8_core(&words);
+
+  i = 0;
+
+  while (i < 16) {
+    store32(block, i * 4, words[i]);
     i += 1;
   };
 }

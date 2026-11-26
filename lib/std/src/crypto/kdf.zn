@@ -1,0 +1,197 @@
+use std.alloc;
+use std.crypto.hmac;
+use std.crypto.stream;
+
+fn xor_bytes(target: []char, mask: []const char) {
+  let i: usize = 0;
+
+  while (i < target.len) {
+    target[i] = @as(char, @as(u8, target[i]) ^ @as(u8, mask[i]));
+    i += 1;
+  };
+}
+
+fn le32(data: []const char, at: usize) u32 {
+  return @as(u32, data[at])
+    | (@as(u32, data[at + 1]) << 8)
+    | (@as(u32, data[at + 2]) << 16)
+    | (@as(u32, data[at + 3]) << 24);
+}
+
+pub fn hkdf_sha256(salt: []const char, ikm: []const char, info: []const char, out: []char) void {
+  if (out.len > 255 * 32) {
+    @panic("hkdf output is longer than 255 sha256 blocks");
+  };
+
+  const zeros: [32]char = {'\0'; 32};
+  let prk: [32]char = {'\0'; 32};
+
+  if (salt.len == 0) {
+    prk = HmacSha256.digest(zeros[0..32], ikm);
+  } else {
+    prk = HmacSha256.digest(salt, ikm);
+  };
+
+  let prev: [32]char = {'\0'; 32};
+  const blocks = (out.len + 31) / 32;
+  let i: usize = 1;
+
+  while (i <= blocks) {
+    const counter: [1]char = {@as(char, i)};
+    let mac = HmacSha256.new(prk[0..32]);
+
+    if (i > 1) {
+      mac.update(prev[0..32]);
+    };
+
+    mac.update(info);
+    mac.update(counter[0..1]);
+    prev = mac.finalize();
+
+    const start = (i - 1) * 32;
+    let take = out.len - start;
+
+    if (take > 32) {
+      take = 32;
+    };
+
+    @memcpy(out[start..start + take], prev[0..take]);
+    i += 1;
+  };
+}
+
+pub fn pbkdf2_sha256(password: []const char, salt: []const char, iterations: u32, out: []char) void {
+  if (iterations == 0) {
+    @panic("pbkdf2 needs at least one iteration");
+  };
+
+  const blocks = (out.len + 31) / 32;
+  let i: usize = 1;
+
+  while (i <= blocks) {
+    const index = @as(u32, i);
+    const encoded: [4]char = {
+      @as(char, (index >> 24) & 255),
+      @as(char, (index >> 16) & 255),
+      @as(char, (index >> 8) & 255),
+      @as(char, index & 255),
+    };
+    let mac = HmacSha256.new(password);
+
+    mac.update(salt);
+    mac.update(encoded[0..4]);
+
+    let u = mac.finalize();
+    let t = u;
+    let round: u32 = 1;
+
+    while (round < iterations) {
+      u = HmacSha256.digest(password, u[0..32]);
+      xor_bytes(t[0..32], u[0..32]);
+      round += 1;
+    };
+
+    const start = (i - 1) * 32;
+    let take = out.len - start;
+
+    if (take > 32) {
+      take = 32;
+    };
+
+    @memcpy(out[start..start + take], t[0..take]);
+    i += 1;
+  };
+}
+
+fn block_mix(input: []const char, output: []char, r: usize) {
+  let last: [64]char = {'\0'; 64};
+  const last_offset = (2 * r - 1) * 64;
+
+  @memcpy(last[0..64], input[last_offset..last_offset + 64]);
+
+  let i: usize = 0;
+
+  while (i < 2 * r) {
+    let j: usize = 0;
+
+    while (j < 64) {
+      last[j] = @as(char, @as(u8, last[j]) ^ @as(u8, input[i * 64 + j]));
+      j += 1;
+    };
+
+    salsa20_8(last[0..64]);
+
+    const dest = (i / 2) * 64 + (i % 2) * r * 64;
+
+    @memcpy(output[dest..dest + 64], last[0..64]);
+    i += 1;
+  };
+}
+
+fn romix(b: []char, scratch: []char, v: []char, n: usize, r: usize) {
+  const block = b.len;
+  let i: usize = 0;
+
+  while (i < n) {
+    const at = i * block;
+
+    @memcpy(v[at..at + block], b);
+    block_mix(b, scratch, r);
+    @memcpy(b, scratch);
+    i += 1;
+  };
+
+  i = 0;
+
+  while (i < n) {
+    const j = @as(usize, le32(b, (2 * r - 1) * 64)) % n;
+    const at = j * block;
+
+    xor_bytes(b, v[at..at + block]);
+    block_mix(b, scratch, r);
+    @memcpy(b, scratch);
+    i += 1;
+  };
+}
+
+pub fn scrypt(password: []const char, salt: []const char, n: u32, r: u32, p: u32, out: []char) void {
+  if (n < 2 || (n & (n - 1)) != 0) {
+    @panic("scrypt needs a power-of-two cost above 1");
+  };
+
+  if (r == 0 || p == 0) {
+    @panic("scrypt needs nonzero block and parallelism factors");
+  };
+
+  const block = 128 * @as(usize, r);
+  const total = @as(usize, p) * block;
+  const v_size = @as(usize, n) * block;
+
+  const b_ptr = Allocator.alloc(total);
+  const scratch_ptr = Allocator.alloc(block);
+  const v_ptr = Allocator.alloc(v_size);
+
+  const b_raw: [*]char = @as([*]char, b_ptr);
+  const scratch_raw: [*]char = @as([*]char, scratch_ptr);
+  const v_raw: [*]char = @as([*]char, v_ptr);
+  const b: []char = b_raw[0..total];
+  const scratch: []char = scratch_raw[0..block];
+  const v: []char = v_raw[0..v_size];
+
+  pbkdf2_sha256(password, salt, 1, b);
+
+  let i: usize = 0;
+
+  while (i < @as(usize, p)) {
+    const at = i * block;
+
+    romix(b[at..at + block], scratch, v, @as(usize, n), @as(usize, r));
+    i += 1;
+  };
+
+  pbkdf2_sha256(password, b, 1, out);
+
+  Allocator.dealloc(b_ptr);
+  Allocator.dealloc(scratch_ptr);
+  Allocator.dealloc(v_ptr);
+}
