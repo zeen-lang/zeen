@@ -1,0 +1,532 @@
+use std.alloc;
+
+comptime SortInsertionThreshold = 20;
+
+fn insertion_sort_by[T](items: []T, lo: usize, hi: usize, compare: fn(*const T, *const T) Ordering) {
+  let i = lo + 1;
+
+  while (i < hi) {
+    const tmp = items[i];
+    let j = i;
+
+    while (j > lo && compare(&items[j - 1], &tmp) == Ordering.Greater) {
+      items[j] = items[j - 1];
+      j -= 1;
+    };
+
+    items[j] = tmp;
+    i += 1;
+  };
+}
+
+fn merge_by[T](items: []T, buf: [*]T, lo: usize, mid: usize, hi: usize, compare: fn(*const T, *const T) Ordering) {
+  const left_len = mid - lo;
+  const right_len = hi - mid;
+
+  if (left_len == 0 || right_len == 0) { return; };
+
+  if (left_len <= right_len) {
+    let i: usize = 0;
+
+    while (i < left_len) {
+      buf[i] = items[lo + i];
+      i += 1;
+    };
+
+    let left: usize = 0;
+    let right: usize = mid;
+    let out: usize = lo;
+
+    while (left < left_len && right < hi) {
+      const l = @as(*T, buf + left);
+      const r = @as(*T, items.ptr + right);
+
+      if (!(compare(r, l) == Ordering.Less)) {
+        items[out] = *l;
+        left += 1;
+      } else {
+        items[out] = *r;
+        right += 1;
+      };
+
+      out += 1;
+    };
+
+    while (left < left_len) {
+      const l = @as(*T, buf + left);
+      items[out] = *l;
+      left += 1;
+      out += 1;
+    };
+  } else {
+    let i: usize = 0;
+
+    while (i < right_len) {
+      buf[i] = items[mid + i];
+      i += 1;
+    };
+
+    let left: usize = mid;
+    let right: usize = right_len;
+    let out: usize = hi;
+
+    while (left > lo && right > 0) {
+      left -= 1;
+      right -= 1;
+      const l = @as(*T, items.ptr + left);
+      const r = @as(*T, buf + right);
+
+      if (compare(r, l) == Ordering.Less) {
+        out -= 1;
+        items[out] = *l;
+        right += 1;
+      } else {
+        out -= 1;
+        items[out] = *r;
+        left += 1;
+      };
+    };
+
+    while (right > 0) {
+      right -= 1;
+      out -= 1;
+      const r = @as(*T, buf + right);
+      items[out] = *r;
+    };
+  };
+}
+
+fn merge_sort_by[T](items: []T, buf: [*]T, lo: usize, hi: usize, compare: fn(*const T, *const T) Ordering) {
+  const len = hi - lo;
+
+  if (len <= SortInsertionThreshold) {
+    insertion_sort_by(items, lo, hi, compare);
+    return;
+  };
+
+  const mid = lo + len / @as(usize, 2);
+
+  merge_sort_by(items, buf, lo, mid, compare);
+  merge_sort_by(items, buf, mid, hi, compare);
+  merge_by(items, buf, lo, mid, hi, compare);
+}
+
+fn insertion_sort[T: Ord](items: []T, lo: usize, hi: usize) {
+  let i = lo + 1;
+
+  while (i < hi) {
+    const tmp = items[i];
+    let j = i;
+
+    while (j > lo && items[j - 1] > tmp) {
+      items[j] = items[j - 1];
+      j -= 1;
+    };
+
+    items[j] = tmp;
+    i += 1;
+  };
+}
+
+fn merge[T: Ord](items: []T, buf: [*]T, lo: usize, mid: usize, hi: usize) {
+  const left_len = mid - lo;
+  const right_len = hi - mid;
+
+  if (left_len == 0 || right_len == 0) { return; };
+
+  if (left_len <= right_len) {
+    let i: usize = 0;
+
+    while (i < left_len) {
+      buf[i] = items[lo + i];
+      i += 1;
+    };
+
+    let left: usize = 0;
+    let right: usize = mid;
+    let out: usize = lo;
+
+    while (left < left_len && right < hi) {
+      const l = @as(*T, buf + left);
+      const r = @as(*T, items.ptr + right);
+
+      if (!(*r < *l)) {
+        items[out] = *l;
+        left += 1;
+      } else {
+        items[out] = *r;
+        right += 1;
+      };
+
+      out += 1;
+    };
+
+    while (left < left_len) {
+      const l = @as(*T, buf + left);
+      items[out] = *l;
+      left += 1;
+      out += 1;
+    };
+  } else {
+    let i: usize = 0;
+
+    while (i < right_len) {
+      buf[i] = items[mid + i];
+      i += 1;
+    };
+
+    let left: usize = mid;
+    let right: usize = right_len;
+    let out: usize = hi;
+
+    while (left > lo && right > 0) {
+      left -= 1;
+      right -= 1;
+      const l = @as(*T, items.ptr + left);
+      const r = @as(*T, buf + right);
+
+      if (*r < *l) {
+        out -= 1;
+        items[out] = *l;
+        right += 1;
+      } else {
+        out -= 1;
+        items[out] = *r;
+        left += 1;
+      };
+    };
+
+    while (right > 0) {
+      right -= 1;
+      out -= 1;
+      const r = @as(*T, buf + right);
+      items[out] = *r;
+    };
+  };
+}
+
+fn merge_sort[T: Ord](items: []T, buf: [*]T, lo: usize, hi: usize) {
+  const len = hi - lo;
+
+  if (len <= SortInsertionThreshold) {
+    insertion_sort(items, lo, hi);
+    return;
+  };
+
+  const mid = lo + len / @as(usize, 2);
+
+  merge_sort(items, buf, lo, mid);
+  merge_sort(items, buf, mid, hi);
+  merge(items, buf, lo, mid, hi);
+}
+
+pub struct Split[T] {
+  pub left: []T,
+  pub right: []T,
+}
+
+pub struct Windows[T] {
+  items: []T,
+  size: usize,
+  at: usize,
+}
+
+implement[T] Iterator : Windows[T] {
+  alias Item = []T;
+
+  fn next(*self) Option[[]T] {
+    if (self.size == 0 || self.at + self.size > self.items.len) {
+      return Option.None;
+    };
+
+    const start = self.at;
+    self.at += 1;
+
+    return Option.Some(self.items[start..start + self.size]);
+  }
+}
+
+pub struct Chunks[T] {
+  items: []T,
+  size: usize,
+  at: usize,
+}
+
+implement[T] Iterator : Chunks[T] {
+  alias Item = []T;
+
+  fn next(*self) Option[[]T] {
+    if (self.size == 0 || self.at >= self.items.len) {
+      return Option.None;
+    };
+
+    const start = self.at;
+    self.at += self.size;
+
+    if (self.at > self.items.len) {
+      return Option.Some(self.items[start..self.items.len]);
+    };
+
+    return Option.Some(self.items[start..self.at]);
+  }
+}
+
+implement[T] builtin []T {
+  pub fn swap(*self, a: usize, b: usize) {
+    let items: []T = *self;
+
+    if (a >= items.len || b >= items.len) {
+      @panic("out of bounds, slice len is {} but indices are {} and {}", items.len, a, b);
+    };
+
+    if (a == b) { return; };
+
+    const temp = items[a];
+    items[a] = items[b];
+    items[b] = temp;
+  }
+
+  pub fn reverse(*self) {
+    let items: []T = *self;
+    let i: usize = 0;
+
+    while (i < items.len / 2) {
+      const j = items.len - 1 - i;
+      const temp = items[i];
+      items[i] = items[j];
+      items[j] = temp;
+      i += 1;
+    };
+  }
+
+  pub fn split_at(*self, index: usize) Split[T] {
+    const items: []T = *self;
+
+    if (index > items.len) {
+      @panic("out of bounds, slice len is {} but split index is {}", items.len, index);
+    };
+
+    return Split#[T] { .left = (*self).ptr[0..index], .right = (*self).ptr[index..(*self).len] };
+  }
+
+  pub fn windows(*self, size: usize) Windows[T] {
+    return Windows#[T] { .items = *self, .size = size, .at = 0 };
+  }
+
+  pub fn chunks(*self, size: usize) Chunks[T] {
+    return Chunks#[T] { .items = *self, .size = size, .at = 0 };
+  }
+
+  pub fn sort_by(*self, compare: fn(*const T, *const T) Ordering) {
+    const items: []T = *self;
+
+    if (items.len < 2) { return; };
+
+    if (items.len <= SortInsertionThreshold) {
+      insertion_sort_by(items, 0, items.len, compare);
+      return;
+    };
+
+    const buf_len = items.len / @as(usize, 2) + 1;
+    const buf = @as([*]T, Allocator.alloc(buf_len * @sizeof(T)));
+
+    merge_sort_by(items, buf, 0, items.len, compare);
+    Allocator.dealloc(@as(*void, buf));
+  }
+}
+
+implement[T: Copy] builtin []T {
+  pub fn is_empty(*const self) bool {
+    const items: []const T = *self;
+
+    return items.len == 0;
+  }
+
+  pub fn first(*const self) Option[*const T] {
+    const items: []const T = *self;
+
+    if (items.len == 0) {
+      return Option.None;
+    };
+
+    return Option.Some(@as(*const T, items.ptr));
+  }
+
+  pub fn last(*const self) Option[*const T] {
+    const items: []const T = *self;
+
+    if (items.len == 0) {
+      return Option.None;
+    };
+
+    return Option.Some(@as(*const T, items.ptr + items.len - 1));
+  }
+
+  pub fn get(*const self, index: usize) Option[*const T] {
+    const items: []const T = *self;
+
+    if (index >= items.len) {
+      return Option.None;
+    };
+
+    return Option.Some(@as(*const T, items.ptr + index));
+  }
+
+  pub fn get_mut(*self, index: usize) Option[*T] {
+    const items: []T = *self;
+
+    if (index >= items.len) {
+      return Option.None;
+    };
+
+    return Option.Some(@as(*T, items.ptr + index));
+  }
+
+  pub fn fill(*self, value: T) {
+    let items: []T = *self;
+    let i: usize = 0;
+
+    while (i < items.len) {
+      items[i] = value;
+      i += 1;
+    };
+  }
+
+  pub fn copy_from_slice(*self, src: []const T) {
+    let items: []T = *self;
+
+    if (items.len != src.len) {
+      @panic("source slice len {} differs from destination len {}", src.len, items.len);
+    };
+
+    let i: usize = 0;
+
+    while (i < items.len) {
+      items[i] = src[i];
+      i += 1;
+    };
+  }
+}
+
+implement[T: Eq] builtin []T {
+  pub fn eql(*const self, other: []const T) bool {
+    const items: []const T = *self;
+
+    if (items.len != other.len) {
+      return false;
+    };
+
+    let i: usize = 0;
+
+    while (i < items.len) {
+      if (items[i] != other[i]) {
+        return false;
+      };
+
+      i += 1;
+    };
+
+    return true;
+  }
+}
+
+implement[T: Copy + Eq] builtin []T {
+  pub fn position(*const self, value: T) Option[usize] {
+    const items: []const T = *self;
+    let i: usize = 0;
+
+    while (i < items.len) {
+      if (items[i] == value) {
+        return Option.Some(i);
+      };
+
+      i += 1;
+    };
+
+    return Option.None;
+  }
+
+  pub fn contains(*const self, value: T) bool {
+    return (*self).position(value).is_some();
+  }
+
+  pub fn starts_with(*const self, prefix: []const T) bool {
+    const items: []const T = *self;
+
+    if (prefix.len > items.len) {
+      return false;
+    };
+
+    let i: usize = 0;
+
+    while (i < prefix.len) {
+      if (items[i] != prefix[i]) {
+        return false;
+      };
+
+      i += 1;
+    };
+
+    return true;
+  }
+
+  pub fn ends_with(*const self, suffix: []const T) bool {
+    const items: []const T = *self;
+
+    if (suffix.len > items.len) {
+      return false;
+    };
+
+    const offset = items.len - suffix.len;
+    let i: usize = 0;
+
+    while (i < suffix.len) {
+      if (items[offset + i] != suffix[i]) {
+        return false;
+      };
+
+      i += 1;
+    };
+
+    return true;
+  }
+}
+
+implement[T] builtin []T {
+  pub fn sort[T: Ord](*self) {
+    let items: []T = *self;
+
+    if (items.len < 2) { return; };
+
+    if (items.len <= SortInsertionThreshold) {
+      insertion_sort(items, 0, items.len);
+      return;
+    };
+
+    const buf_len = items.len / @as(usize, 2) + 1;
+    const buf = @as([*]T, Allocator.alloc(buf_len * @sizeof(T)));
+
+    merge_sort(items, buf, 0, items.len);
+    Allocator.dealloc(@as(*void, buf));
+  }
+
+  pub fn binary_search[T: Ord](*const self, value: *const T) Option[usize] {
+    const items: []const T = *self;
+    let lo: usize = 0;
+    let hi: usize = items.len;
+
+    while (lo < hi) {
+      const mid = lo + (hi - lo) / @as(usize, 2);
+
+      if (items[mid] < *value) {
+        lo = mid + 1;
+      } else if (items[mid] > *value) {
+        hi = mid;
+      } else {
+        return Option.Some(mid);
+      };
+    };
+
+    return Option.None;
+  }
+}
