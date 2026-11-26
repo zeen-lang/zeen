@@ -1,0 +1,263 @@
+use std.crypto.util;
+
+const M26: u64 = 0x3ffffff;
+
+fn le32(data: []const char, at: usize) u32 {
+  return @as(u32, data[at])
+    | (@as(u32, data[at + 1]) << 8)
+    | (@as(u32, data[at + 2]) << 16)
+    | (@as(u32, data[at + 3]) << 24);
+}
+
+fn store32(out: []char, at: usize, value: u32) {
+  out[at] = @as(char, value);
+  out[at + 1] = @as(char, value >> 8);
+  out[at + 2] = @as(char, value >> 16);
+  out[at + 3] = @as(char, value >> 24);
+}
+
+pub struct Poly1305 {
+  _r: [5]u32,
+  _h: [5]u32,
+  _pad: [4]u32,
+  _buffer: [16]char,
+  _buffered: usize,
+}
+
+implement Poly1305 {
+  pub fn new(key: []const char) Self {
+    if (key.len != 32) {
+      @panic("poly1305 needs a 32-byte key");
+    };
+
+    let r: [16]char = {'\0'; 16};
+    let i: usize = 0;
+
+    while (i < 16) {
+      r[i] = key[i];
+      i += 1;
+    };
+
+    r[3] = @as(char, @as(u8, r[3]) & 15);
+    r[7] = @as(char, @as(u8, r[7]) & 15);
+    r[11] = @as(char, @as(u8, r[11]) & 15);
+    r[15] = @as(char, @as(u8, r[15]) & 15);
+    r[4] = @as(char, @as(u8, r[4]) & 252);
+    r[8] = @as(char, @as(u8, r[8]) & 252);
+    r[12] = @as(char, @as(u8, r[12]) & 252);
+
+    const limbs: [5]u32 = {
+      le32(r[0..16], 0) & 0x3ffffff,
+      (le32(r[0..16], 3) >> 2) & 0x3ffffff,
+      (le32(r[0..16], 6) >> 4) & 0x3ffffff,
+      (le32(r[0..16], 9) >> 6) & 0x3ffffff,
+      (le32(r[0..16], 12) >> 8) & 0x3ffffff,
+    };
+    const pad: [4]u32 = {le32(key, 16), le32(key, 20), le32(key, 24), le32(key, 28)};
+
+    return Self {
+      ._r = limbs,
+      ._h = {0; 5},
+      ._pad = pad,
+      ._buffer = {'\0'; 16},
+      ._buffered = 0,
+    };
+  }
+
+  pub fn update(*self, data: []const char) void {
+    let i: usize = 0;
+
+    if (self._buffered > 0) {
+      while (i < data.len && self._buffered < 16) {
+        self._buffer[self._buffered] = data[i];
+        self._buffered += 1;
+        i += 1;
+      };
+
+      if (self._buffered == 16) {
+        self.block(self._buffer[0..16], 1 << 24);
+        self._buffered = 0;
+      };
+    };
+
+    while (data.len - i >= 16) {
+      const at = i;
+
+      self.block(data[at..at + 16], 1 << 24);
+      i += 16;
+    };
+
+    while (i < data.len) {
+      self._buffer[self._buffered] = data[i];
+      self._buffered += 1;
+      i += 1;
+    };
+  }
+
+  pub fn finalize(*self) [16]char {
+    if (self._buffered > 0) {
+      let last: [16]char = {'\0'; 16};
+      let i: usize = 0;
+
+      while (i < self._buffered) {
+        last[i] = self._buffer[i];
+        i += 1;
+      };
+
+      last[self._buffered] = @as(char, 1);
+      self.block(last[0..16], 0);
+      self._buffered = 0;
+    };
+
+    let h0 = @as(u64, self._h[0]);
+    let h1 = @as(u64, self._h[1]);
+    let h2 = @as(u64, self._h[2]);
+    let h3 = @as(u64, self._h[3]);
+    let h4 = @as(u64, self._h[4]);
+
+    let c = h1 >> 26;
+
+    h1 = h1 & M26;
+    h2 = h2 + c;
+
+    c = h2 >> 26;
+    h2 = h2 & M26;
+    h3 = h3 + c;
+
+    c = h3 >> 26;
+    h3 = h3 & M26;
+    h4 = h4 + c;
+
+    c = h4 >> 26;
+    h4 = h4 & M26;
+    h0 = h0 + c * 5;
+
+    c = h0 >> 26;
+    h0 = h0 & M26;
+    h1 = h1 + c;
+
+    let g0 = h0 + 5;
+
+    c = g0 >> 26;
+    g0 = g0 & M26;
+
+    let g1 = h1 + c;
+
+    c = g1 >> 26;
+    g1 = g1 & M26;
+
+    let g2 = h2 + c;
+
+    c = g2 >> 26;
+    g2 = g2 & M26;
+
+    let g3 = h3 + c;
+
+    c = g3 >> 26;
+    g3 = g3 & M26;
+
+    const g4 = h4 + c - (@as(u64, 1) << 26);
+    const mask = (g4 >> 63) - 1;
+    const keep = ~mask;
+
+    h0 = (h0 & keep) | (g0 & mask);
+    h1 = (h1 & keep) | (g1 & mask);
+    h2 = (h2 & keep) | (g2 & mask);
+    h3 = (h3 & keep) | (g3 & mask);
+    h4 = (h4 & keep) | (g4 & mask);
+
+    const w0 = @as(u32, (h0 | (h1 << 26)) & 0xffffffff);
+    const w1 = @as(u32, ((h1 >> 6) | (h2 << 20)) & 0xffffffff);
+    const w2 = @as(u32, ((h2 >> 12) | (h3 << 14)) & 0xffffffff);
+    const w3 = @as(u32, ((h3 >> 18) | (h4 << 8)) & 0xffffffff);
+
+    let f = @as(u64, w0) + @as(u64, self._pad[0]);
+    const o0 = @as(u32, f & 0xffffffff);
+
+    f = (@as(u64, w1) + @as(u64, self._pad[1])) + (f >> 32);
+    const o1 = @as(u32, f & 0xffffffff);
+
+    f = (@as(u64, w2) + @as(u64, self._pad[2])) + (f >> 32);
+    const o2 = @as(u32, f & 0xffffffff);
+
+    f = (@as(u64, w3) + @as(u64, self._pad[3])) + (f >> 32);
+    const o3 = @as(u32, f & 0xffffffff);
+
+    let out: [16]char = {'\0'; 16};
+
+    store32(out[0..16], 0, o0);
+    store32(out[0..16], 4, o1);
+    store32(out[0..16], 8, o2);
+    store32(out[0..16], 12, o3);
+
+    return out;
+  }
+
+  fn block(*self, m: []const char, hibit: u32) {
+    let h0 = @as(u64, self._h[0]) + @as(u64, le32(m, 0) & 0x3ffffff);
+    let h1 = @as(u64, self._h[1]) + @as(u64, (le32(m, 3) >> 2) & 0x3ffffff);
+    let h2 = @as(u64, self._h[2]) + @as(u64, (le32(m, 6) >> 4) & 0x3ffffff);
+    let h3 = @as(u64, self._h[3]) + @as(u64, (le32(m, 9) >> 6) & 0x3ffffff);
+    let h4 = @as(u64, self._h[4]) + @as(u64, le32(m, 12) >> 8) + @as(u64, hibit);
+
+    const r0 = @as(u64, self._r[0]);
+    const r1 = @as(u64, self._r[1]);
+    const r2 = @as(u64, self._r[2]);
+    const r3 = @as(u64, self._r[3]);
+    const r4 = @as(u64, self._r[4]);
+    const s1 = r1 * 5;
+    const s2 = r2 * 5;
+    const s3 = r3 * 5;
+    const s4 = r4 * 5;
+
+    let d0 = h0 * r0 + h1 * s4 + h2 * s3 + h3 * s2 + h4 * s1;
+    let d1 = h0 * r1 + h1 * r0 + h2 * s4 + h3 * s3 + h4 * s2;
+    let d2 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * s4 + h4 * s3;
+    let d3 = h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * s4;
+    let d4 = h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0;
+
+    let c = d0 >> 26;
+
+    h0 = d0 & M26;
+    d1 += c;
+
+    c = d1 >> 26;
+    h1 = d1 & M26;
+    d2 += c;
+
+    c = d2 >> 26;
+    h2 = d2 & M26;
+    d3 += c;
+
+    c = d3 >> 26;
+    h3 = d3 & M26;
+    d4 += c;
+
+    c = d4 >> 26;
+    h4 = d4 & M26;
+    h0 += c * 5;
+
+    c = h0 >> 26;
+    h0 = h0 & M26;
+    h1 += c;
+
+    self._h[0] = @as(u32, h0);
+    self._h[1] = @as(u32, h1);
+    self._h[2] = @as(u32, h2);
+    self._h[3] = @as(u32, h3);
+    self._h[4] = @as(u32, h4);
+  }
+}
+
+pub fn poly1305(key: []const char, data: []const char) [16]char {
+  let mac = Poly1305.new(key);
+
+  mac.update(data);
+  return mac.finalize();
+}
+
+pub fn poly1305_verify(key: []const char, data: []const char, tag: []const char) bool {
+  const out = poly1305(key, data);
+
+  return constant_time_eq(out[0..16], tag);
+}

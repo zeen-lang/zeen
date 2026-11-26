@@ -1,0 +1,128 @@
+use std.crypto.poly1305;
+use std.crypto.stream;
+use std.crypto.util;
+
+fn write_u64(out: []char, value: usize) {
+  const wide = @as(u64, value);
+  let i: usize = 0;
+
+  while (i < 8) {
+    out[i] = @as(char, wide >> @as(u64, i * 8));
+    i += 1;
+  };
+}
+
+fn pad(mac: *Poly1305, len: usize) {
+  const zeros: [16]char = {'\0'; 16};
+  const remainder = len % 16;
+
+  if (remainder != 0) {
+    const count = 16 - remainder;
+
+    mac.update(zeros[0..count]);
+  };
+}
+
+fn finish_mac(mac: *Poly1305, aad: []const char, ciphertext: []const char) [16]char {
+  let lengths: [8]char = {'\0'; 8};
+
+  mac.update(aad);
+  pad(mac, aad.len);
+  mac.update(ciphertext);
+  pad(mac, ciphertext.len);
+
+  write_u64(lengths[0..8], aad.len);
+  mac.update(lengths[0..8]);
+  write_u64(lengths[0..8], ciphertext.len);
+  mac.update(lengths[0..8]);
+
+  return mac.finalize();
+}
+
+pub fn seal_chacha20poly1305(key: []const char, nonce: []const char, aad: []const char, plaintext: []const char, ciphertext: []char, tag: []char) void {
+  if (key.len != 32 || nonce.len != 12) {
+    @panic("chacha20-poly1305 needs a 32-byte key and a 12-byte nonce");
+  };
+
+  if (ciphertext.len != plaintext.len || tag.len != 16) {
+    @panic("chacha20-poly1305 needs matching buffers and a 16-byte tag");
+  };
+
+  let one_time_key: [32]char = {'\0'; 32};
+  let otk = ChaCha20.new(key, nonce, 0);
+
+  otk.apply_keystream(one_time_key[0..32]);
+
+  @memcpy(ciphertext, plaintext);
+
+  let data = ChaCha20.new(key, nonce, 1);
+
+  data.apply_keystream(ciphertext);
+
+  let mac = Poly1305.new(one_time_key[0..32]);
+  const computed = finish_mac(&mac, aad, ciphertext);
+
+  @memcpy(tag[0..16], computed[0..16]);
+}
+
+pub fn open_chacha20poly1305(key: []const char, nonce: []const char, aad: []const char, ciphertext: []char, tag: []const char) bool {
+  if (key.len != 32 || nonce.len != 12) {
+    @panic("chacha20-poly1305 needs a 32-byte key and a 12-byte nonce");
+  };
+
+  if (tag.len != 16) {
+    @panic("chacha20-poly1305 needs a 16-byte tag");
+  };
+
+  let one_time_key: [32]char = {'\0'; 32};
+  let otk = ChaCha20.new(key, nonce, 0);
+
+  otk.apply_keystream(one_time_key[0..32]);
+
+  let mac = Poly1305.new(one_time_key[0..32]);
+  const computed = finish_mac(&mac, aad, ciphertext);
+
+  if (!constant_time_eq(computed[0..16], tag)) {
+    return false;
+  };
+
+  let data = ChaCha20.new(key, nonce, 1);
+
+  data.apply_keystream(ciphertext);
+
+  return true;
+}
+
+pub fn seal_xchacha20poly1305(key: []const char, nonce: []const char, aad: []const char, plaintext: []const char, ciphertext: []char, tag: []char) void {
+  if (nonce.len != 24) {
+    @panic("xchacha20-poly1305 needs a 24-byte nonce");
+  };
+
+  const subkey = hchacha20(key, nonce[0..16]);
+  let derived: [12]char = {'\0'; 12};
+  let i: usize = 0;
+
+  while (i < 8) {
+    derived[4 + i] = nonce[16 + i];
+    i += 1;
+  };
+
+  seal_chacha20poly1305(subkey[0..32], derived[0..12], aad, plaintext, ciphertext, tag);
+}
+
+pub fn open_xchacha20poly1305(key: []const char, nonce: []const char, aad: []const char, ciphertext: []char, tag: []const char) bool {
+  if (nonce.len != 24) {
+    @panic("xchacha20-poly1305 needs a 24-byte nonce");
+  };
+
+  const subkey = hchacha20(key, nonce[0..16]);
+  let derived: [12]char = {'\0'; 12};
+  let i: usize = 0;
+
+  while (i < 8) {
+    derived[4 + i] = nonce[16 + i];
+    i += 1;
+  };
+
+  return open_chacha20poly1305(subkey[0..32], derived[0..12], aad, ciphertext, tag);
+}
