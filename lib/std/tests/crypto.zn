@@ -8,7 +8,9 @@ use std.crypto.sha1;
 use std.crypto.sha256;
 use std.crypto.sha3;
 use std.crypto.sha512;
+use std.crypto.stream;
 use std.crypto.util;
+use std.encoding.hex;
 use std.string;
 use std.testing;
 
@@ -357,3 +359,59 @@ pub fn md5_streaming_matches_one_shot() {
 
   assert_eq(Hashing.hexdigest(hasher.finalize()[..]), String.from("900150983cd24fb0d6963f7d28e17f72"));
 }
+
+/// @test
+pub fn chacha20_block_vector() {
+  const key = Hex.decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").unwrap();
+  const nonce = Hex.decode("000000090000004a00000000").unwrap();
+  let cipher = ChaCha20.new(key.slice(..), nonce.slice(..), 1);
+  let block: [64]char = {'\0'; 64};
+
+  cipher.apply_keystream(block[..]);
+
+  assert_eq(Hex.encode(block[..]), String.from("10f1e7e4d13b5915500fdd1fa32071c4c7d1f4c733c068030422aa9ac3d46c4ed2826446079faa0914c2d705d98b02a2b5129cd1de164eb9cbd083e8a2503c4e"));
+}
+
+/// @test
+pub fn chacha20_stream_vector() {
+  const key = Hex.decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").unwrap();
+  const nonce = Hex.decode("000000000000004a00000000").unwrap();
+  const plain = Hex.decode("4c616469657320616e642047656e746c656d656e206f662074686520636c617373206f66202739393a204966204920636f756c64206f6666657220796f75206f6e6c79206f6e652074697020666f7220746865206675747572652c2073756e73637265656e20776f756c642062652069742e").unwrap();
+  let buf: [114]char = {'\0'; 114};
+  let i: usize = 0;
+
+  while (i < 114) {
+    buf[i] = plain.slice(..)[i];
+    i += 1;
+  };
+
+  let cipher = ChaCha20.new(key.slice(..), nonce.slice(..), 1);
+  cipher.apply_keystream(buf[..]);
+
+  assert_eq(Hex.encode(buf[..]), String.from("6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0bf91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d807ca0dbf500d6a6156a38e088a22b65e52bc514d16ccf806818ce91ab77937365af90bbf74a35be6b40b8eedf2785e42874d"));
+}
+
+/// @test
+pub fn salsa20_stream_vector() {
+  const key = Hex.decode("8000000000000000000000000000000000000000000000000000000000000000").unwrap();
+  const nonce = Hex.decode("0000000000000000").unwrap();
+  let cipher = Salsa20.new(key.slice(..), nonce.slice(..));
+  let buf: [64]char = {'\0'; 64};
+
+  cipher.apply_keystream(buf[..]);
+
+  assert_eq(Hex.encode(buf[..]), String.from("e3be8fdd8beca2e3ea8ef9475b29a6e7003951e1097a5c38d23b7a5fad9f6844b22c97559e2723c7cbbd3fe4fc8d9a0744652a83e72a9c461876af4d7ef1a117"));
+}
+
+/// @test
+pub fn salsa20_multi_block_vector() {
+  const key = Hex.decode("0000000000000000000000000000000000000000000000000000000000000000").unwrap();
+  const nonce = Hex.decode("0000000000000000").unwrap();
+  let cipher = Salsa20.new(key.slice(..), nonce.slice(..));
+  let buf: [128]char = {'\0'; 128};
+
+  cipher.apply_keystream(buf[..]);
+
+  assert_eq(Hex.encode(buf[..]), String.from("9a97f65b9b4c721b960a672145fca8d4e32e67f9111ea979ce9c4826806aeee63de9c0da2bd7f91ebcb2639bf989c6251b29bf38d39a9bdce7c55f4b2ac12a39abea8a17646d1a7782f4f2ae5e9f2bdeac1241460ba80bd5beefbf8794988834c4d94bb6c9134d512664c90dd0ecbb218d5a24fffb69ceb42f5efab584be6e10"));
+}
+

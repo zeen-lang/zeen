@@ -1,0 +1,278 @@
+fn rotl32(x: u32, n: u32) u32 {
+  return (x << n) | (x >> (32 - n));
+}
+
+fn load32(data: []const char, at: usize) u32 {
+  return @as(u32, data[at])
+    | (@as(u32, data[at + 1]) << 8)
+    | (@as(u32, data[at + 2]) << 16)
+    | (@as(u32, data[at + 3]) << 24);
+}
+
+fn store32(out: []char, at: usize, value: u32) {
+  out[at] = @as(char, value);
+  out[at + 1] = @as(char, value >> 8);
+  out[at + 2] = @as(char, value >> 16);
+  out[at + 3] = @as(char, value >> 24);
+}
+
+fn chacha_quarter(v: *[16]u32, a: usize, b: usize, c: usize, d: usize) {
+  v[a] = v[a] + v[b];
+  v[d] = rotl32(v[d] ^ v[a], 16);
+  v[c] = v[c] + v[d];
+  v[b] = rotl32(v[b] ^ v[c], 12);
+  v[a] = v[a] + v[b];
+  v[d] = rotl32(v[d] ^ v[a], 8);
+  v[c] = v[c] + v[d];
+  v[b] = rotl32(v[b] ^ v[c], 7);
+}
+
+fn chacha_rounds(v: *[16]u32) {
+  let round: usize = 0;
+
+  while (round < 10) {
+    chacha_quarter(v, 0, 4, 8, 12);
+    chacha_quarter(v, 1, 5, 9, 13);
+    chacha_quarter(v, 2, 6, 10, 14);
+    chacha_quarter(v, 3, 7, 11, 15);
+    chacha_quarter(v, 0, 5, 10, 15);
+    chacha_quarter(v, 1, 6, 11, 12);
+    chacha_quarter(v, 2, 7, 8, 13);
+    chacha_quarter(v, 3, 4, 9, 14);
+    round += 1;
+  };
+}
+
+fn salsa_quarter(v: *[16]u32, a: usize, b: usize, c: usize, d: usize) {
+  v[b] = v[b] ^ rotl32(v[a] + v[d], 7);
+  v[c] = v[c] ^ rotl32(v[b] + v[a], 9);
+  v[d] = v[d] ^ rotl32(v[c] + v[b], 13);
+  v[a] = v[a] ^ rotl32(v[d] + v[c], 18);
+}
+
+fn salsa_double_round(v: *[16]u32) {
+  salsa_quarter(v, 0, 4, 8, 12);
+  salsa_quarter(v, 5, 9, 13, 1);
+  salsa_quarter(v, 10, 14, 2, 6);
+  salsa_quarter(v, 15, 3, 7, 11);
+  salsa_quarter(v, 0, 1, 2, 3);
+  salsa_quarter(v, 5, 6, 7, 4);
+  salsa_quarter(v, 10, 11, 8, 9);
+  salsa_quarter(v, 15, 12, 13, 14);
+}
+
+pub fn salsa20_8_core(block: *[16]u32) {
+  let working: [16]u32 = {0; 16};
+  let i: usize = 0;
+
+  while (i < 16) {
+    working[i] = block[i];
+    i += 1;
+  };
+
+  let round: usize = 0;
+  while (round < 4) {
+    salsa_double_round(&working);
+    round += 1;
+  };
+
+  i = 0;
+  while (i < 16) {
+    block[i] = block[i] + working[i];
+    i += 1;
+  };
+}
+
+pub struct ChaCha20 {
+  _key: [8]u32,
+  _nonce: [3]u32,
+  _counter: u32,
+}
+
+implement ChaCha20 {
+  pub fn new(key: []const char, nonce: []const char, counter: u32) Self {
+    if (key.len != 32 || nonce.len != 12) {
+      @panic("chacha20 needs a 32-byte key and a 12-byte nonce");
+    };
+
+    let k: [8]u32 = {0; 8};
+    let n: [3]u32 = {0; 3};
+    let i: usize = 0;
+
+    while (i < 8) {
+      k[i] = load32(key, i * 4);
+      i += 1;
+    };
+
+    i = 0;
+
+    while (i < 3) {
+      n[i] = load32(nonce, i * 4);
+      i += 1;
+    };
+
+    return Self {
+      ._key = k,
+      ._nonce = n,
+      ._counter = counter,
+    };
+  }
+
+  pub fn apply_keystream(*self, data: []char) {
+    let offset: usize = 0;
+
+    while (offset < data.len) {
+      let block: [64]char = @uninit();
+      self.block(&block);
+
+      let take = data.len - offset;
+
+      if (take > 64) {
+        take = 64;
+      };
+
+      let i: usize = 0;
+
+      while (i < take) {
+        data[offset + i] = @as(char, @as(u8, data[offset + i]) ^ @as(u8, block[i]));
+        i += 1;
+      };
+
+      offset += take;
+      self._counter += 1;
+    };
+  }
+
+  fn block(*self, out: *[64]char) {
+    let state: [16]u32 = {0x61707865, 0x3320646e, 0x79622d32, 0x6b206574, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    let i: usize = 0;
+
+    while (i < 8) {
+      state[4 + i] = self._key[i];
+      i += 1;
+    };
+
+    state[12] = self._counter;
+    i = 0;
+
+    while (i < 3) {
+      state[13 + i] = self._nonce[i];
+      i += 1;
+    };
+
+    let working: [16]u32 = {0; 16};
+    i = 0;
+
+    while (i < 16) {
+      working[i] = state[i];
+      i += 1;
+    };
+
+    chacha_rounds(&working);
+
+    i = 0;
+
+    while (i < 16) {
+      store32(out[..], i * 4, working[i] + state[i]);
+      i += 1;
+    };
+  }
+}
+
+pub struct Salsa20 {
+  _state: [16]u32,
+  _counter: u64,
+}
+
+implement Salsa20 {
+  pub fn new(key: []const char, nonce: []const char) Self {
+    if (key.len != 32 || nonce.len != 8) {
+      @panic("salsa20 needs a 32-byte key and an 8-byte nonce");
+    };
+
+    let state: [16]u32 = {0; 16};
+    const sigma: [4]u32 = {0x61707865, 0x3320646e, 0x79622d32, 0x6b206574};
+
+    state[0] = sigma[0];
+    state[5] = sigma[1];
+    state[10] = sigma[2];
+    state[15] = sigma[3];
+
+    let i: usize = 0;
+    while (i < 4) {
+      state[1 + i] = load32(key, i * 4);
+      state[11 + i] = load32(key, 16 + i * 4);
+      i += 1;
+    };
+
+    i = 0;
+    while (i < 2) {
+      state[6 + i] = load32(nonce, i * 4);
+      i += 1;
+    };
+
+    return Self {
+      ._state = state,
+      ._counter = 0,
+    };
+  }
+
+  pub fn apply_keystream(*self, data: []char) {
+    let offset: usize = 0;
+
+    while (offset < data.len) {
+      let block: [64]char = @uninit();
+      self.block(&block);
+
+      let take = data.len - offset;
+
+      if (take > 64) {
+        take = 64;
+      };
+
+      let i: usize = 0;
+
+      while (i < take) {
+        data[offset + i] = @as(char, @as(u8, data[offset + i]) ^ @as(u8, block[i]));
+        i += 1;
+      };
+
+      offset += take;
+      self._counter += 1;
+    };
+  }
+
+  fn block(*self, out: *[64]char) {
+    let state: [16]u32 = {0; 16};
+    let i: usize = 0;
+
+    while (i < 16) {
+      state[i] = self._state[i];
+      i += 1;
+    };
+
+    state[8] = @as(u32, self._counter);
+    state[9] = @as(u32, self._counter >> 32);
+
+    let working: [16]u32 = {0; 16};
+    i = 0;
+
+    while (i < 16) {
+      working[i] = state[i];
+      i += 1;
+    };
+
+    let round: usize = 0;
+    while (round < 10) {
+      salsa_double_round(&working);
+      round += 1;
+    };
+
+    i = 0;
+
+    while (i < 16) {
+      store32(out[..], i * 4, working[i] + state[i]);
+      i += 1;
+    };
+  }
+}
