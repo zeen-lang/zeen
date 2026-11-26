@@ -163,6 +163,8 @@ use std.c.windows.windef;
     pub high: WinDWORD,
   }
 
+  pub extern fn GetSystemTimeAsFileTime(out: *c_FileTime) void;
+
   pub struct c_FindData {
     pub attributes: WinDWORD,
     pub created: c_FileTime,

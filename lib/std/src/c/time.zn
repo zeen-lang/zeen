@@ -66,6 +66,10 @@ pub extern fn mktime(tm: *c_tm) c_time_t;
   pub const CLOCK_MONOTONIC: c_int = 1;
 }
 
+@os[linux | android | darwin | freebsd] {
+  pub const CLOCK_REALTIME: c_int = 0;
+}
+
 // conversion
 pub extern fn gmtime(timer: *const c_time_t) *c_tm;
 pub extern fn localtime(timer: *const c_time_t) *c_tm;

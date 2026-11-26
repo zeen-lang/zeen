@@ -23,3 +23,26 @@ pub fn sleep_advances_elapsed() {
   assert(start.elapsed().as_millis() >= 50);
   assert(Time.now() > 1700000000);
 }
+
+/// @test
+pub fn duration_operators() {
+  const short: u32 = 2;
+  const added = Duration.from_secs(1) + Duration.from_millis(500);
+
+  assert_eq(added.as_millis(), @as(u64, 1500));
+  assert_eq((added - Duration.from_millis(200)).as_millis(), @as(u64, 1300));
+  assert_eq((added * short).as_millis(), @as(u64, 3000));
+  assert_eq((added / short).as_millis(), @as(u64, 750));
+  assert(Duration.from_parts(0, 999999999).as_nanos() == 999999999);
+}
+
+/// @test
+pub fn system_time_since_epoch_and_difference() {
+  const earlier = SystemTime.from_unix(100, 500000000);
+  const later = SystemTime.from_unix(102, 200000000);
+
+  assert_eq(later.unix_secs(), @as(i64, 102));
+  assert_eq(later.duration_since(&earlier).as_millis(), @as(u64, 1700));
+  assert_eq(SystemTime.from_unix(1, 0).since_epoch().as_secs(), @as(u64, 1));
+  assert(SystemTime.now().unix_secs() > 1700000000);
+}

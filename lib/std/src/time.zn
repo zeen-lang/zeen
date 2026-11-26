@@ -3,6 +3,7 @@ use std.c.time;
 use std.string;
 
 @os[windows] {
+  use std.c.windows.fileapi;
   use std.c.windows.winbase;
   use std.c.windows.windef;
 }
@@ -49,9 +50,83 @@ implement Duration {
     return self.secs * 1000000000 + @as(u64, self.nanos);
   }
 
+  pub fn from_parts(secs: u64, nanos: u32) Self {
+    if (nanos >= 1000000000) {
+      @panic("duration nanoseconds must stay below one second");
+    };
+
+    return Duration { .secs = secs, .nanos = nanos };
+  }
+
   /// Checks that the span is empty.
   pub fn is_zero(*const self) bool {
     return self.secs == 0 && self.nanos == 0;
+  }
+}
+
+implement Copy : Duration {}
+
+implement Add : Duration {
+  fn add(self, other: Self) Self {
+    const nanos = @as(u64, self.subsec_nanos()) + @as(u64, other.subsec_nanos());
+    const carry = nanos / 1000000000;
+    const secs = self.as_secs() + other.as_secs();
+    const total = secs + carry;
+
+    if (total < secs) {
+      @panic("duration addition overflow");
+    };
+
+    return Duration.from_parts(total, @as(u32, nanos % 1000000000));
+  }
+}
+
+implement Sub : Duration {
+  fn sub(self, other: Self) Self {
+    const secs = self.as_secs();
+    const nanos = self.subsec_nanos();
+
+    if (secs < other.as_secs() || (secs == other.as_secs() && nanos < other.subsec_nanos())) {
+      @panic("duration subtraction underflow");
+    };
+
+    const delta = @as(i64, nanos) - @as(i64, other.subsec_nanos());
+
+    if (delta < 0) {
+      return Duration.from_parts(secs - other.as_secs() - 1, @as(u32, delta + 1000000000));
+    };
+
+    return Duration.from_parts(secs - other.as_secs(), @as(u32, delta));
+  }
+}
+
+implement Mul[u32] : Duration {
+  alias Output = Duration;
+
+  fn mul(self, factor: u32) Output {
+    const wide = @as(u64, factor);
+    const total = self.as_nanos();
+    const scaled = total * wide;
+
+    if (wide != 0 && scaled / wide != total) {
+      @panic("duration multiplication overflow");
+    };
+
+    return Duration.from_parts(scaled / 1000000000, @as(u32, scaled % 1000000000));
+  }
+}
+
+implement Div[u32] : Duration {
+  alias Output = Duration;
+
+  fn div(self, factor: u32) Output {
+    if (factor == 0) {
+      @panic("duration division by zero");
+    };
+
+    const scaled = self.as_nanos() / @as(u64, factor);
+
+    return Duration.from_parts(scaled / 1000000000, @as(u32, scaled % 1000000000));
   }
 }
 
@@ -119,6 +194,69 @@ implement Instant {
   fn wall_secs() Self {
     const t = time(nullptr);
     return Instant { .secs = @as(i64, t), .nanos = 0 };
+  }
+}
+
+pub struct SystemTime {
+  secs: i64,
+  nanos: u32,
+}
+
+implement SystemTime {
+  pub fn now() Self {
+    @os[windows] {
+      const ft = c_FileTime { .low = 0, .high = 0 };
+
+      GetSystemTimeAsFileTime(&ft);
+
+      const ticks = (@as(u64, ft.high) << @as(u64, 32)) | @as(u64, ft.low);
+      const secs = @as(i64, ticks / 10000000) - 11644473600;
+      const nanos = @as(u32, @as(u64, ticks % 10000000) * 100);
+
+      return SystemTime { .secs = secs, .nanos = nanos };
+    } else @os[linux | android | darwin | freebsd] {
+      const ts = c_Timespec { .tv_sec = 0, .tv_nsec = 0 };
+      const rc = clock_gettime(CLOCK_REALTIME, &ts);
+
+      if (rc != 0) {
+        @panic("clock_gettime failed");
+      };
+
+      return SystemTime { .secs = @as(i64, ts.tv_sec), .nanos = @as(u32, ts.tv_nsec) };
+    } else {
+      return SystemTime { .secs = @as(i64, time(nullptr)), .nanos = 0 };
+    }
+  }
+
+  pub fn from_unix(secs: i64, nanos: u32) Self {
+    if (nanos >= 1000000000) {
+      @panic("system time nanoseconds must stay below one second");
+    };
+
+    return SystemTime { .secs = secs, .nanos = nanos };
+  }
+
+  pub fn unix_secs(*const self) i64 {
+    return self.secs;
+  }
+
+  pub fn since_epoch(*const self) Duration {
+    return Duration.from_parts(@as(u64, self.secs), self.nanos);
+  }
+
+  pub fn duration_since(*const self, earlier: *const Self) Duration {
+    if (self.secs < earlier.secs || (self.secs == earlier.secs && self.nanos < earlier.nanos)) {
+      @panic("system time predates the other timestamp");
+    };
+
+    const secs = @as(u64, self.secs - earlier.secs);
+    const delta = @as(i64, self.nanos) - @as(i64, earlier.nanos);
+
+    if (delta < 0) {
+      return Duration.from_parts(secs - 1, @as(u32, delta + 1000000000));
+    };
+
+    return Duration.from_parts(secs, @as(u32, delta));
   }
 }
 
