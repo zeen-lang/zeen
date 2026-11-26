@@ -1,3 +1,4 @@
+use std.crypto.aes;
 use std.crypto.poly1305;
 use std.crypto.stream;
 use std.crypto.util;
@@ -125,4 +126,278 @@ pub fn open_xchacha20poly1305(key: []const char, nonce: []const char, aad: []con
   };
 
   return open_chacha20poly1305(subkey[0..32], derived[0..12], aad, ciphertext, tag);
+}
+
+fn write_be64(out: *[16]u8, at: usize, value: usize) {
+  const wide = @as(u64, value);
+
+  out[at] = @as(u8, wide >> @as(u64, 56));
+  out[at + 1] = @as(u8, wide >> @as(u64, 48));
+  out[at + 2] = @as(u8, wide >> @as(u64, 40));
+  out[at + 3] = @as(u8, wide >> @as(u64, 32));
+  out[at + 4] = @as(u8, wide >> @as(u64, 24));
+  out[at + 5] = @as(u8, wide >> @as(u64, 16));
+  out[at + 6] = @as(u8, wide >> @as(u64, 8));
+  out[at + 7] = @as(u8, wide);
+}
+
+fn chars_to_bytes(src: []const char, dst: *[16]u8) {
+  let i: usize = 0;
+
+  while (i < 16) {
+    dst[i] = @as(u8, src[i]);
+    i += 1;
+  };
+}
+
+fn bytes_to_chars(src: *const [16]u8, dst: []char) {
+  let i: usize = 0;
+
+  while (i < 16) {
+    dst[i] = @as(char, src[i]);
+    i += 1;
+  };
+}
+
+fn ghash_mul(state: *[16]u8, h: *const [16]u8) {
+  let z: [16]u8 = {0; 16};
+  let v: [16]u8 = {0; 16};
+  let i: usize = 0;
+
+  while (i < 16) {
+    v[i] = h[i];
+    i += 1;
+  };
+
+  i = 0;
+
+  while (i < 128) {
+    const bit = (@as(u32, state[i / 8]) >> @as(u32, 7 - i % 8)) & 1;
+
+    if (bit != 0) {
+      let j: usize = 0;
+
+      while (j < 16) {
+        z[j] = z[j] ^ v[j];
+        j += 1;
+      };
+    };
+
+    const lsb = v[15] & @as(u8, 1);
+    let j: usize = 15;
+
+    while (j > 0) {
+      v[j] = @as(u8, (@as(u16, v[j]) >> 1) | (@as(u16, v[j - 1] & @as(u8, 1)) << 7));
+      j -= 1;
+    };
+
+    v[0] = @as(u8, @as(u16, v[0]) >> 1);
+
+    if (lsb != 0) {
+      v[0] = v[0] ^ @as(u8, 0xe1);
+    };
+
+    i += 1;
+  };
+
+  i = 0;
+
+  while (i < 16) {
+    state[i] = z[i];
+    i += 1;
+  };
+}
+
+fn ghash_block(state: *[16]u8, h: *const [16]u8, block: *const [16]u8) {
+  let i: usize = 0;
+
+  while (i < 16) {
+    state[i] = state[i] ^ block[i];
+    i += 1;
+  };
+
+  ghash_mul(state, h);
+}
+
+fn ghash_data(state: *[16]u8, h: *const [16]u8, data: []const char) {
+  let i: usize = 0;
+
+  while (i < data.len) {
+    let block: [16]u8 = {0; 16};
+    let take = data.len - i;
+    let j: usize = 0;
+
+    if (take > 16) {
+      take = 16;
+    };
+
+    while (j < take) {
+      block[j] = @as(u8, data[i + j]);
+      j += 1;
+    };
+
+    ghash_block(state, h, &block);
+    i += 16;
+  };
+}
+
+fn gcm_tag(h: *const [16]u8, mask: []const char, aad: []const char, ciphertext: []const char) [16]char {
+  let state: [16]u8 = {0; 16};
+  let lengths: [16]u8 = {0; 16};
+
+  ghash_data(&state, h, aad);
+  ghash_data(&state, h, ciphertext);
+
+  write_be64(&lengths, 0, aad.len * 8);
+  write_be64(&lengths, 8, ciphertext.len * 8);
+  ghash_block(&state, h, &lengths);
+
+  let out: [16]char = {'\0'; 16};
+  let i: usize = 0;
+
+  while (i < 16) {
+    out[i] = @as(char, state[i] ^ @as(u8, mask[i]));
+    i += 1;
+  };
+
+  return out;
+}
+
+fn inc32(counter: []char) {
+  let value = (@as(u32, @as(u8, counter[12])) << 24)
+    | (@as(u32, @as(u8, counter[13])) << 16)
+    | (@as(u32, @as(u8, counter[14])) << 8)
+    | @as(u32, @as(u8, counter[15]));
+
+  value += 1;
+
+  counter[12] = @as(char, value >> 24);
+  counter[13] = @as(char, value >> 16);
+  counter[14] = @as(char, value >> 8);
+  counter[15] = @as(char, value);
+}
+
+fn ctr_xor(aes: *const Aes256, counter: []char, data: []char) {
+  let offset: usize = 0;
+
+  while (offset < data.len) {
+    let keystream: [16]char = {'\0'; 16};
+    let i: usize = 0;
+
+    while (i < 16) {
+      keystream[i] = counter[i];
+      i += 1;
+    };
+
+    aes.encrypt(keystream[0..16]);
+
+    let take = data.len - offset;
+    let j: usize = 0;
+
+    if (take > 16) {
+      take = 16;
+    };
+
+    while (j < take) {
+      data[offset + j] = @as(char, @as(u8, data[offset + j]) ^ @as(u8, keystream[j]));
+      j += 1;
+    };
+
+    inc32(counter);
+    offset += 16;
+  };
+}
+
+fn gcm_setup(key: []const char, nonce: []const char) Aes256 {
+  if (nonce.len != 12) {
+    @panic("aes256-gcm needs a 32-byte key and a 12-byte nonce");
+  };
+
+  return Aes256.new(key);
+}
+
+fn gcm_hash_key(aes: *const Aes256, h: *[16]u8) {
+  let zeros: [16]char = {'\0'; 16};
+
+  aes.encrypt(zeros[0..16]);
+  chars_to_bytes(zeros[0..16], h);
+}
+
+fn gcm_mask(aes: *const Aes256, nonce: []const char, counter: *[16]char) [16]char {
+  let j0: [16]char = {'\0'; 16};
+  let i: usize = 0;
+
+  while (i < 12) {
+    j0[i] = nonce[i];
+    counter[i] = nonce[i];
+    i += 1;
+  };
+
+  j0[15] = @as(char, 1);
+  counter[15] = @as(char, 1);
+
+  let mask: [16]char = {'\0'; 16};
+
+  i = 0;
+
+  while (i < 16) {
+    mask[i] = j0[i];
+    i += 1;
+  };
+
+  aes.encrypt(mask[0..16]);
+  inc32(counter[0..16]);
+
+  return mask;
+}
+
+pub fn seal_aes256gcm(key: []const char, nonce: []const char, aad: []const char, plaintext: []const char, ciphertext: []char, tag: []char) void {
+  if (key.len != 32) {
+    @panic("aes256-gcm needs a 32-byte key and a 12-byte nonce");
+  };
+
+  if (ciphertext.len != plaintext.len || tag.len != 16) {
+    @panic("aes256-gcm needs matching buffers and a 16-byte tag");
+  };
+
+  const aes = gcm_setup(key, nonce);
+  let h: [16]u8 = {0; 16};
+  let counter: [16]char = {'\0'; 16};
+
+  gcm_hash_key(&aes, &h);
+  const mask = gcm_mask(&aes, nonce, &counter);
+
+  @memcpy(ciphertext, plaintext);
+  ctr_xor(&aes, counter[0..16], ciphertext);
+
+  const computed = gcm_tag(&h, mask[0..16], aad, ciphertext);
+
+  @memcpy(tag[0..16], computed[0..16]);
+}
+
+pub fn open_aes256gcm(key: []const char, nonce: []const char, aad: []const char, ciphertext: []char, tag: []const char) bool {
+  if (key.len != 32) {
+    @panic("aes256-gcm needs a 32-byte key and a 12-byte nonce");
+  };
+
+  if (tag.len != 16) {
+    @panic("aes256-gcm needs a 16-byte tag");
+  };
+
+  const aes = gcm_setup(key, nonce);
+  let h: [16]u8 = {0; 16};
+  let counter: [16]char = {'\0'; 16};
+
+  gcm_hash_key(&aes, &h);
+  const mask = gcm_mask(&aes, nonce, &counter);
+
+  const computed = gcm_tag(&h, mask[0..16], aad, ciphertext);
+
+  if (!constant_time_eq(computed[0..16], tag)) {
+    return false;
+  };
+
+  ctr_xor(&aes, counter[0..16], ciphertext);
+
+  return true;
 }
