@@ -1,0 +1,82 @@
+use std.cell;
+use std.testing;
+
+fn make_seven() i32 {
+  return 7;
+}
+
+/// @test
+pub fn cell_get_set_replace() {
+  let cell: Cell[i32] = Cell.new(5);
+
+  assert_eq(cell.get(), 5);
+
+  cell.set(7);
+  assert_eq(cell.get(), 7);
+  assert_eq(cell.replace(9), 7);
+  assert_eq(cell.into_inner(), 9);
+}
+
+/// @test
+pub fn refcell_shares_and_mutates() {
+  let cell: RefCell[i32] = RefCell.new(1);
+
+  {
+    const first = cell.borrow();
+    const second = cell.borrow();
+
+    assert_eq(*first.get() + *second.get(), 2);
+  };
+
+  {
+    const guard = cell.borrow_mut();
+
+    *guard.get() = 10;
+  };
+
+  assert_eq(*cell.borrow().get(), 10);
+  assert_eq(cell.into_inner(), 10);
+}
+
+/// @test
+pub fn refcell_get_mut_skips_tracking() {
+  let cell: RefCell[i32] = RefCell.new(2);
+  const direct = cell.get_mut();
+
+  *direct = 4;
+
+  assert_eq(*cell.borrow().get(), 4);
+}
+
+/// @test
+pub fn once_cell_sets_once() {
+  let cell: OnceCell[i32] = OnceCell.new();
+
+  assert(!cell.is_set());
+  assert(cell.get().is_none());
+  assert(cell.set(3));
+  assert(!cell.set(4));
+  assert(cell.is_set());
+  assert_eq(*cell.get().unwrap(), 3);
+}
+
+/// @test
+pub fn once_cell_get_or_init() {
+  let cell: OnceCell[i32] = OnceCell.new();
+  const value = cell.get_or_init(make_seven);
+
+  assert_eq(*value, 7);
+  assert_eq(*cell.get_or_init(make_seven), 7);
+  assert_eq(cell.into_inner().unwrap(), 7);
+}
+
+/// @test
+/// @should-fail
+pub fn refcell_rejects_double_mutable_borrow() {
+  let cell: RefCell[i32] = RefCell.new(1);
+  const first = cell.borrow_mut();
+  const second = cell.borrow_mut();
+
+  *first.get() = 2;
+  *second.get() = 3;
+}

@@ -1,0 +1,159 @@
+pub struct Cell[T: Copy] {
+  value: T,
+}
+
+implement[T: Copy] Cell[T] {
+  pub fn new(value: T) Self {
+    return Self { .value = value };
+  }
+
+  pub fn get(*const self) T {
+    return self.value;
+  }
+
+  pub fn set(*self, value: T) {
+    self.value = value;
+  }
+
+  pub fn replace(*self, value: T) T {
+    const old = self.value;
+
+    self.value = value;
+
+    return old;
+  }
+
+  pub fn into_inner(self) T {
+    return self.value;
+  }
+}
+
+pub struct RefCell[T] {
+  value: T,
+  borrows: i32,
+}
+
+pub struct Ref[T] {
+  value: *const T,
+  borrows: *i32,
+}
+
+pub struct RefMut[T] {
+  value: *T,
+  borrows: *i32,
+}
+
+implement[T] RefCell[T] {
+  pub fn new(value: T) Self {
+    return Self { .value = value, .borrows = 0 };
+  }
+
+  pub fn borrow(*self) Ref[T] {
+    if (self.borrows < 0) {
+      @panic("value is mutably borrowed");
+    };
+
+    self.borrows += 1;
+
+    return Ref#[T] { .value = &self.value, .borrows = &self.borrows };
+  }
+
+  pub fn borrow_mut(*self) RefMut[T] {
+    if (self.borrows != 0) {
+      @panic("value is already borrowed");
+    };
+
+    self.borrows = -1;
+
+    return RefMut#[T] { .value = &self.value, .borrows = &self.borrows };
+  }
+
+  pub fn get_mut(*self) *T {
+    return &self.value;
+  }
+
+  pub fn into_inner(self) T {
+    return self.value;
+  }
+}
+
+implement[T] Ref[T] {
+  pub fn get(*const self) *const T {
+    return self.value;
+  }
+}
+
+implement[T] Drop : Ref[T] {
+  fn drop(self) {
+    const count = *self.borrows;
+
+    *self.borrows = count - 1;
+  }
+}
+
+implement[T] RefMut[T] {
+  pub fn get(*const self) *T {
+    return self.value;
+  }
+}
+
+implement[T] Drop : RefMut[T] {
+  fn drop(self) {
+    *self.borrows = 0;
+  }
+}
+
+pub struct OnceCell[T] {
+  value: Option[T],
+}
+
+implement[T] OnceCell[T] {
+  pub fn new() Self {
+    const empty: Option[T] = Option.None;
+
+    return Self { .value = empty };
+  }
+
+  pub fn is_set(*const self) bool {
+    switch (self.value) {
+      .Some(&_) => { return true; },
+      .None => { return false; },
+    }
+  }
+
+  pub fn get(*const self) Option[*const T] {
+    switch (self.value) {
+      .Some(&v) => { return Option.Some(v); },
+      .None => { return Option.None; },
+    }
+  }
+
+  pub fn get_mut(*self) Option[*T] {
+    switch (self.value) {
+      .Some(&v) => { return Option.Some(v); },
+      .None => { return Option.None; },
+    }
+  }
+
+  pub fn set(*self, value: T) bool {
+    if (self.is_set()) {
+      return false;
+    };
+
+    self.value = Option.Some(value);
+
+    return true;
+  }
+
+  pub fn get_or_init[F: CallableOnce() T](*self, f: F) *const T {
+    if (!self.is_set()) {
+      self.value = Option.Some(f());
+    };
+
+    return (*self).get().unwrap();
+  }
+
+  pub fn into_inner(self) Option[T] {
+    return self.value;
+  }
+}
