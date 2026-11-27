@@ -8,13 +8,15 @@ use std.c.errno;
   use std.c.windows.winbase;
   use std.c.windows.synchapi;
 
-  alias OsMutex = WinCriticalSection;
+  pub alias OsMutex = WinCriticalSection;
   alias OsRwLock = WinSrwLock;
+  pub alias OsCond = WinConditionVariable;
 } else {
   use std.c.posix.pthread;
 
-  alias OsMutex = c_pthread_mutex_t;
+  pub alias OsMutex = c_pthread_mutex_t;
   alias OsRwLock = c_pthread_rwlock_t;
+  pub alias OsCond = c_pthread_cond_t;
 }
 
 /// Mutual exclusion lock protecting shared data.
@@ -107,7 +109,7 @@ implement[T] Drop : Mutex[T] {
 
 /// Held mutex, bind in scope.
 pub struct MutexGuard[T] {
-  lock: *OsMutex,
+  pub lock: *OsMutex,
   got: *T,
 }
 
@@ -438,5 +440,92 @@ implement[T: Display] Display : Arc[T] {
 implement[T: Debug] Debug : Arc[T] {
   fn debug[W: StrWriter](*const self, out: *W) {
     (*self.ptr).debug(out);
+  }
+}
+
+pub struct Once {
+  state: Mutex[bool],
+}
+
+implement Once {
+  pub fn new() Self {
+    return Self { .state = Mutex.new(false) };
+  }
+
+  pub fn is_done(*self) bool {
+    const guard = self.state.lock();
+
+    return *guard;
+  }
+
+  pub fn call_once[F: CallableOnce() void](*self, f: F) {
+    const guard = self.state.lock();
+
+    if (*guard) {
+      return;
+    };
+
+    f();
+    *guard = true;
+  }
+}
+
+pub struct Condvar {
+  os: OsCond,
+}
+
+implement Condvar {
+  pub fn new() Self {
+    let cond = Condvar { .os = @uninit() };
+
+    @os[windows] {
+      InitializeConditionVariable(&cond.os);
+    } else {
+      const rc = pthread_cond_init(&cond.os, nullptr);
+
+      if (rc != 0) {
+        @panic("condvar init failed");
+      };
+    }
+
+    return cond;
+  }
+
+  pub fn wait[T](*self, guard: *MutexGuard[T]) {
+    @os[windows] {
+      let _ = SleepConditionVariableCS(&self.os, guard.lock, INFINITE);
+    } else {
+      const rc = pthread_cond_wait(&self.os, guard.lock);
+
+      if (rc != 0) {
+        @panic("condvar wait failed");
+      };
+    }
+  }
+
+  pub fn notify_one(*self) {
+    @os[windows] {
+      WakeConditionVariable(&self.os);
+    } else {
+      let _ = pthread_cond_signal(&self.os);
+    }
+  }
+
+  pub fn notify_all(*self) {
+    @os[windows] {
+      WakeAllConditionVariable(&self.os);
+    } else {
+      let _ = pthread_cond_broadcast(&self.os);
+    }
+  }
+}
+
+implement Drop : Condvar {
+  fn drop(self) {
+    @os[windows] {
+      return;
+    } else {
+      let _ = pthread_cond_destroy(&self.os);
+    }
   }
 }

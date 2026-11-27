@@ -1,6 +1,8 @@
+use std.cell;
 use std.sync;
 use std.thread;
 use std.testing;
+use std.time;
 
 /// @test
 pub fn rwlock_allows_writer_then_readers() {
@@ -57,4 +59,67 @@ pub fn rwlock_allows_writer_then_readers() {
   assert(shared.get_mut().try_write().is_some());
   assert(shared.get_mut().try_write().is_some());
   assert_eq(RwLock.new(7).into_inner(), 7);
+}
+
+/// @test
+pub fn once_runs_a_single_time() {
+  let counter = Arc.new(Cell.new(0));
+  let shared = counter.clone();
+  let once = Once.new();
+
+  assert(!once.is_done());
+
+  once.call_once(|| -> void {
+    let cell = shared.get_mut();
+
+    cell.set(cell.get() + 1);
+  });
+
+  let shared_again = counter.clone();
+
+  once.call_once(|| -> void {
+    let cell = shared_again.get_mut();
+
+    cell.set(cell.get() + 10);
+  });
+
+  assert(once.is_done());
+  assert_eq(counter.get_mut().get(), 1);
+}
+
+/// @test
+pub fn condvar_wakes_a_waiter() {
+  @os[windows] {
+    return;
+  }
+
+  let state = Arc.new(Mutex.new(false));
+  let signal = Arc.new(Condvar.new());
+  let worker_state = state.clone();
+  let worker_signal = signal.clone();
+
+  let worker = Thread.spawn(|| -> i32 {
+    Time.sleep(Duration.from_millis(50));
+
+    {
+      const guard = worker_state.get_mut().lock();
+
+      *guard = true;
+    };
+
+    worker_signal.get_mut().notify_one();
+
+    return 1;
+  });
+
+  {
+    let guard = state.get_mut().lock();
+
+    while (!*guard) {
+      signal.get_mut().wait(&guard);
+    };
+  };
+
+  assert_eq(worker.join(), 1);
+  assert(*state.get_mut().lock());
 }

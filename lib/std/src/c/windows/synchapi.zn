@@ -26,6 +26,19 @@ use std.c.windows.windef;
     pub ptr: *void,
   }
 
+  pub struct WinConditionVariable {
+    pub ptr: *void,
+  }
+
+  pub extern fn InitializeConditionVariable(cond: *WinConditionVariable) void;
+  pub extern fn SleepConditionVariableCS(
+    cond: *WinConditionVariable,
+    cs: *WinCriticalSection,
+    ms: WinDWORD,
+  ) WinBOOL;
+  pub extern fn WakeConditionVariable(cond: *WinConditionVariable) void;
+  pub extern fn WakeAllConditionVariable(cond: *WinConditionVariable) void;
+
   pub extern fn AcquireSRWLockExclusive(lock: *WinSrwLock) void;
   pub extern fn AcquireSRWLockShared(lock: *WinSrwLock) void;
   pub extern fn TryAcquireSRWLockExclusive(lock: *WinSrwLock) WinBOOLEAN;
