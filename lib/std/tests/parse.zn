@@ -1,29 +1,6 @@
 use std.string;
+use std.strconv;
 use std.testing;
-
-fn parse_i32(text: []const char) Option[i32] {
-  return String.from(text).parse_i32();
-}
-
-fn parse_i64(text: []const char) Option[i64] {
-  return String.from(text).parse_i64();
-}
-
-fn parse_u32(text: []const char) Option[u32] {
-  return String.from(text).parse_u32();
-}
-
-fn parse_u64(text: []const char) Option[u64] {
-  return String.from(text).parse_u64();
-}
-
-fn parse_f64(text: []const char) Option[f64] {
-  return String.from(text).parse_f64();
-}
-
-fn parse_f32(text: []const char) Option[f32] {
-  return String.from(text).parse_f32();
-}
 
 /// @test
 pub fn parse_i32_checks_range() {
