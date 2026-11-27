@@ -13,6 +13,8 @@ use std.c.windows.windef;
 
   pub const SOL_SOCKET_WIN: c_int = 65535;
   pub const SO_REUSEADDR_WIN: c_int = 4;
+  pub const SO_RCVTIMEO_WIN: c_int = 0x1006;
+  pub const SO_SNDTIMEO_WIN: c_int = 0x1005;
 
   // Generic address holder: family (u16) plus 14 bytes, like POSIX.
   pub struct c_SockAddrWin {

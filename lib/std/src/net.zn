@@ -1,5 +1,6 @@
 use std.string;
 use std.io;
+use std.time;
 use std.c.types;
 use std.c.string;
 use std.c.posix.sys.socket;
@@ -10,6 +11,7 @@ use std.c.posix.sys.socket;
   use std.c.windows.winsock2;
 } else {
   use std.c.posix.unistd;
+  use std.c.posix.sys.time;
 }
 
 fn cstr_of(s: []const char) String {
@@ -289,6 +291,38 @@ fn write_u32[W: StrWriter](out: *W, value: u32) void {
   }
 }
 
+@os[windows] {
+  fn set_socket_timeout(sock: usize, option: c_int, timeout: Duration) Result[void, IoError] {
+    const ms = timeout.as_millis();
+    const value: WinDWORD = if (ms > 4294967295) { 4294967295 } else { @as(WinDWORD, ms) };
+
+    if (setsockopt(sock, SOL_SOCKET_WIN, option, @as(*const void, &value), 4) != 0) {
+      return Result.Err(win_error(@as(WinDWORD, WSAGetLastError())));
+    };
+
+    return Result.Ok(.{});
+  }
+} else {
+  fn set_socket_timeout(sock: usize, option: c_int, timeout: Duration) Result[void, IoError] {
+    const tv = c_Timeval {
+      .tv_sec = @as(c_long, timeout.as_secs()),
+      .tv_usec = @as(c_suseconds_t, timeout.subsec_nanos() / 1000),
+    };
+
+    if (setsockopt(
+      @as(c_int, sock),
+      SOL_SOCKET,
+      option,
+      @as(*const void, &tv),
+      @as(c_socklen_t, @sizeof(c_Timeval)),
+    ) != 0) {
+      return Result.Err(IoError.last_os_error());
+    };
+
+    return Result.Ok(.{});
+  }
+}
+
 /// TCP listener bound to an address.
 pub struct TcpListener {
   sock: usize,
@@ -497,6 +531,14 @@ implement TcpStream {
   /// * IoErrorKind.Uncategorized
   pub fn peer_addr(*const self) Result[SocketAddr, IoError] {
     socket_peer_addr(self.sock)
+  }
+
+  pub fn set_read_timeout(*const self, timeout: Duration) Result[void, IoError] {
+    set_socket_timeout(self.sock, SO_RCVTIMEO, timeout)
+  }
+
+  pub fn set_write_timeout(*const self, timeout: Duration) Result[void, IoError] {
+    set_socket_timeout(self.sock, SO_SNDTIMEO, timeout)
   }
 }
 
@@ -721,6 +763,10 @@ implement UdpSocket {
   /// * IoErrorKind.Uncategorized
   pub fn local_addr(*const self) Result[SocketAddr, IoError] {
     socket_local_addr(self.sock)
+  }
+
+  pub fn set_read_timeout(*const self, timeout: Duration) Result[void, IoError] {
+    set_socket_timeout(self.sock, SO_RCVTIMEO, timeout)
   }
 }
 

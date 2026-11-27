@@ -2,6 +2,7 @@ use std.net;
 use std.io;
 use std.string;
 use std.testing;
+use std.time;
 
 /// @test
 pub fn socket_addr_parses_ipv4() {
@@ -63,4 +64,40 @@ pub fn udp_round_trip() {
 
   assert_eq(from.port(), sender.local_addr().unwrap().port());
   assert_eq(buffer, String.from("udp-hi"));
+}
+
+/// @test
+pub fn tcp_read_times_out() {
+  @os[windows] {
+    return;
+  }
+
+  let listener = TcpListener.bind(&SocketAddr.loopback(0)).unwrap();
+  const addr = listener.local_addr().unwrap();
+  let client = TcpStream.connect(&addr).unwrap();
+  let server = listener.accept().unwrap();
+
+  client.set_read_timeout(Duration.from_millis(50)).unwrap();
+  client.set_write_timeout(Duration.from_millis(50)).unwrap();
+  server.set_read_timeout(Duration.from_millis(50)).unwrap();
+
+  let buffer: [16]char = {'\0'; 16};
+
+  assert(client.read(buffer[..]).is_err());
+  assert(server.read(buffer[..]).is_err());
+}
+
+/// @test
+pub fn udp_read_times_out() {
+  @os[windows] {
+    return;
+  }
+
+  let socket = UdpSocket.bind(&SocketAddr.loopback(0)).unwrap();
+
+  socket.set_read_timeout(Duration.from_millis(50)).unwrap();
+
+  let buffer = String.new();
+
+  assert(socket.recv_from(&buffer).is_err());
 }
