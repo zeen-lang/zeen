@@ -1,4 +1,5 @@
 use std.alloc;
+use std.collections.deque;
 
 use std.c.types;
 use std.c.errno;
@@ -111,6 +112,12 @@ implement[T] Drop : Mutex[T] {
 pub struct MutexGuard[T] {
   pub lock: *OsMutex,
   got: *T,
+}
+
+implement[T] MutexGuard[T] {
+  pub fn data(*const self) *T {
+    return self.got;
+  }
 }
 
 implement[T: Copy] Deref : MutexGuard[T] {
@@ -527,5 +534,126 @@ implement Drop : Condvar {
     } else {
       let _ = pthread_cond_destroy(&self.os);
     }
+  }
+}
+
+pub struct ChannelState[T] {
+  pub items: Deque[T],
+  pub capacity: usize,
+  pub closed: bool,
+}
+
+pub struct Channel[T] {
+  state: Mutex[ChannelState[T]],
+  not_empty: Condvar,
+  not_full: Condvar,
+}
+
+implement[T] Channel[T] {
+  pub fn new(capacity: usize) Self {
+    if (capacity == 0) {
+      @panic("channel capacity must be positive");
+    };
+
+    const state: ChannelState[T] = ChannelState#[T] {
+      .items = Deque#[T].new(),
+      .capacity = capacity,
+      .closed = false,
+    };
+    const mutex: Mutex[ChannelState[T]] = Mutex.new(state);
+
+    return Self {
+      .state = mutex,
+      .not_empty = Condvar.new(),
+      .not_full = Condvar.new(),
+    };
+  }
+
+  pub fn send(*self, value: T) bool {
+    let guard = self.state.lock();
+    let state = guard.data();
+
+    while (state.items.len() >= state.capacity && !state.closed) {
+      self.not_full.wait(&guard);
+    };
+
+    if (state.closed) {
+      return false;
+    };
+
+    state.items.push_back(value);
+    self.not_empty.notify_one();
+
+    return true;
+  }
+
+  pub fn recv(*self) Option[T] {
+    let guard = self.state.lock();
+    let state = guard.data();
+
+    while (state.items.len() == 0 && !state.closed) {
+      self.not_empty.wait(&guard);
+    };
+
+    if (state.items.len() == 0) {
+      return Option.None;
+    };
+
+    const value = state.items.pop_front().unwrap();
+
+    self.not_full.notify_one();
+
+    return Option.Some(value);
+  }
+
+  pub fn try_send(*self, value: T) bool {
+    let guard = self.state.lock();
+    let state = guard.data();
+
+    if (state.closed || state.items.len() >= state.capacity) {
+      return false;
+    };
+
+    state.items.push_back(value);
+    self.not_empty.notify_one();
+
+    return true;
+  }
+
+  pub fn try_recv(*self) Option[T] {
+    let guard = self.state.lock();
+    let state = guard.data();
+
+    if (state.items.len() == 0) {
+      return Option.None;
+    };
+
+    const value = state.items.pop_front().unwrap();
+
+    self.not_full.notify_one();
+
+    return Option.Some(value);
+  }
+
+  pub fn close(*self) {
+    const guard = self.state.lock();
+    let state = guard.data();
+
+    state.closed = true;
+
+    self.not_empty.notify_all();
+    self.not_full.notify_all();
+  }
+
+  pub fn is_closed(*self) bool {
+    const guard = self.state.lock();
+
+    return guard.data().closed;
+  }
+
+  pub fn len(*self) usize {
+    const guard = self.state.lock();
+
+    return guard.data().items.len();
   }
 }

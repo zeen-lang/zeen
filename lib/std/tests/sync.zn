@@ -123,3 +123,64 @@ pub fn condvar_wakes_a_waiter() {
   assert_eq(worker.join(), 1);
   assert(*state.get_mut().lock());
 }
+
+/// @test
+pub fn channel_bounds_and_closes() {
+  let channel: Channel[i32] = Channel.new(2);
+
+  assert(channel.try_send(1));
+  assert(channel.try_send(2));
+  assert(!channel.try_send(3));
+  assert_eq(channel.len(), 2);
+  assert_eq(channel.try_recv().unwrap(), 1);
+  assert(channel.try_send(3));
+  assert_eq(channel.try_recv().unwrap(), 2);
+  assert_eq(channel.try_recv().unwrap(), 3);
+  assert(channel.try_recv().is_none());
+
+  channel.close();
+  assert(channel.is_closed());
+  assert(!channel.try_send(4));
+  assert(channel.recv().is_none());
+}
+
+/// @test
+pub fn channel_passes_values_between_threads() {
+  @os[windows] {
+    return;
+  }
+
+  const inner: Channel[i32] = Channel.new(2);
+  let channel: Arc[Channel[i32]] = Arc.new(inner);
+  let producer_channel = channel.clone();
+  let consumer_channel = channel.clone();
+
+  let producer = Thread.spawn(|| -> i32 {
+    let i: i32 = 0;
+
+    while (i < 5) {
+      producer_channel.get_mut().send(i);
+      i += 1;
+    };
+
+    producer_channel.get_mut().close();
+
+    return 1;
+  });
+
+  let consumer = Thread.spawn(|| -> i32 {
+    let total: i32 = 0;
+
+    while (true) {
+      switch (consumer_channel.get_mut().recv()) {
+        .Some(value) => { total += value; },
+        .None => { break; },
+      }
+    };
+
+    return total;
+  });
+
+  assert_eq(producer.join(), 1);
+  assert_eq(consumer.join(), 10);
+}
