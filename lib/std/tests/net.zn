@@ -101,3 +101,108 @@ pub fn udp_read_times_out() {
 
   assert(socket.recv_from(&buffer).is_err());
 }
+
+/// @test
+pub fn ipv4_addr_parses_and_prints() {
+  const addr = Ipv4Addr.from_str("192.168.0.10").unwrap();
+
+  assert_eq(addr.to_u32(), @as(u32, 3232235530));
+  assert_eq(addr.octets()[0], @as(u8, 192));
+  assert_eq(addr.octets()[3], @as(u8, 10));
+  assert_eq(@format("{}", addr), String.from("192.168.0.10"));
+  assert_eq(@format("{}", Ipv4Addr.from_u32(2130706433)), String.from("127.0.0.1"));
+  assert(Ipv4Addr.new(127, 0, 0, 1).is_loopback());
+  assert(Ipv4Addr.new(0, 0, 0, 0).is_unspecified());
+  assert(!Ipv4Addr.new(10, 0, 0, 1).is_loopback());
+  assert(Ipv4Addr.from_str("256.0.0.1").is_none());
+  assert(Ipv4Addr.from_str("1.2.3").is_none());
+  assert(Ipv4Addr.from_str("1.2.3.4.5").is_none());
+  assert(Ipv4Addr.from_str("1.2.3.").is_none());
+  assert(Ipv4Addr.from_str("a.b.c.d").is_none());
+}
+
+/// @test
+pub fn ipv6_addr_parses_and_prints() {
+  assert_eq(@format("{}", Ipv6Addr.from_str("::1").unwrap()), String.from("::1"));
+  assert_eq(@format("{}", Ipv6Addr.from_str("::").unwrap()), String.from("::"));
+  assert_eq(@format("{}", Ipv6Addr.from_str("2001:db8::1").unwrap()), String.from("2001:db8::1"));
+  assert_eq(
+    @format("{}", Ipv6Addr.from_str("2001:0db8:0000:0000:0000:0000:0000:0001").unwrap()),
+    String.from("2001:db8::1"),
+  );
+  assert_eq(
+    @format("{}", Ipv6Addr.from_str("fe80::1:2:3:4").unwrap()),
+    String.from("fe80::1:2:3:4"),
+  );
+  assert_eq(
+    @format("{}", Ipv6Addr.from_str("1:2:3:4:5:6:7:8").unwrap()),
+    String.from("1:2:3:4:5:6:7:8"),
+  );
+  assert_eq(
+    @format("{}", Ipv6Addr.from_str("1:0:0:2:0:0:0:3").unwrap()),
+    String.from("1:0:0:2::3"),
+  );
+  assert_eq(
+    @format("{}", Ipv6Addr.from_str("1:0:0:2:0:0:3:4").unwrap()),
+    String.from("1::2:0:0:3:4"),
+  );
+  assert_eq(
+    @format("{}", Ipv6Addr.from_str("0:0:0:0:0:0:0:0").unwrap()),
+    String.from("::"),
+  );
+  assert_eq(
+    @format("{}", Ipv6Addr.from_str("1:2:3:4:5:6:7:0").unwrap()),
+    String.from("1:2:3:4:5:6:7:0"),
+  );
+  assert_eq(
+    @format("{}", Ipv6Addr.from_str("1:2:3:4:5:6:0:0").unwrap()),
+    String.from("1:2:3:4:5:6::"),
+  );
+  assert(Ipv6Addr.from_str("::1").unwrap().is_loopback());
+  assert(Ipv6Addr.from_str("::").unwrap().is_unspecified());
+  assert(!Ipv6Addr.from_str("::2").unwrap().is_loopback());
+  assert(Ipv6Addr.from_str("1:2:3:4:5:6:7").is_none());
+  assert(Ipv6Addr.from_str("1:2:3:4:5:6:7:8:9").is_none());
+  assert(Ipv6Addr.from_str("1::2::3").is_none());
+  assert(Ipv6Addr.from_str(":::").is_none());
+  assert(Ipv6Addr.from_str("12345::").is_none());
+  assert(Ipv6Addr.from_str("g::1").is_none());
+  assert(Ipv6Addr.from_str("1:2:3:4:5:6:7:8::").is_none());
+}
+
+/// @test
+pub fn ip_addr_parses_both_families() {
+  const v4 = IpAddr.from_str("10.0.0.1").unwrap();
+
+  assert_eq(@format("{}", v4), String.from("10.0.0.1"));
+  assert_eq(v4, IpAddr.from_v4(Ipv4Addr.new(10, 0, 0, 1)));
+  assert(!v4.is_loopback());
+
+  const v6 = IpAddr.from_str("::1").unwrap();
+
+  assert_eq(@format("{}", v6), String.from("::1"));
+  assert_eq(v6, IpAddr.from_v6(Ipv6Addr.from_str("::1").unwrap()));
+  assert(v6.is_loopback());
+  assert(v4 != v6);
+  assert(v6.is_v6());
+  assert(!v4.is_v6());
+  assert(v4.as_v4().is_some());
+  assert(v4.as_v6().is_none());
+  assert(v6.as_v6().is_some());
+  assert(v6.as_v4().is_none());
+  assert(IpAddr.from_str("::").unwrap().is_unspecified());
+  assert(IpAddr.from_str("0.0.0.0").unwrap().is_unspecified());
+  assert(!IpAddr.from_str("0.0.0.1").unwrap().is_unspecified());
+  assert(IpAddr.from_str("nope").is_none());
+  assert(IpAddr.from_str("").is_none());
+}
+
+/// @test
+pub fn socket_addr_bridges_ipv4() {
+  const addr = SocketAddr.from_ipv4(&Ipv4Addr.new(127, 0, 0, 1), 8080);
+
+  assert_eq(addr.port(), @as(u16, 8080));
+  assert_eq(addr.ip_addr(), IpAddr.from_v4(Ipv4Addr.new(127, 0, 0, 1)));
+  assert_eq(@format("{}", addr), String.from("127.0.0.1:8080"));
+  assert(addr.ip_addr().is_loopback());
+}
