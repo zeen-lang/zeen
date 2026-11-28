@@ -1,0 +1,133 @@
+use std.string;
+use std.collections.list;
+
+pub struct Csv {
+  pub fn parse(text: []const char) List[List[String]] {
+    let rows = List#[List[String]].new();
+    let row = List#[String].new();
+    let field = String.new();
+    let i: usize = 0;
+    let quoted = false;
+
+    while (i < text.len) {
+      const c = text.ptr[i];
+
+      if (quoted) {
+        if (c == '"') {
+          if (i + 1 < text.len && text.ptr[i + 1] == '"') {
+            field.push('"');
+            i += 2;
+            continue;
+          };
+
+          quoted = false;
+          i += 1;
+          continue;
+        };
+
+        field.push(c);
+        i += 1;
+        continue;
+      };
+
+      if (c == '"') {
+        quoted = true;
+        i += 1;
+        continue;
+      };
+
+      if (c == ',') {
+        row.push(field);
+        field = String.new();
+        i += 1;
+        continue;
+      };
+
+      if (c == '\n') {
+        if (field.len() > 0 || row.len() > 0) {
+          row.push(field);
+          rows.push(row);
+          row = List#[String].new();
+          field = String.new();
+        };
+
+        i += 1;
+        continue;
+      };
+
+      if (c == '\r') {
+        i += 1;
+        continue;
+      };
+
+      field.push(c);
+      i += 1;
+    };
+
+    if (field.len() > 0 || row.len() > 0) {
+      row.push(field);
+      rows.push(row);
+    };
+
+    return rows;
+  }
+
+  pub fn encode(rows: *const List[List[String]]) String {
+    let out = String.new();
+    let r: usize = 0;
+
+    while (r < rows.len()) {
+      const row = rows.get_ptr(r).unwrap();
+      let c: usize = 0;
+
+      while (c < row.len()) {
+        if (c > 0) {
+          out.push(',');
+        };
+
+        write_field(&out, row.get_ptr(c).unwrap().slice(..));
+        c += 1;
+      };
+
+      out.push('\n');
+      r += 1;
+    };
+
+    return out;
+  }
+}
+
+fn write_field(out: *String, value: []const char) void {
+  let needs_quotes = false;
+  let i: usize = 0;
+
+  while (i < value.len) {
+    const c = value.ptr[i];
+
+    if (c == ',' || c == '"' || c == '\n' || c == '\r') {
+      needs_quotes = true;
+      break;
+    };
+
+    i += 1;
+  };
+
+  if (!needs_quotes) {
+    out.push_str(value);
+    return;
+  };
+
+  out.push('"');
+  i = 0;
+
+  while (i < value.len) {
+    if (value.ptr[i] == '"') {
+      out.push('"');
+    };
+
+    out.push(value.ptr[i]);
+    i += 1;
+  };
+
+  out.push('"');
+}

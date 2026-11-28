@@ -1,0 +1,62 @@
+use std.csv;
+use std.string;
+use std.testing;
+
+fn cell(rows: *const List[List[String]], row: usize, column: usize) String {
+  return String.from(rows.get_ptr(row).unwrap().get_ptr(column).unwrap().slice(..));
+}
+
+/// @test
+pub fn parse_splits_rows_and_fields() {
+  const rows = Csv.parse("name,age\nann,31\nbob,42\n");
+
+  assert_eq(rows.len(), @as(usize, 3));
+  assert_eq(rows.get_ptr(0).unwrap().len(), @as(usize, 2));
+  assert_eq(cell(&rows, 0, 0), String.from("name"));
+  assert_eq(cell(&rows, 0, 1), String.from("age"));
+  assert_eq(cell(&rows, 1, 0), String.from("ann"));
+  assert_eq(cell(&rows, 2, 1), String.from("42"));
+}
+
+/// @test
+pub fn parse_handles_quotes() {
+  const rows = Csv.parse("name,note\n\"Smith, John\",\"said \"\"hi\"\"\"\n");
+
+  assert_eq(rows.len(), @as(usize, 2));
+  assert_eq(cell(&rows, 1, 0), String.from("Smith, John"));
+  assert_eq(cell(&rows, 1, 1), String.from("said \"hi\""));
+}
+
+/// @test
+pub fn parse_keeps_newlines_inside_quotes() {
+  const rows = Csv.parse("a,\"line1\nline2\"\n");
+
+  assert_eq(rows.len(), @as(usize, 1));
+  assert_eq(cell(&rows, 0, 1), String.from("line1\nline2"));
+}
+
+/// @test
+pub fn parse_handles_crlf_and_empty_fields() {
+  const rows = Csv.parse("a,,c\r\n,d,\r\n");
+
+  assert_eq(rows.len(), @as(usize, 2));
+  assert_eq(rows.get_ptr(0).unwrap().len(), @as(usize, 3));
+  assert_eq(cell(&rows, 0, 1), String.from(""));
+  assert_eq(cell(&rows, 0, 2), String.from("c"));
+  assert_eq(cell(&rows, 1, 0), String.from(""));
+  assert_eq(cell(&rows, 1, 2), String.from(""));
+}
+
+/// @test
+pub fn parse_ignores_empty_input_and_trailing_newline() {
+  assert_eq(Csv.parse("").len(), @as(usize, 0));
+  assert_eq(Csv.parse("a,b").len(), @as(usize, 1));
+  assert_eq(Csv.parse("a,b\n").len(), @as(usize, 1));
+}
+
+/// @test
+pub fn encode_quotes_only_when_needed() {
+  const rows = Csv.parse("a,\"b,c\"\n\"say \"\"hi\"\"\",d\n");
+
+  assert_eq(Csv.encode(&rows), String.from("a,\"b,c\"\n\"say \"\"hi\"\"\",d\n"));
+}
