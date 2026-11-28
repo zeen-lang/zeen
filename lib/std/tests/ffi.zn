@@ -1,0 +1,41 @@
+use std.ffi;
+use std.string;
+use std.testing;
+
+/// @test
+pub fn cstring_keeps_bytes_and_nul() {
+  const text = CString.new("abc");
+
+  assert_eq(text.len(), @as(usize, 3));
+  assert_eq(String.from(text.to_str()), String.from("abc"));
+  assert_eq(text.as_ptr()[3], '\0');
+}
+
+/// @test
+pub fn cstring_rejects_interior_nul() {
+  assert(CString.from_str("a\0b").is_none());
+  assert(CString.from_str("").is_some());
+  assert_eq(CString.from_str("ok").unwrap().len(), @as(usize, 2));
+}
+
+/// @test
+pub fn cstr_reads_until_nul() {
+  const text = CString.new("hello");
+  const view = text.as_cstr();
+
+  assert_eq(view.len(), @as(usize, 5));
+  assert(!view.is_empty());
+  assert_eq(String.from(view.to_str()), String.from("hello"));
+  assert_eq(view.to_string(), String.from("hello"));
+  assert_eq(view.as_ptr(), text.as_ptr());
+}
+
+/// @test
+pub fn cstr_empty_string() {
+  const text = CString.new("");
+  const view = text.as_cstr();
+
+  assert(view.is_empty());
+  assert_eq(view.len(), @as(usize, 0));
+  assert_eq(String.from(view.to_str()), String.from(""));
+}

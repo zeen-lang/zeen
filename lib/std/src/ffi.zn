@@ -1,0 +1,93 @@
+use std.alloc;
+use std.c.string;
+use std.string;
+
+pub struct CStr {
+  _ptr: [*]const char,
+}
+
+implement CStr {
+  pub fn from_ptr(ptr: [*]const char) Self {
+    return Self { ._ptr = ptr };
+  }
+
+  pub fn as_ptr(*const self) [*]const char {
+    return self._ptr;
+  }
+
+  pub fn len(*const self) usize {
+    return strlen(self._ptr);
+  }
+
+  pub fn is_empty(*const self) bool {
+    return self._ptr[0] == '\0';
+  }
+
+  pub fn to_str(*const self) []const char {
+    return self._ptr[0..self.len()];
+  }
+
+  pub fn to_string(*const self) String {
+    return String.from(self.to_str());
+  }
+}
+
+pub struct CString {
+  _buf: [*]char,
+  _len: usize,
+}
+
+implement CString {
+  pub fn from_str(s: []const char) Option[Self] {
+    let i: usize = 0;
+
+    while (i < s.len) {
+      if (s.ptr[i] == '\0') {
+        return Option.None;
+      };
+
+      i += 1;
+    };
+
+    let buf = @as([*]char, Allocator.alloc(s.len + 1));
+    let j: usize = 0;
+
+    while (j < s.len) {
+      buf[j] = s.ptr[j];
+      j += 1;
+    };
+
+    buf[s.len] = '\0';
+
+    return Option.Some(Self { ._buf = buf, ._len = s.len });
+  }
+
+  pub fn new(s: []const char) Self {
+    return switch (Self.from_str(s)) {
+      .Some(value) => value,
+      .None => @panic("interior NUL in C string"),
+    };
+  }
+
+  pub fn as_ptr(*const self) [*]const char {
+    return self._buf;
+  }
+
+  pub fn as_cstr(*const self) CStr {
+    return CStr.from_ptr(self._buf);
+  }
+
+  pub fn to_str(*const self) []const char {
+    return self._buf[0..self._len];
+  }
+
+  pub fn len(*const self) usize {
+    return self._len;
+  }
+}
+
+implement Drop : CString {
+  fn drop(self) {
+    Allocator.dealloc(@as(*void, self._buf));
+  }
+}
