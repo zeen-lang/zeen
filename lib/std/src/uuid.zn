@@ -1,0 +1,134 @@
+use std.crypto.random;
+
+pub struct Uuid {
+  _bytes: [16]u8,
+}
+
+implement Uuid {
+  pub fn nil() Self {
+    const bytes: [16]u8 = {0; 16};
+
+    return Self { ._bytes = bytes };
+  }
+
+  pub fn from_bytes(bytes: [16]u8) Self {
+    return Self { ._bytes = bytes };
+  }
+
+  pub fn v4() Self {
+    let raw: [16]char = @uninit();
+
+    Random.fill_bytes(raw[..]);
+
+    let bytes: [16]u8 = {0; 16};
+    let i: usize = 0;
+
+    while (i < 16) {
+      bytes[i] = @as(u8, raw[i]);
+      i += 1;
+    };
+
+    bytes[6] = (bytes[6] & 15) | 64;
+    bytes[8] = (bytes[8] & 63) | 128;
+
+    return Self { ._bytes = bytes };
+  }
+
+  pub fn bytes(*const self) [16]u8 {
+    return self._bytes;
+  }
+
+  pub fn is_nil(*const self) bool {
+    let i: usize = 0;
+
+    while (i < 16) {
+      if (self._bytes[i] != 0) {
+        return false;
+      };
+
+      i += 1;
+    };
+
+    return true;
+  }
+
+  pub fn from_str(s: []const char) Option[Self] {
+    let bytes: [16]u8 = {0; 16};
+    let index: usize = 0;
+    let i: usize = 0;
+
+    while (i < s.len) {
+      const c = s.ptr[i];
+
+      if (c == '-') {
+        i += 1;
+        continue;
+      };
+
+      if (index >= 32) {
+        return Option.None;
+      };
+
+      const digit = c.to_digit(16);
+
+      if (digit.is_none()) {
+        return Option.None;
+      };
+
+      const at = index / 2;
+      const value = digit.unwrap();
+
+      if (index % 2 == 0) {
+        bytes[at] = @as(u8, value << 4);
+      } else {
+        bytes[at] = bytes[at] | @as(u8, value);
+      };
+
+      index += 1;
+      i += 1;
+    };
+
+    if (index != 32) {
+      return Option.None;
+    };
+
+    return Option.Some(Self { ._bytes = bytes });
+  }
+}
+
+implement Copy : Uuid {}
+
+implement Eq : Uuid {
+  fn eq(*const self, other: *const Self) bool {
+    let i: usize = 0;
+
+    while (i < 16) {
+      if (self._bytes[i] != other._bytes[i]) {
+        return false;
+      };
+
+      i += 1;
+    };
+
+    return true;
+  }
+}
+
+implement Display : Uuid {
+  fn display[W: StrWriter](*const self, out: *W) void {
+    const digits: []const char = "0123456789abcdef";
+    let i: usize = 0;
+
+    while (i < 16) {
+      if (i == 4 || i == 6 || i == 8 || i == 10) {
+        (*out).write_str_single('-');
+      };
+
+      const byte = self._bytes[i];
+
+      (*out).write_str_single(digits[@as(usize, byte >> 4)]);
+      (*out).write_str_single(digits[@as(usize, byte & 15)]);
+      i += 1;
+    };
+  }
+}
