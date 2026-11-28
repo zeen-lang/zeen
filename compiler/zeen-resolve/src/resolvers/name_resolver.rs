@@ -2205,7 +2205,15 @@ impl<'ctx> NameResolver {
             ExpressionKind::FieldAccess { object, field } => {
                 self.resolve_expr(object);
 
-                let _ = field;
+                if let ExpressionKind::Ident {
+                    generic_args: Some(args),
+                    ..
+                } = field.kind
+                {
+                    for arg in args {
+                        self.resolve_type(arg);
+                    }
+                }
             }
 
             ExpressionKind::SliceAccess { object, index } => {
