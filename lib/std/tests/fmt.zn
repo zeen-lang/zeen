@@ -1,0 +1,53 @@
+use std.fmt;
+use std.string;
+use std.testing;
+
+fn render_uint(value: u64) String {
+  let out = String.new();
+
+  Fmt.write_uint(&out, value);
+
+  return out;
+}
+
+fn render_int(value: i64) String {
+  let out = String.new();
+
+  Fmt.write_int(&out, value);
+
+  return out;
+}
+
+fn render_hex(value: u64) String {
+  let out = String.new();
+
+  Fmt.write_hex(&out, value);
+
+  return out;
+}
+
+/// @test
+pub fn write_uint_renders_decimal() {
+  assert_eq(render_uint(0), String.from("0"));
+  assert_eq(render_uint(7), String.from("7"));
+  assert_eq(render_uint(4294967295), String.from("4294967295"));
+  assert_eq(render_uint(u64.max_value()), String.from("18446744073709551615"));
+}
+
+/// @test
+pub fn write_int_renders_sign() {
+  assert_eq(render_int(0), String.from("0"));
+  assert_eq(render_int(42), String.from("42"));
+  assert_eq(render_int(-42), String.from("-42"));
+  assert_eq(render_int(i64.max_value()), String.from("9223372036854775807"));
+  assert_eq(render_int(i64.min_value()), String.from("-9223372036854775808"));
+}
+
+/// @test
+pub fn write_hex_renders_lowercase() {
+  assert_eq(render_hex(0), String.from("0"));
+  assert_eq(render_hex(15), String.from("f"));
+  assert_eq(render_hex(255), String.from("ff"));
+  assert_eq(render_hex(48879), String.from("beef"));
+  assert_eq(render_hex(u64.max_value()), String.from("ffffffffffffffff"));
+}

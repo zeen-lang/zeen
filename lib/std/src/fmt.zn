@@ -1,0 +1,61 @@
+pub struct Fmt {
+  pub fn write_uint[W: StrWriter](out: *W, value: u64) void {
+    if (value == 0) {
+      (*out).write_str_single('0');
+      return;
+    };
+
+    let digits: [20]char = {'0'; 20};
+    let count: usize = 0;
+    let rest = value;
+
+    while (rest > 0) {
+      digits[count] = @as(char, @as(u64, 48) + rest % 10);
+      count += 1;
+      rest = rest / 10;
+    };
+
+    while (count > 0) {
+      count -= 1;
+      (*out).write_str_single(digits[count]);
+    };
+  }
+
+  pub fn write_int[W: StrWriter](out: *W, value: i64) void {
+    const magnitude = if (value < 0) {
+      @as(u64, -(value + 1)) + 1
+    } else {
+      @as(u64, value)
+    };
+
+    if (value < 0) {
+      (*out).write_str_single('-');
+    };
+
+    Self.write_uint(out, magnitude);
+  }
+
+  pub fn write_hex[W: StrWriter](out: *W, value: u64) void {
+    const digits: []const char = "0123456789abcdef";
+
+    if (value == 0) {
+      (*out).write_str_single('0');
+      return;
+    };
+
+    let buffer: [16]char = {'0'; 16};
+    let count: usize = 0;
+    let rest = value;
+
+    while (rest > 0) {
+      buffer[count] = digits[@as(usize, rest & 15)];
+      count += 1;
+      rest = rest >> 4;
+    };
+
+    while (count > 0) {
+      count -= 1;
+      (*out).write_str_single(buffer[count]);
+    };
+  }
+}

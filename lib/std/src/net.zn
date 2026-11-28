@@ -1,6 +1,7 @@
 use std.string;
 use std.io;
 use std.time;
+use std.fmt;
 use std.c.types;
 use std.c.string;
 use std.c.posix.sys.socket;
@@ -125,13 +126,13 @@ implement Eq : Ipv4Addr {
 
 implement Display : Ipv4Addr {
   fn display[W: StrWriter](*const self, out: *W) void {
-    write_u32(out, @as(u32, self._octets[0]));
+    Fmt.write_uint(out, @as(u64, self._octets[0]));
     (*out).write_str_single('.');
-    write_u32(out, @as(u32, self._octets[1]));
+    Fmt.write_uint(out, @as(u64, self._octets[1]));
     (*out).write_str_single('.');
-    write_u32(out, @as(u32, self._octets[2]));
+    Fmt.write_uint(out, @as(u64, self._octets[2]));
     (*out).write_str_single('.');
-    write_u32(out, @as(u32, self._octets[3]));
+    Fmt.write_uint(out, @as(u64, self._octets[3]));
   }
 }
 
@@ -322,7 +323,7 @@ implement Display : Ipv6Addr {
         (*out).write_str_single(':');
       };
 
-      write_hex_u16(out, groups[i]);
+      Fmt.write_hex(out, @as(u64, groups[i]));
       i += 1;
     };
   }
@@ -369,30 +370,6 @@ fn parse_v6_groups(text: []const char, out: *[8]u16) usize {
   };
 
   return count;
-}
-
-fn write_hex_u16[W: StrWriter](out: *W, value: u16) void {
-  const digits: []const char = "0123456789abcdef";
-
-  if (value == 0) {
-    (*out).write_str_single('0');
-    return;
-  };
-
-  let buffer: [4]char = {'0'; 4};
-  let count: usize = 0;
-  let rest = value;
-
-  while (rest > 0) {
-    buffer[count] = digits[@as(usize, rest & 15)];
-    count += 1;
-    rest = rest >> 4;
-  };
-
-  while (count > 0) {
-    count -= 1;
-    (*out).write_str_single(buffer[count]);
-  };
 }
 
 pub struct IpAddr {
@@ -619,38 +596,16 @@ implement Copy : SocketAddr {}
 
 implement Display : SocketAddr {
   fn display[W: StrWriter](*const self, out: *W) void {
-    write_u32(out, (self._ip >> 24) & 255);
+    Fmt.write_uint(out, @as(u64, (self._ip >> 24) & 255));
     (*out).write_str_single('.');
-    write_u32(out, (self._ip >> 16) & 255);
+    Fmt.write_uint(out, @as(u64, (self._ip >> 16) & 255));
     (*out).write_str_single('.');
-    write_u32(out, (self._ip >> 8) & 255);
+    Fmt.write_uint(out, @as(u64, (self._ip >> 8) & 255));
     (*out).write_str_single('.');
-    write_u32(out, self._ip & 255);
+    Fmt.write_uint(out, @as(u64, self._ip & 255));
     (*out).write_str_single(':');
-    write_u32(out, @as(u32, self._port));
+    Fmt.write_uint(out, @as(u64, self._port));
   }
-}
-
-fn write_u32[W: StrWriter](out: *W, value: u32) void {
-  if (value == 0) {
-    (*out).write_str_single('0');
-    return;
-  };
-
-  let digits: [10]char = @uninit();
-  let count: usize = 0;
-  let rest = value;
-
-  while (rest > 0) {
-    digits[count] = @as(char, @as(u32, 48) + rest % 10);
-    count += 1;
-    rest = rest / 10;
-  };
-
-  while (count > 0) {
-    count -= 1;
-    (*out).write_str_single(digits[count]);
-  };
 }
 
 @os[windows] {

@@ -46,3 +46,9 @@ pub fn system_time_since_epoch_and_difference() {
   assert_eq(SystemTime.from_unix(1, 0).since_epoch().as_secs(), @as(u64, 1));
   assert(SystemTime.now().unix_secs() > 1700000000);
 }
+
+/// @test
+pub fn duration_display_uses_millis() {
+  assert_eq(@format("{}", Duration.from_millis(1500)), String.from("1500 ms"));
+  assert_eq(@format("{}", Duration.from_secs(0)), String.from("0 ms"));
+}

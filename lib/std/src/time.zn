@@ -1,6 +1,7 @@
 use std.c.types;
 use std.c.time;
 use std.string;
+use std.fmt;
 
 @os[windows] {
   use std.c.windows.fileapi;
@@ -132,8 +133,8 @@ implement Div[u32] : Duration {
 
 implement Display : Duration {
   fn display[W: StrWriter](*const self, out: *W) void {
-    let text = @format("{} ms", self.as_millis());
-    (*out).write_str(text.slice(..));
+    Fmt.write_uint(out, self.as_millis());
+    (*out).write_str(" ms");
   }
 }
 
