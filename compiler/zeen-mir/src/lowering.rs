@@ -75,6 +75,7 @@ fn is_generic_fn(hir_fn: &HirFn, owner: Option<DefId>, typecheck: &TypeCheckResu
 
     has_params(typecheck.struct_generics.get(&owner))
         || has_params(typecheck.enum_generics.get(&owner))
+        || has_params(typecheck.builtin_shape_generics.get(&owner))
 }
 
 fn is_library_root(resolution: &ResolutionResult, def_id: DefId, hir_fn: &HirFn) -> bool {
