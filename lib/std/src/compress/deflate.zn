@@ -1,0 +1,455 @@
+use std.string;
+
+const LengthBase: [29]u16 = {3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
+const LengthExtra: [29]u8 = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
+const DistanceBase: [30]u16 = {1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
+const DistanceExtra: [30]u8 = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
+const CodeLengthOrder: [19]usize = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
+
+const MaxStoredBlock: usize = 65535;
+
+pub struct Deflate {
+  pub fn compress(data: []const char) String {
+    let out = String.new();
+    let offset: usize = 0;
+    let remaining = data.len;
+
+    while (true) {
+      const size: usize = if (remaining > MaxStoredBlock) MaxStoredBlock else remaining;
+      const final = size == remaining;
+
+      let header: char = '\0';
+      if (final) {
+        header = @as(char, 1);
+      };
+
+      out.push(header);
+      out.push(@as(char, @as(u8, size & 255)));
+      out.push(@as(char, @as(u8, (size >> 8) & 255)));
+
+      const complement = 65535 ^ size;
+      out.push(@as(char, @as(u8, complement & 255)));
+      out.push(@as(char, @as(u8, (complement >> 8) & 255)));
+
+      let i: usize = 0;
+      while (i < size) {
+        out.push(data[offset + i]);
+        i += 1;
+      };
+
+      offset += size;
+      remaining -= size;
+
+      if (final) {
+        break;
+      };
+    };
+
+    return out;
+  }
+
+  pub fn decompress(data: []const char) Option[String] {
+    let out = String.new();
+    let reader = BitReader.new(data);
+    let final = false;
+
+    while (!final) {
+      const header = reader.bits(3);
+
+      final = (header & 1) != 0;
+
+      const kind = (header >> 1) & 3;
+      let ok = false;
+
+      if (kind == 0) {
+        ok = inflate_stored(&reader, &out);
+      } else if (kind == 1) {
+        ok = inflate_fixed(&reader, &out);
+      } else if (kind == 2) {
+        ok = inflate_dynamic(&reader, &out);
+      };
+
+      if (!ok || reader.overrun()) {
+        return Option.None;
+      };
+    };
+
+    return Option.Some(out);
+  }
+}
+
+struct BitReader {
+  pub data: []const char,
+  pub pos: usize,
+  pub buf: u32,
+  pub count: usize,
+  pub failed: bool,
+}
+
+implement BitReader {
+  pub fn new(data: []const char) Self {
+    Self {
+      .data = data,
+      .pos = 0,
+      .buf = 0,
+      .count = 0,
+      .failed = false,
+    }
+  }
+
+  pub fn bits(*self, need: usize) u32 {
+    while (self.count < need) {
+      if (self.pos >= self.data.len) {
+        self.failed = true;
+        return 0;
+      };
+
+      self.buf = self.buf | (@as(u32, self.data[self.pos]) << @as(u32, self.count));
+      self.pos += 1;
+      self.count += 8;
+    };
+
+    const mask = (@as(u32, 1) << @as(u32, need)) - 1;
+    const value = self.buf & mask;
+
+    self.buf = self.buf >> @as(u32, need);
+    self.count -= need;
+
+    return value;
+  }
+
+  pub fn align(*self) void {
+    self.buf = 0;
+    self.count = 0;
+  }
+
+  pub fn read_byte(*self) u8 {
+    if (self.pos >= self.data.len) {
+      self.failed = true;
+      return 0;
+    };
+
+    const value = @as(u8, self.data[self.pos]);
+    self.pos += 1;
+
+    return value;
+  }
+
+  pub fn read_u16(*self) u16 {
+    const low = @as(u16, self.read_byte());
+    const high = @as(u16, self.read_byte());
+
+    return low | (high << 8);
+  }
+
+  pub fn overrun(*const self) bool {
+    self.failed
+  }
+}
+
+struct Huffman {
+  pub count: [16]u16,
+  pub symbol: [288]u16,
+}
+
+implement Huffman {
+  pub fn new() Self {
+    Self {
+      .count = {0; 16},
+      .symbol = {0; 288},
+    }
+  }
+}
+
+fn build(tree: *Huffman, lengths: []const u8) bool {
+  let i: usize = 0;
+  while (i < 16) {
+    tree.count[i] = 0;
+    i += 1;
+  };
+
+  let n: usize = 0;
+  while (n < lengths.len) {
+    tree.count[@as(usize, lengths[n])] += 1;
+    n += 1;
+  };
+
+  if (@as(usize, tree.count[0]) == lengths.len) {
+    return true;
+  };
+
+  let left: i32 = 1;
+  let length: usize = 1;
+  while (length < 16) {
+    left = left << 1;
+    left -= @as(i32, tree.count[length]);
+
+    if (left < 0) {
+      return false;
+    };
+
+    length += 1;
+  };
+
+  let offsets: [16]u16 = {0; 16};
+  let width: usize = 1;
+  while (width < 15) {
+    offsets[width + 1] = offsets[width] + tree.count[width];
+    width += 1;
+  };
+
+  let symbol: usize = 0;
+  while (symbol < lengths.len) {
+    const size = @as(usize, lengths[symbol]);
+
+    if (size != 0) {
+      tree.symbol[@as(usize, offsets[size])] = @as(u16, symbol);
+      offsets[size] += 1;
+    };
+
+    symbol += 1;
+  };
+
+  return true;
+}
+
+fn decode(tree: *const Huffman, reader: *BitReader) i32 {
+  let code: i32 = 0;
+  let first: i32 = 0;
+  let index: i32 = 0;
+  let length: usize = 1;
+
+  while (length <= 15) {
+    code = code | @as(i32, reader.bits(1));
+
+    const count = @as(i32, tree.count[length]);
+
+    if (code - count < first) {
+      return @as(i32, tree.symbol[@as(usize, index + (code - first))]);
+    };
+
+    index += count;
+    first = (first + count) << 1;
+    code = code << 1;
+    length += 1;
+  };
+
+  return -1;
+}
+
+fn inflate_stored(reader: *BitReader, out: *String) bool {
+  reader.align();
+
+  const length = reader.read_u16();
+  const inverse = reader.read_u16();
+
+  if (reader.overrun()) {
+    return false;
+  };
+
+  if ((length ^ 65535) != inverse) {
+    return false;
+  };
+
+  let i: usize = 0;
+  while (i < @as(usize, length)) {
+    out.push(@as(char, reader.read_byte()));
+    i += 1;
+  };
+
+  return !reader.overrun();
+}
+
+fn inflate_fixed(reader: *BitReader, out: *String) bool {
+  let literal_lengths: [288]u8 = {0; 288};
+
+  let i: usize = 0;
+  while (i < 144) {
+    literal_lengths[i] = 8;
+    i += 1;
+  };
+
+  while (i < 256) {
+    literal_lengths[i] = 9;
+    i += 1;
+  };
+
+  while (i < 280) {
+    literal_lengths[i] = 7;
+    i += 1;
+  };
+
+  while (i < 288) {
+    literal_lengths[i] = 8;
+    i += 1;
+  };
+
+  const distance_lengths: [32]u8 = {5; 32};
+
+  let literal_tree = Huffman.new();
+  let distance_tree = Huffman.new();
+
+  if (!build(&literal_tree, literal_lengths[0..288])) {
+    return false;
+  };
+
+  if (!build(&distance_tree, distance_lengths[0..32])) {
+    return false;
+  };
+
+  return inflate_codes(reader, out, &literal_tree, &distance_tree);
+}
+
+fn inflate_dynamic(reader: *BitReader, out: *String) bool {
+  const literal_count = @as(usize, reader.bits(5)) + 257;
+  const distance_count = @as(usize, reader.bits(5)) + 1;
+  const code_count = @as(usize, reader.bits(4)) + 4;
+
+  if (reader.overrun()) {
+    return false;
+  };
+
+  let code_lengths: [19]u8 = {0; 19};
+  let i: usize = 0;
+  while (i < code_count) {
+    code_lengths[CodeLengthOrder[i]] = @as(u8, reader.bits(3));
+    i += 1;
+  };
+
+  if (reader.overrun()) {
+    return false;
+  };
+
+  let code_tree = Huffman.new();
+  if (!build(&code_tree, code_lengths[0..19])) {
+    return false;
+  };
+
+  let lengths: [320]u8 = {0; 320};
+  const total = literal_count + distance_count;
+  let index: usize = 0;
+
+  while (index < total) {
+    const symbol = decode(&code_tree, reader);
+
+    if (reader.overrun() || symbol < 0) {
+      return false;
+    };
+
+    if (symbol < 16) {
+      lengths[index] = @as(u8, symbol);
+      index += 1;
+      continue;
+    };
+
+    let repeat: usize = 0;
+    let value: u8 = 0;
+
+    if (symbol == 16) {
+      if (index == 0) {
+        return false;
+      };
+
+      repeat = @as(usize, reader.bits(2)) + 3;
+      value = lengths[index - 1];
+    } else if (symbol == 17) {
+      repeat = @as(usize, reader.bits(3)) + 3;
+    } else if (symbol == 18) {
+      repeat = @as(usize, reader.bits(7)) + 11;
+    } else {
+      return false;
+    };
+
+    if (reader.overrun() || index + repeat > total) {
+      return false;
+    };
+
+    let k: usize = 0;
+    while (k < repeat) {
+      lengths[index] = value;
+      index += 1;
+      k += 1;
+    };
+  };
+
+  let literal_lengths: [288]u8 = {0; 288};
+  let distance_lengths: [32]u8 = {0; 32};
+
+  let li: usize = 0;
+  while (li < literal_count) {
+    literal_lengths[li] = lengths[li];
+    li += 1;
+  };
+
+  let di: usize = 0;
+  while (di < distance_count) {
+    distance_lengths[di] = lengths[literal_count + di];
+    di += 1;
+  };
+
+  let literal_tree = Huffman.new();
+  let distance_tree = Huffman.new();
+
+  if (!build(&literal_tree, literal_lengths[0..288])) {
+    return false;
+  };
+
+  if (!build(&distance_tree, distance_lengths[0..32])) {
+    return false;
+  };
+
+  return inflate_codes(reader, out, &literal_tree, &distance_tree);
+}
+
+fn inflate_codes(reader: *BitReader, out: *String, literals: *const Huffman, distances: *const Huffman) bool {
+  while (true) {
+    const symbol = decode(literals, reader);
+
+    if (reader.overrun() || symbol < 0) {
+      return false;
+    };
+
+    if (symbol < 256) {
+      out.push(@as(char, @as(u8, symbol)));
+      continue;
+    };
+
+    if (symbol == 256) {
+      return true;
+    };
+
+    const length_index = @as(usize, symbol - 257);
+    if (length_index >= 29) {
+      return false;
+    };
+
+    const length_extra = @as(usize, LengthExtra[length_index]);
+    const length = @as(usize, LengthBase[length_index]) + @as(usize, reader.bits(length_extra));
+    const distance_symbol = decode(distances, reader);
+
+    if (reader.overrun() || distance_symbol < 0) {
+      return false;
+    };
+
+    const distance_index = @as(usize, distance_symbol);
+    if (distance_index >= 30) {
+      return false;
+    };
+
+    const distance_extra = @as(usize, DistanceExtra[distance_index]);
+    const distance = @as(usize, DistanceBase[distance_index]) + @as(usize, reader.bits(distance_extra));
+
+    if (reader.overrun() || distance > out.len()) {
+      return false;
+    };
+
+    const start = out.len() - distance;
+    let i: usize = 0;
+    while (i < length) {
+      out.push(out.get(start + i).unwrap());
+      i += 1;
+    };
+  };
+
+  return false;
+}

@@ -1,0 +1,89 @@
+use std.string;
+use std.compress.deflate;
+
+pub struct Zlib {
+  pub fn compress(data: []const char) String {
+    let out = String.new();
+
+    out.push(@as(char, 120));
+    out.push(@as(char, 1));
+
+    const body = Deflate.compress(data);
+    out.push_str(body.slice(..));
+
+    const checksum = Adler32.hash(data);
+
+    out.push(@as(char, @as(u8, (checksum >> 24) & 255)));
+    out.push(@as(char, @as(u8, (checksum >> 16) & 255)));
+    out.push(@as(char, @as(u8, (checksum >> 8) & 255)));
+    out.push(@as(char, @as(u8, checksum & 255)));
+
+    return out;
+  }
+
+  pub fn decompress(data: []const char) Option[String] {
+    if (data.len < 6) {
+      return Option.None;
+    };
+
+    const cmf = @as(u32, data[0]);
+    const flg = @as(u32, data[1]);
+
+    if ((cmf & 15) != 8) {
+      return Option.None;
+    };
+
+    if ((cmf >> 4) > 7) {
+      return Option.None;
+    };
+
+    if ((cmf * 256 + flg) % 31 != 0) {
+      return Option.None;
+    };
+
+    if ((flg & 32) != 0) {
+      return Option.None;
+    };
+
+    const end = data.len - 4;
+    const inflated = Deflate.decompress(data[2..end]);
+
+    if (inflated.is_none()) {
+      return Option.None;
+    };
+
+    const out = inflated.unwrap();
+    const expected = read_be_u32(data, end);
+
+    if (Adler32.hash(out.slice(..)) != expected) {
+      return Option.None;
+    };
+
+    return Option.Some(out);
+  }
+}
+
+struct Adler32 {
+  pub fn hash(data: []const char) u32 {
+    let a: u32 = 1;
+    let b: u32 = 0;
+    let i: usize = 0;
+
+    while (i < data.len) {
+      a = (a + @as(u32, data[i])) % 65521;
+      b = (b + a) % 65521;
+      i += 1;
+    };
+
+    return (b << 16) | a;
+  }
+}
+
+fn read_be_u32(data: []const char, at: usize) u32 {
+  const b0 = @as(u32, data[at]) << 24;
+  const b1 = @as(u32, data[at + 1]) << 16;
+  const b2 = @as(u32, data[at + 2]) << 8;
+  const b3 = @as(u32, data[at + 3]);
+
+  return (b0 | b1) | (b2 | b3);
+}

@@ -1,0 +1,181 @@
+use std.compress.deflate;
+use std.compress.gzip;
+use std.compress.zlib;
+use std.encoding.hex;
+use std.string;
+use std.testing;
+
+const BaseText: []const char = "The quick brown fox jumps over the lazy dog. Zeen is a compiled systems language. Structs, enums, generics, macros and move semantics. Standard library grows. ";
+const Sentence: []const char = "The quick brown fox jumps over the lazy dog. ";
+
+fn from_hex(text: []const char) String {
+  return Hex.decode(text).unwrap();
+}
+
+fn repeat_text(base: []const char, count: usize) String {
+  let out = String.new();
+  let i: usize = 0;
+
+  while (i < count) {
+    out.push_str(base);
+    i += 1;
+  };
+
+  return out;
+}
+
+/// @test
+pub fn deflate_round_trip() {
+  const data = String.from("hello hello hello hello world");
+  const packed = Deflate.compress(data.slice(..));
+  const unpacked = Deflate.decompress(packed.slice(..)).unwrap();
+
+  assert_eq(unpacked, data);
+}
+
+/// @test
+pub fn deflate_compresses_empty_input() {
+  const packed = Deflate.compress("");
+
+  assert_eq(Hex.encode(packed.slice(..)), String.from("010000ffff"));
+}
+
+/// @test
+pub fn zlib_decodes_stored_block() {
+  const packed = from_hex("7801011d00e2ff68656c6c6f2068656c6c6f2068656c6c6f2068656c6c6f20776f726c64a38a0af9");
+  const unpacked = Zlib.decompress(packed.slice(..)).unwrap();
+
+  assert_eq(unpacked, String.from("hello hello hello hello world"));
+}
+
+/// @test
+pub fn zlib_decodes_fixed_huffman() {
+  const packed = from_hex("7801cb48cdc9c957c8c020cbf38b725200a38a0af9");
+  const unpacked = Zlib.decompress(packed.slice(..)).unwrap();
+
+  assert_eq(unpacked, String.from("hello hello hello hello world"));
+}
+
+/// @test
+pub fn zlib_decodes_dynamic_huffman() {
+  const packed = from_hex("789cedce4112c2300805d0abfc0338bd8c5db94b138cd1865448d4f6f4e2319c6105c307e6cd37c27394f8c022edcdb8b60feea36e8af62241b7780dc78ed4f2840b11a3280262ab5b59294177ed54d596388f9069c2b9cb885d4f201ed54a262629d1ba1aa234bbe6846adfa15403778b7e47360d92b0964582ecc8a6b1f9ec3ce739cf79ce739ef39ce73ce739ef3f795f0a538199");
+  const unpacked = Zlib.decompress(packed.slice(..)).unwrap();
+
+  assert_eq(unpacked, repeat_text(BaseText, 20));
+}
+
+/// @test
+pub fn zlib_decodes_empty_stream() {
+  const packed = from_hex("789c030000000001");
+  const unpacked = Zlib.decompress(packed.slice(..)).unwrap();
+
+  assert(unpacked.is_empty());
+}
+
+/// @test
+pub fn zlib_compress_layout_matches_stored_blocks() {
+  const data = String.from("hello hello hello hello world");
+  const packed = Zlib.compress(data.slice(..));
+
+  assert_eq(Hex.encode(packed.slice(..)), String.from("7801011d00e2ff68656c6c6f2068656c6c6f2068656c6c6f2068656c6c6f20776f726c64a38a0af9"));
+}
+
+/// @test
+pub fn zlib_round_trip_large_input() {
+  let data = String.new();
+  let i: usize = 0;
+
+  while (i < 100000) {
+    data.push(@as(char, @as(u8, i % 251)));
+    i += 1;
+  };
+
+  const packed = Zlib.compress(data.slice(..));
+  const unpacked = Zlib.decompress(packed.slice(..)).unwrap();
+
+  assert_eq(unpacked.len(), 100000);
+  assert_eq(unpacked, data);
+}
+
+/// @test
+pub fn zlib_rejects_corrupt_input() {
+  assert(Zlib.decompress("").is_none());
+  assert(Zlib.decompress("abc").is_none());
+  assert(Zlib.decompress("7801cb48cdc9c957c8c020cbf38b725200a38a0af8").is_none());
+  assert(Zlib.decompress("783f00000000").is_none());
+  assert(Zlib.decompress("7901cb48cdc9c957c8c020cbf38b725200a38a0af9").is_none());
+
+  let packed = from_hex("7801cb48cdc9c957c8c020cbf38b725200a38a0af9");
+  let _ = packed.set(0, @as(char, 0));
+
+  assert(Zlib.decompress(packed.slice(..)).is_none());
+
+  const truncated = from_hex("7801cb48cdc9c957c8c020cbf38b725200a38a0af9");
+
+  assert(Zlib.decompress(truncated.slice(0..truncated.len() - 1)).is_none());
+}
+
+/// @test
+pub fn gzip_decodes_known_stream() {
+  const packed = from_hex("1f8b08000000000002ff4bafca2c5048cecf2d284a2d2e56c84d0500f41a481010000000");
+  const unpacked = Gzip.decompress(packed.slice(..)).unwrap();
+
+  assert_eq(unpacked, String.from("gzip compress me"));
+}
+
+/// @test
+pub fn gzip_decodes_dynamic_huffman() {
+  const packed = from_hex("1f8b08000000000002ff0bc94855282ccd4cce56482aca2fcf5348cbaf50c82acd2d2856c82f4b2d5228014ae72456552aa4e4a7eb29848c2a1e553caa7854f1a8e251c5c34b3100e6c3956408070000");
+  const unpacked = Gzip.decompress(packed.slice(..)).unwrap();
+
+  assert_eq(unpacked, repeat_text(Sentence, 40));
+}
+
+/// @test
+pub fn gzip_decodes_optional_header_fields() {
+  const name = from_hex("1f8b08080000000000ff6100010300fcff616263c241243503000000");
+  const extra = from_hex("1f8b08040000000000ff02007879010300fcff616263c241243503000000");
+  const comment = from_hex("1f8b08120000000000ff6e6f7465000000010300fcff616263c241243503000000");
+
+  assert_eq(Gzip.decompress(name.slice(..)).unwrap(), String.from("abc"));
+  assert_eq(Gzip.decompress(extra.slice(..)).unwrap(), String.from("abc"));
+  assert_eq(Gzip.decompress(comment.slice(..)).unwrap(), String.from("abc"));
+}
+
+/// @test
+pub fn gzip_round_trip() {
+  const data = repeat_text(BaseText, 20);
+  const packed = Gzip.compress(data.slice(..));
+  const unpacked = Gzip.decompress(packed.slice(..)).unwrap();
+
+  assert_eq(unpacked, data);
+}
+
+/// @test
+pub fn gzip_round_trip_empty_input() {
+  const packed = Gzip.compress("");
+  const unpacked = Gzip.decompress(packed.slice(..)).unwrap();
+
+  assert(unpacked.is_empty());
+}
+
+/// @test
+pub fn gzip_rejects_corrupt_input() {
+  const bad_magic = from_hex("1f8c08000000000002ff4bafca2c5048cecf2d284a2d2e56c84d0500f41a481010000000");
+  const bad_method = from_hex("1f8b09000000000002ff4bafca2c5048cecf2d284a2d2e56c84d0500f41a481010000000");
+  const bad_crc = from_hex("1f8b08000000000002ff4bafca2c5048cecf2d284a2d2e56c84d0500f51a481010000000");
+  const bad_size = from_hex("1f8b08000000000002ff4bafca2c5048cecf2d284a2d2e56c84d0500f41a481011000000");
+  const truncated = from_hex("1f8b08000000000002ff4bafca2c5048cecf2d284a2d2e56c84d0500f41a481010000000");
+
+  assert(Gzip.decompress("").is_none());
+  assert(Gzip.decompress(bad_magic.slice(..)).is_none());
+  assert(Gzip.decompress(bad_method.slice(..)).is_none());
+  assert(Gzip.decompress(bad_crc.slice(..)).is_none());
+  assert(Gzip.decompress(bad_size.slice(..)).is_none());
+  assert(Gzip.decompress(truncated.slice(0..truncated.len() - 1)).is_none());
+
+  let reserved = from_hex("1f8b08000000000002ff4bafca2c5048cecf2d284a2d2e56c84d0500f41a481010000000");
+  let _ = reserved.set(3, @as(char, 32));
+
+  assert(Gzip.decompress(reserved.slice(..)).is_none());
+}

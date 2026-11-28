@@ -1,0 +1,143 @@
+use std.string;
+use std.hash;
+use std.compress.deflate;
+
+pub struct Gzip {
+  pub fn compress(data: []const char) String {
+    let out = String.new();
+
+    out.push(@as(char, 31));
+    out.push(@as(char, 139));
+    out.push(@as(char, 8));
+    out.push(@as(char, 0));
+
+    let i: usize = 0;
+    while (i < 4) {
+      out.push(@as(char, 0));
+      i += 1;
+    };
+
+    out.push(@as(char, 0));
+    out.push(@as(char, 255));
+
+    const body = Deflate.compress(data);
+    out.push_str(body.slice(..));
+
+    const checksum = Crc32.hash(data);
+
+    out.push(@as(char, @as(u8, checksum & 255)));
+    out.push(@as(char, @as(u8, (checksum >> 8) & 255)));
+    out.push(@as(char, @as(u8, (checksum >> 16) & 255)));
+    out.push(@as(char, @as(u8, (checksum >> 24) & 255)));
+
+    const size = @as(u32, data.len);
+
+    out.push(@as(char, @as(u8, size & 255)));
+    out.push(@as(char, @as(u8, (size >> 8) & 255)));
+    out.push(@as(char, @as(u8, (size >> 16) & 255)));
+    out.push(@as(char, @as(u8, (size >> 24) & 255)));
+
+    return out;
+  }
+
+  pub fn decompress(data: []const char) Option[String] {
+    if (data.len < 18) {
+      return Option.None;
+    };
+
+    if (@as(u32, data[0]) != 31 || @as(u32, data[1]) != 139) {
+      return Option.None;
+    };
+
+    if (@as(u32, data[2]) != 8) {
+      return Option.None;
+    };
+
+    const flags = @as(u32, data[3]);
+
+    if ((flags & 224) != 0) {
+      return Option.None;
+    };
+
+    let pos: usize = 10;
+
+    if ((flags & 4) != 0) {
+      if (pos + 2 > data.len) {
+        return Option.None;
+      };
+
+      const extra = @as(usize, @as(u32, data[pos])) | (@as(usize, @as(u32, data[pos + 1])) << 8);
+      pos += 2;
+
+      if (pos + extra > data.len) {
+        return Option.None;
+      };
+
+      pos += extra;
+    };
+
+    if ((flags & 8) != 0) {
+      while (pos < data.len && data[pos] != '\0') {
+        pos += 1;
+      };
+
+      if (pos >= data.len) {
+        return Option.None;
+      };
+
+      pos += 1;
+    };
+
+    if ((flags & 16) != 0) {
+      while (pos < data.len && data[pos] != '\0') {
+        pos += 1;
+      };
+
+      if (pos >= data.len) {
+        return Option.None;
+      };
+
+      pos += 1;
+    };
+
+    if ((flags & 2) != 0) {
+      pos += 2;
+
+      if (pos > data.len) {
+        return Option.None;
+      };
+    };
+
+    if (pos + 8 > data.len) {
+      return Option.None;
+    };
+
+    const end = data.len - 8;
+    const inflated = Deflate.decompress(data[pos..end]);
+
+    if (inflated.is_none()) {
+      return Option.None;
+    };
+
+    const out = inflated.unwrap();
+
+    if (Crc32.hash(out.slice(..)) != read_le_u32(data, end)) {
+      return Option.None;
+    };
+
+    if (@as(u32, out.len()) != read_le_u32(data, end + 4)) {
+      return Option.None;
+    };
+
+    return Option.Some(out);
+  }
+}
+
+fn read_le_u32(data: []const char, at: usize) u32 {
+  const b0 = @as(u32, data[at]);
+  const b1 = @as(u32, data[at + 1]) << 8;
+  const b2 = @as(u32, data[at + 2]) << 16;
+  const b3 = @as(u32, data[at + 3]) << 24;
+
+  return (b0 | b1) | (b2 | b3);
+}
