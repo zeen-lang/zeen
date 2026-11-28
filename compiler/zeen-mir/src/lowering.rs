@@ -485,11 +485,20 @@ impl<'ctx> MirLowering<'ctx> {
     }
 
     fn collect_struct_layout(&self, ty: TypeId, missing: &mut Vec<(TypeId, DefId)>) {
-        if let Type::Struct { def_id, .. } = self.typecheck.interner.get(ty).clone()
-            && !self.program.struct_layouts.contains_key(&ty)
-            && !missing.iter().any(|(t, _)| *t == ty)
-        {
-            missing.push((ty, def_id));
+        match self.typecheck.interner.get(ty).clone() {
+            Type::Struct { def_id, .. } => {
+                if !self.program.struct_layouts.contains_key(&ty)
+                    && !missing.iter().any(|(t, _)| *t == ty)
+                {
+                    missing.push((ty, def_id));
+                }
+            }
+            Type::Pointer { inner, .. } | Type::ManyPointer { inner, .. } => {
+                self.collect_struct_layout(inner, missing);
+            }
+            Type::Slice { element, .. } => self.collect_struct_layout(element, missing),
+            Type::Array { element, .. } => self.collect_struct_layout(element, missing),
+            _ => {}
         }
     }
 
