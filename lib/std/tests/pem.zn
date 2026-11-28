@@ -1,4 +1,4 @@
-use std.pem;
+use std.encoding.pem;
 use std.string;
 use std.testing;
 

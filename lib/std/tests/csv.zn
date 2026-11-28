@@ -1,4 +1,4 @@
-use std.csv;
+use std.encoding.csv;
 use std.string;
 use std.testing;
 
