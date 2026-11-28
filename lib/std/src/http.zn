@@ -2,6 +2,8 @@ use std.string;
 use std.collections.list;
 use std.io;
 use std.net;
+use std.fmt;
+use std.url;
 
 comptime MaxRequestBodySize = 8 * 1024 * 1024;
 
@@ -29,6 +31,18 @@ pub struct Headers {
 }
 
 implement Headers {
+  pub fn new() Self {
+    return Self { .inner = List#[Header].new() };
+  }
+
+  pub fn len(*const self) usize {
+    return self.inner.len();
+  }
+
+  pub fn at(*const self, index: usize) Option[*Header] {
+    return self.inner.get_ptr(index);
+  }
+
   /// Adds one header field.
   pub fn push(*self, name: String, value: String) {
     self.inner.push(Header { .name = name, .value = value });
@@ -707,6 +721,410 @@ fn status_text(status: u16) []const char {
     511 => "Network Authentication Required",
     _ => "Unknown",
   }
+}
+
+/// Plain HTTP/1.1 client. Only `http://` URLs are supported.
+pub struct Client {}
+
+/// Parsed client response.
+pub struct ClientResponse {
+  status: u16,
+  headers: Headers,
+  _body: String,
+}
+
+implement ClientResponse {
+  pub fn status_code(*const self) u16 {
+    return self.status;
+  }
+
+  pub fn header(*const self, name: []const char) Option[String] {
+    return self.headers.get(name);
+  }
+
+  pub fn body(*const self) []const char {
+    return self._body.slice(..);
+  }
+}
+
+implement Client {
+  pub fn new() Self {
+    return Self {};
+  }
+
+  pub fn get(*const self, url: []const char) Result[ClientResponse, IoError] {
+    const headers = Headers.new();
+    return self.request(Method.Get, url, &headers, "");
+  }
+
+  pub fn post(*const self, url: []const char, body: []const char) Result[ClientResponse, IoError] {
+    const headers = Headers.new();
+    return self.request(Method.Post, url, &headers, body);
+  }
+
+  pub fn request(
+    *const self,
+    method: Method,
+    url: []const char,
+    headers: *const Headers,
+    body: []const char,
+  ) Result[ClientResponse, IoError] {
+    const parsed = Url.parse(url);
+
+    if (parsed.is_none()) {
+      return Result.Err(IoError.new(IoErrorKind.InvalidInput, "bad url"));
+    };
+
+    const target = parsed.unwrap();
+
+    if (!is_http_scheme(target.scheme())) {
+      return Result.Err(IoError.new(IoErrorKind.Unsupported, "only http is supported"));
+    };
+
+    const port = if (target.port().is_some()) { target.port().unwrap() } else { @as(u16, 80) };
+    const addr = SocketAddr.resolve(target.host(), port)?;
+    let stream = TcpStream.connect(&addr)?;
+
+    const request = build_request(method, &target, headers, body);
+    stream.write_all(request.slice(..))?;
+
+    const raw = String.new();
+    stream.read_to_string(&raw)?;
+
+    return parse_response(method, &raw);
+  }
+}
+
+fn is_http_scheme(scheme: []const char) bool {
+  if (scheme.len != 4) {
+    return false;
+  };
+
+  return lower_byte(scheme.ptr[0]) == 'h'
+    && lower_byte(scheme.ptr[1]) == 't'
+    && lower_byte(scheme.ptr[2]) == 't'
+    && lower_byte(scheme.ptr[3]) == 'p';
+}
+
+fn method_name(method: Method) []const char {
+  return switch (method) {
+    .Get => "GET",
+    .Post => "POST",
+    .Put => "PUT",
+    .Delete => "DELETE",
+    .Patch => "PATCH",
+    .Head => "HEAD",
+    .Options => "OPTIONS",
+    .Unknown => "GET",
+  };
+}
+
+fn build_request(method: Method, url: *const Url, headers: *const Headers, body: []const char) String {
+  let out = String.new();
+  out.push_str(method_name(method));
+  out.push(' ');
+  out.push_str(url.path());
+
+  switch (url.query()) {
+    .Some(query) => {
+      out.push('?');
+      out.push_str(query);
+    },
+    .None => {},
+  };
+
+  out.push_str(" HTTP/1.1\r\n");
+
+  if (headers.get("host").is_none()) {
+    out.push_str("Host: ");
+    out.push_str(url.host());
+
+    if (url.port().is_some() && url.port().unwrap() != 80) {
+      out.push(':');
+      Fmt.write_uint(&out, @as(u64, url.port().unwrap()));
+    };
+
+    out.push_str("\r\n");
+  };
+
+  let i: usize = 0;
+
+  while (i < headers.len()) {
+    const header = headers.at(i).unwrap();
+    out.push_str((*header).name.slice(..));
+    out.push_str(": ");
+    out.push_str((*header).value.slice(..));
+    out.push_str("\r\n");
+    i += 1;
+  };
+
+  out.push_str("Connection: close\r\n");
+
+  if (body.len > 0 || method == Method.Post || method == Method.Put || method == Method.Patch) {
+    out.push_str("Content-Length: ");
+    Fmt.write_uint(&out, @as(u64, body.len));
+    out.push_str("\r\n");
+  };
+
+  out.push_str("\r\n");
+  out.push_str(body);
+
+  return out;
+}
+
+fn parse_response(method: Method, raw: *const String) Result[ClientResponse, IoError] {
+  const split = (*raw).find_str("\r\n\r\n");
+
+  if (split.is_none()) {
+    return Result.Err(IoError.new(IoErrorKind.InvalidData, "bad response"));
+  };
+
+  const at = split.unwrap();
+  const body_start = at + 4;
+  const head = String.from((*raw).slice(..)[0..at]);
+  const body_raw = (*raw).slice(..)[body_start..(*raw).len()];
+
+  const lines = head.split('\n');
+
+  if (lines.is_empty()) {
+    return Result.Err(IoError.new(IoErrorKind.InvalidData, "empty response"));
+  };
+
+  const status_line = String.from(lines.get_ptr(0).unwrap().trim_end());
+  const parts = status_line.split(' ');
+
+  if (parts.len() < 2) {
+    return Result.Err(IoError.new(IoErrorKind.InvalidData, "bad status line"));
+  };
+
+  const status = parse_status(parts.get_ptr(1).unwrap())?;
+  let headers = Headers.new();
+  let i: usize = 1;
+
+  while (i < lines.len()) {
+    const line = lines.get_ptr(i).unwrap();
+    const text = (*line).trim_end();
+
+    if (text.len == 0) {
+      break;
+    };
+
+    switch (find_colon(text)) {
+      .Some(colon) => {
+        const value_start = colon + 1;
+        headers.push(
+          String.from(trim_view(text.ptr, colon)),
+          String.from(trim_view(text.ptr + value_start, text.len - value_start)),
+        );
+      },
+      .None => {
+        return Result.Err(IoError.new(IoErrorKind.InvalidData, "bad header line"));
+      },
+    };
+
+    i += 1;
+  };
+
+  if (method == Method.Head || status == 204 || status == 304) {
+    return Result.Ok(ClientResponse { .status = status, .headers = headers, ._body = String.new() });
+  };
+
+  let chunked = false;
+  const encoding = headers.get("transfer-encoding");
+
+  if (encoding.is_some()) {
+    const encoding_text = encoding.unwrap();
+
+    if (contains_ci(encoding_text.slice(..), "chunked")) {
+      chunked = true;
+    };
+  };
+
+  if (chunked) {
+    const body = decode_chunked(body_raw)?;
+    return Result.Ok(ClientResponse { .status = status, .headers = headers, ._body = body });
+  };
+
+  const length = headers.get("content-length");
+
+  if (length.is_some()) {
+    const length_text = length.unwrap();
+    const parsed = Fmt.parse_u64(length_text.slice(..));
+
+    if (parsed.is_none()) {
+      return Result.Err(IoError.new(IoErrorKind.InvalidData, "bad content length"));
+    };
+
+    const want = parsed.unwrap();
+
+    if (want > @as(u64, body_raw.len)) {
+      return Result.Err(IoError.new(IoErrorKind.UnexpectedEof, "short response body"));
+    };
+
+    const body = String.from(body_raw[0..@as(usize, want)]);
+    return Result.Ok(ClientResponse { .status = status, .headers = headers, ._body = body });
+  };
+
+  return Result.Ok(ClientResponse { .status = status, .headers = headers, ._body = String.from(body_raw) });
+}
+
+fn parse_status(text: *String) Result[u16, IoError] {
+  if ((*text).len() != 3) {
+    return Result.Err(IoError.new(IoErrorKind.InvalidData, "bad status code"));
+  };
+
+  let value: u32 = 0;
+  let i: usize = 0;
+
+  while (i < 3) {
+    const c = @as(u32, (*text).get(i).unwrap());
+
+    if (c < @as(u32, '0') || c > @as(u32, '9')) {
+      return Result.Err(IoError.new(IoErrorKind.InvalidData, "bad status code"));
+    };
+
+    value = value * 10 + (c - @as(u32, '0'));
+    i += 1;
+  };
+
+  return Result.Ok(@as(u16, value));
+}
+
+fn decode_chunked(raw: []const char) Result[String, IoError] {
+  let out = String.new();
+  let pos: usize = 0;
+
+  while (true) {
+    const line_end = find_crlf(raw, pos);
+
+    if (line_end.is_none()) {
+      return Result.Err(IoError.new(IoErrorKind.InvalidData, "bad chunk"));
+    };
+
+    const line = raw[pos..line_end.unwrap()];
+    const size = parse_chunk_size(line, raw.len)?;
+    pos = line_end.unwrap() + 2;
+
+    if (size == 0) {
+      break;
+    };
+
+    if (pos + size + 2 > raw.len) {
+      return Result.Err(IoError.new(IoErrorKind.UnexpectedEof, "short chunk"));
+    };
+
+    out.push_str(raw[pos..pos + size]);
+    pos += size;
+
+    if (raw.ptr[pos] != '\r' || raw.ptr[pos + 1] != '\n') {
+      return Result.Err(IoError.new(IoErrorKind.InvalidData, "bad chunk terminator"));
+    };
+
+    pos += 2;
+  };
+
+  return Result.Ok(out);
+}
+
+fn parse_chunk_size(line: []const char, limit: usize) Result[usize, IoError] {
+  let value: u64 = 0;
+  let digits: usize = 0;
+  let i: usize = 0;
+
+  while (i < line.len) {
+    const c = line.ptr[i];
+
+    if (c == ';' || c == ' ' || c == '\t') {
+      break;
+    };
+
+    const digit = hex_value(c);
+
+    if (digit.is_none()) {
+      return Result.Err(IoError.new(IoErrorKind.InvalidData, "bad chunk size"));
+    };
+
+    if (value > @as(u64, limit) / 16) {
+      return Result.Err(IoError.new(IoErrorKind.InvalidData, "chunk too large"));
+    };
+
+    value = value * 16 + @as(u64, digit.unwrap());
+
+    if (value > @as(u64, limit)) {
+      return Result.Err(IoError.new(IoErrorKind.InvalidData, "chunk too large"));
+    };
+
+    digits += 1;
+    i += 1;
+  };
+
+  if (digits == 0) {
+    return Result.Err(IoError.new(IoErrorKind.InvalidData, "bad chunk size"));
+  };
+
+  return Result.Ok(@as(usize, value));
+}
+
+fn hex_value(c: char) Option[u32] {
+  const value = @as(u32, c);
+
+  if (value >= @as(u32, '0') && value <= @as(u32, '9')) {
+    return Option.Some(value - @as(u32, '0'));
+  };
+
+  if (value >= @as(u32, 'a') && value <= @as(u32, 'f')) {
+    return Option.Some(value - @as(u32, 'a') + 10);
+  };
+
+  if (value >= @as(u32, 'A') && value <= @as(u32, 'F')) {
+    return Option.Some(value - @as(u32, 'A') + 10);
+  };
+
+  return Option.None;
+}
+
+fn find_crlf(text: []const char, from: usize) Option[usize] {
+  let i = from;
+
+  while (i + 1 < text.len) {
+    if (text.ptr[i] == '\r' && text.ptr[i + 1] == '\n') {
+      return Option.Some(i);
+    };
+
+    i += 1;
+  };
+
+  return Option.None;
+}
+
+fn contains_ci(text: []const char, needle: []const char) bool {
+  if (needle.len == 0 || text.len < needle.len) {
+    return false;
+  };
+
+  let i: usize = 0;
+
+  while (i + needle.len <= text.len) {
+    let same = true;
+    let k: usize = 0;
+
+    while (k < needle.len) {
+      if (lower_byte(text.ptr[i + k]) != lower_byte(needle.ptr[k])) {
+        same = false;
+        break;
+      };
+
+      k += 1;
+    };
+
+    if (same) {
+      return true;
+    };
+
+    i += 1;
+  };
+
+  return false;
 }
 
 /// Blocking single threaded HTTP server.

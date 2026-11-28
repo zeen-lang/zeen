@@ -2,6 +2,7 @@ use std.http;
 use std.net;
 use std.io;
 use std.string;
+use std.thread;
 use std.testing;
 
 /// @test
@@ -32,4 +33,95 @@ pub fn http_reads_request_and_sends_response() {
 
   assert_eq(client.read_to_string(&out).unwrap(), @as(usize, 98));
   assert_eq(out.len(), @as(usize, 98));
+}
+
+/// @test
+pub fn http_client_get_reads_response() {
+  @os[windows] {
+    return;
+  }
+
+  let listener = TcpListener.bind(&SocketAddr.loopback(0)).unwrap();
+  const addr = listener.local_addr().unwrap();
+  const url = @format("http://localhost:{}/hello?name=zeen", addr.port());
+
+  const server = Thread.spawn(|| -> Request {
+    let stream = listener.accept().unwrap();
+    const request = HttpServer.read_request(&stream).unwrap();
+    Response.ok("Hello, World!\n").send(&stream).unwrap();
+    stream.shutdown().unwrap();
+    return request;
+  });
+
+  const response = Client.new().get(url.slice(..)).unwrap();
+
+  assert_eq(response.status_code(), @as(u16, 200));
+  assert_eq(String.from(response.body()), String.from("Hello, World!\n"));
+  assert_eq(response.header("content-type").unwrap(), String.from("text/plain"));
+
+  const request = server.join();
+  assert_eq(String.from(request.path.slice(..)), String.from("/hello?name=zeen"));
+  assert_eq(request.header("host").unwrap(), String.from(@format("localhost:{}", addr.port()).slice(..)));
+}
+
+/// @test
+pub fn http_client_post_sends_body() {
+  @os[windows] {
+    return;
+  }
+
+  let listener = TcpListener.bind(&SocketAddr.loopback(0)).unwrap();
+  const addr = listener.local_addr().unwrap();
+  const url = @format("http://127.0.0.1:{}/submit", addr.port());
+
+  const server = Thread.spawn(|| -> Request {
+    let stream = listener.accept().unwrap();
+    const request = HttpServer.read_request(&stream).unwrap();
+    Response.ok("created").send(&stream).unwrap();
+    stream.shutdown().unwrap();
+    return request;
+  });
+
+  const response = Client.new().post(url.slice(..), "payload").unwrap();
+
+  assert_eq(response.status_code(), @as(u16, 200));
+  assert_eq(String.from(response.body()), String.from("created"));
+
+  const request = server.join();
+  assert(request.method == Method.Post);
+  assert_eq(String.from(request.body.slice(..)), String.from("payload"));
+  assert_eq(request.header("content-length").unwrap(), String.from("7"));
+}
+
+/// @test
+pub fn http_client_decodes_chunked_body() {
+  @os[windows] {
+    return;
+  }
+
+  let listener = TcpListener.bind(&SocketAddr.loopback(0)).unwrap();
+  const addr = listener.local_addr().unwrap();
+  const url = @format("http://127.0.0.1:{}/chunked", addr.port());
+
+  const server = Thread.spawn(|| -> i32 {
+    let stream = listener.accept().unwrap();
+    const _ = HttpServer.read_request(&stream).unwrap();
+    stream.write_all("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n").unwrap();
+    stream.shutdown().unwrap();
+    return 1;
+  });
+
+  const response = Client.new().get(url.slice(..)).unwrap();
+
+  assert_eq(response.status_code(), @as(u16, 200));
+  assert_eq(String.from(response.body()), String.from("hello world"));
+  assert_eq(server.join(), 1);
+}
+
+/// @test
+pub fn http_client_rejects_https() {
+  const result = Client.new().get("https://example.com/");
+
+  assert(result.is_err());
+  assert_eq(result.unwrap_err().kind() == IoErrorKind.Unsupported, true);
 }
