@@ -1,3 +1,4 @@
+use std.ffi;
 use std.string;
 use std.io;
 use std.time;
@@ -13,12 +14,6 @@ use std.c.posix.sys.socket;
 } else {
   use std.c.posix.unistd;
   use std.c.posix.sys.time;
-}
-
-fn cstr_of(s: []const char) String {
-  let out = String.from(s);
-  out.push('\0');
-  out
 }
 
 pub struct Ipv4Addr {
@@ -561,10 +556,10 @@ implement SocketAddr {
       return Result.Err(IoError.new(IoErrorKind.InvalidInput, "bad socket address"));
     };
 
-    let c = cstr_of(s[0..cut]);
+    let c = CString.new(s[0..cut]);
     let raw: u32 = 0;
 
-    if (inet_pton_ip(@as([*]const char, c.slice(..).ptr), &raw) != 1) {
+    if (inet_pton_ip(@as([*]const char, c.as_ptr()), &raw) != 1) {
       return Result.Err(IoError.new(IoErrorKind.InvalidInput, "bad ip address"));
     };
 

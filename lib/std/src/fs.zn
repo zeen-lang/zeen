@@ -1,4 +1,5 @@
 use std.alloc;
+use std.ffi;
 use std.string;
 use std.path;
 use std.collections.list;
@@ -22,12 +23,6 @@ use std.c.errno;
 }
 
 /// Null terminated copy of a path for C calls.
-fn cpath(path: []const char) String {
-  let s = String.from(path);
-  s.push('\0');
-  s
-}
-
 /// Kind of a filesystem entry.
 pub enum FileType {
   File,
@@ -60,8 +55,8 @@ implement File {
   /// * IoErrorKind.Uncategorized
   pub fn open(path: []const char) Result[File, IoError] {
     @os[windows] {
-      let c = cpath(path);
-      let arg = @as([*]const c_char, c.slice(..).ptr);
+      let c = CString.new(path);
+      let arg = @as([*]const c_char, c.as_ptr());
       let handle = CreateFileA(
         arg,
         GENERIC_READ,
@@ -78,8 +73,8 @@ implement File {
 
       return Result.Ok(File { .fd = -1, .handle = @as(*void, handle) });
     } else {
-      let c = cpath(path);
-      const fd = open(@as([*]const char, c.slice(..).ptr), O_RDONLY, 0);
+      let c = CString.new(path);
+      const fd = open(@as([*]const char, c.as_ptr()), O_RDONLY, 0);
 
       if (fd < 0) {
         return Result.Err(IoError.last_os_error());
@@ -98,8 +93,8 @@ implement File {
   /// * IoErrorKind.Uncategorized
   pub fn create(path: []const char) Result[File, IoError] {
     @os[windows] {
-      let c = cpath(path);
-      let arg = @as([*]const c_char, c.slice(..).ptr);
+      let c = CString.new(path);
+      let arg = @as([*]const c_char, c.as_ptr());
       let handle = CreateFileA(
         arg,
         GENERIC_WRITE,
@@ -116,8 +111,8 @@ implement File {
 
       return Result.Ok(File { .fd = -1, .handle = @as(*void, handle) });
     } else {
-      let c = cpath(path);
-      const fd = open(@as([*]const char, c.slice(..).ptr), O_CREAT | O_WRONLY | O_TRUNC, 0o666);
+      let c = CString.new(path);
+      const fd = open(@as([*]const char, c.as_ptr()), O_CREAT | O_WRONLY | O_TRUNC, 0o666);
 
       if (fd < 0) {
         return Result.Err(IoError.last_os_error());
@@ -495,9 +490,9 @@ implement OpenOptions {
         disposition = TRUNCATE_EXISTING;
       };
 
-      let c = cpath(path);
+      let c = CString.new(path);
       let handle = CreateFileA(
-        @as([*]const c_char, c.slice(..).ptr),
+        @as([*]const c_char, c.as_ptr()),
         access,
         FILE_SHARE_READ | FILE_SHARE_WRITE,
         nullptr,
@@ -538,8 +533,8 @@ implement OpenOptions {
         flags = flags | O_CREAT | O_EXCL;
       };
 
-      let c = cpath(path);
-      const fd = open(@as([*]const char, c.slice(..).ptr), flags, @as(c_mode_t, self._mode));
+      let c = CString.new(path);
+      const fd = open(@as([*]const char, c.as_ptr()), flags, @as(c_mode_t, self._mode));
 
       if (fd < 0) {
         return Result.Err(IoError.last_os_error());
@@ -724,10 +719,10 @@ pub struct Fs {
   /// * IoErrorKind.Uncategorized
   pub fn metadata(path: []const char) Result[Metadata, IoError] {
     @os[windows] {
-      let c = cpath(path);
+      let c = CString.new(path);
       let data: c_FileAttrData = @uninit();
 
-      if (GetFileAttributesExA(@as([*]const c_char, c.slice(..).ptr), 0, &data) == 0) {
+      if (GetFileAttributesExA(@as([*]const c_char, c.as_ptr()), 0, &data) == 0) {
         return Result.Err(IoError.last_os_error());
       };
 
@@ -744,10 +739,10 @@ pub struct Fs {
         ._ctime = filetime_seconds(data.created),
       });
     } else {
-      let c = cpath(path);
+      let c = CString.new(path);
       let st: c_Stat = @uninit();
 
-      if (stat(@as([*]const char, c.slice(..).ptr), &st) != 0) {
+      if (stat(@as([*]const char, c.as_ptr()), &st) != 0) {
         return Result.Err(IoError.last_os_error());
       };
 
@@ -767,10 +762,10 @@ pub struct Fs {
     @os[windows] {
       return Result.Err(IoError.new(IoErrorKind.Unsupported, "symlink_metadata needs reparse points"));
     } else {
-      let c = cpath(path);
+      let c = CString.new(path);
       let st: c_Stat = @uninit();
 
-      if (lstat(@as([*]const char, c.slice(..).ptr), &st) != 0) {
+      if (lstat(@as([*]const char, c.as_ptr()), &st) != 0) {
         return Result.Err(IoError.last_os_error());
       };
 
@@ -781,14 +776,14 @@ pub struct Fs {
   /// `true` when `path` can be stated.
   pub fn exists(path: []const char) bool {
     @os[windows] {
-      let c = cpath(path);
+      let c = CString.new(path);
 
-      return GetFileAttributesA(@as([*]const c_char, c.slice(..).ptr)) != INVALID_FILE_ATTRIBUTES;
+      return GetFileAttributesA(@as([*]const c_char, c.as_ptr())) != INVALID_FILE_ATTRIBUTES;
     } else {
-      let c = cpath(path);
+      let c = CString.new(path);
       let st: c_Stat = @uninit();
 
-      return stat(@as([*]const char, c.slice(..).ptr), &st) == 0;
+      return stat(@as([*]const char, c.as_ptr()), &st) == 0;
     }
   }
 
@@ -801,17 +796,17 @@ pub struct Fs {
   /// * IoErrorKind.Uncategorized
   pub fn remove_file(path: []const char) Result[void, IoError] {
     @os[windows] {
-      let c = cpath(path);
+      let c = CString.new(path);
 
-      if (DeleteFileA(@as([*]const c_char, c.slice(..).ptr)) == 0) {
+      if (DeleteFileA(@as([*]const c_char, c.as_ptr())) == 0) {
         return Result.Err(IoError.last_os_error());
       };
 
       return Result.Ok(.{});
     } else {
-      let c = cpath(path);
+      let c = CString.new(path);
 
-      if (unlink(@as([*]const char, c.slice(..).ptr)) != 0) {
+      if (unlink(@as([*]const char, c.as_ptr())) != 0) {
         return Result.Err(IoError.last_os_error());
       };
 
@@ -828,17 +823,17 @@ pub struct Fs {
   /// * IoErrorKind.Uncategorized
   pub fn remove_dir(path: []const char) Result[void, IoError] {
     @os[windows] {
-      let c = cpath(path);
+      let c = CString.new(path);
 
-      if (RemoveDirectoryA(@as([*]const c_char, c.slice(..).ptr)) == 0) {
+      if (RemoveDirectoryA(@as([*]const c_char, c.as_ptr())) == 0) {
         return Result.Err(IoError.last_os_error());
       };
 
       return Result.Ok(.{});
     } else {
-      let c = cpath(path);
+      let c = CString.new(path);
 
-      if (rmdir(@as([*]const char, c.slice(..).ptr)) != 0) {
+      if (rmdir(@as([*]const char, c.as_ptr())) != 0) {
         return Result.Err(IoError.last_os_error());
       };
 
@@ -855,17 +850,17 @@ pub struct Fs {
   /// * IoErrorKind.Uncategorized
   pub fn create_dir(path: []const char) Result[void, IoError] {
     @os[windows] {
-      let c = cpath(path);
+      let c = CString.new(path);
 
-      if (CreateDirectoryA(@as([*]const c_char, c.slice(..).ptr), nullptr) == 0) {
+      if (CreateDirectoryA(@as([*]const c_char, c.as_ptr()), nullptr) == 0) {
         return Result.Err(IoError.last_os_error());
       };
 
       return Result.Ok(.{});
     } else {
-      let c = cpath(path);
+      let c = CString.new(path);
 
-      if (mkdir(@as([*]const char, c.slice(..).ptr), 0o755) != 0) {
+      if (mkdir(@as([*]const char, c.as_ptr()), 0o755) != 0) {
         return Result.Err(IoError.last_os_error());
       };
 
@@ -882,19 +877,19 @@ pub struct Fs {
   /// * IoErrorKind.Uncategorized
   pub fn rename(from: []const char, to: []const char) Result[void, IoError] {
     @os[windows] {
-      let cfrom = cpath(from);
-      let cto = cpath(to);
+      let cfrom = CString.new(from);
+      let cto = CString.new(to);
 
-      if (MoveFileA(@as([*]const c_char, cfrom.slice(..).ptr), @as([*]const c_char, cto.slice(..).ptr)) == 0) {
+      if (MoveFileA(@as([*]const c_char, cfrom.as_ptr()), @as([*]const c_char, cto.as_ptr())) == 0) {
         return Result.Err(IoError.last_os_error());
       };
 
       return Result.Ok(.{});
     } else {
-      let cfrom = cpath(from);
-      let cto = cpath(to);
+      let cfrom = CString.new(from);
+      let cto = CString.new(to);
 
-      if (rename(@as([*]const char, cfrom.slice(..).ptr), @as([*]const char, cto.slice(..).ptr)) != 0) {
+      if (rename(@as([*]const char, cfrom.as_ptr()), @as([*]const char, cto.as_ptr())) != 0) {
         return Result.Err(IoError.last_os_error());
       };
 
@@ -914,10 +909,10 @@ pub struct Fs {
       let pattern = String.from(path);
       pattern.push('/');
       pattern.push('*');
-      let cpattern = cpath(pattern.slice(..));
+      let cpattern = CString.new(pattern.slice(..));
 
       let data: c_FindData = @uninit();
-      let dir = FindFirstFileA(@as([*]const c_char, cpattern.slice(..).ptr), &data);
+      let dir = FindFirstFileA(@as([*]const c_char, cpattern.as_ptr()), &data);
 
       if (dir == INVALID_HANDLE_VALUE) {
         return Result.Err(IoError.last_os_error());
@@ -969,8 +964,8 @@ pub struct Fs {
 
       return Result.Ok(out);
     } else {
-      let c = cpath(path);
-      const dir = opendir(@as([*]const char, c.slice(..).ptr));
+      let c = CString.new(path);
+      const dir = opendir(@as([*]const char, c.as_ptr()));
 
       if (dir == nullptr) {
         return Result.Err(IoError.last_os_error());
@@ -1219,19 +1214,19 @@ pub struct Fs {
   /// * IoErrorKind.Uncategorized
   pub fn hard_link(from: []const char, to: []const char) Result[void, IoError] {
     @os[windows] {
-      let cfrom = cpath(from);
-      let cto = cpath(to);
+      let cfrom = CString.new(from);
+      let cto = CString.new(to);
 
-      if (CreateHardLinkA(@as([*]const c_char, cto.slice(..).ptr), @as([*]const c_char, cfrom.slice(..).ptr), nullptr) == 0) {
+      if (CreateHardLinkA(@as([*]const c_char, cto.as_ptr()), @as([*]const c_char, cfrom.as_ptr()), nullptr) == 0) {
         return Result.Err(IoError.last_os_error());
       };
 
       return Result.Ok(.{});
     } else {
-      let cfrom = cpath(from);
-      let cto = cpath(to);
+      let cfrom = CString.new(from);
+      let cto = CString.new(to);
 
-      if (linkat(AT_FDCWD, @as([*]const char, cfrom.slice(..).ptr), AT_FDCWD, @as([*]const char, cto.slice(..).ptr), 0) != 0) {
+      if (linkat(AT_FDCWD, @as([*]const char, cfrom.as_ptr()), AT_FDCWD, @as([*]const char, cto.as_ptr()), 0) != 0) {
         return Result.Err(IoError.last_os_error());
       };
 
@@ -1247,19 +1242,19 @@ pub struct Fs {
   /// * IoErrorKind.Uncategorized
   pub fn symlink(target: []const char, link_path: []const char) Result[void, IoError] {
     @os[windows] {
-      let ctarget = cpath(target);
-      let clink = cpath(link_path);
+      let ctarget = CString.new(target);
+      let clink = CString.new(link_path);
 
-      if (CreateSymbolicLinkA(@as([*]const c_char, clink.slice(..).ptr), @as([*]const c_char, ctarget.slice(..).ptr), 0) == 0) {
+      if (CreateSymbolicLinkA(@as([*]const c_char, clink.as_ptr()), @as([*]const c_char, ctarget.as_ptr()), 0) == 0) {
         return Result.Err(IoError.last_os_error());
       };
 
       return Result.Ok(.{});
     } else {
-      let ctarget = cpath(target);
-      let clink = cpath(link_path);
+      let ctarget = CString.new(target);
+      let clink = CString.new(link_path);
 
-      if (symlink(@as([*]const char, ctarget.slice(..).ptr), @as([*]const char, clink.slice(..).ptr)) != 0) {
+      if (symlink(@as([*]const char, ctarget.as_ptr()), @as([*]const char, clink.as_ptr())) != 0) {
         return Result.Err(IoError.last_os_error());
       };
 
@@ -1278,9 +1273,9 @@ pub struct Fs {
     @os[windows] {
       return Result.Err(IoError.new(IoErrorKind.Unsupported, "read_link needs reparse points"));
     } else {
-      let c = cpath(path);
+      let c = CString.new(path);
       let buf: [4096]char = @uninit();
-      const got = readlink(@as([*]const char, c.slice(..).ptr), @as([*]char, &buf[0]), 4096);
+      const got = readlink(@as([*]const char, c.as_ptr()), @as([*]char, &buf[0]), 4096);
 
       if (got < 0) {
         return Result.Err(IoError.last_os_error());
@@ -1299,9 +1294,9 @@ pub struct Fs {
   /// * IoErrorKind.Uncategorized
   pub fn canonicalize(path: []const char) Result[String, IoError] {
     @os[windows] {
-      let c = cpath(path);
+      let c = CString.new(path);
       let buf: [4096]char = @uninit();
-      const got = GetFullPathNameA(@as([*]const c_char, c.slice(..).ptr), 4096, &buf[0], nullptr);
+      const got = GetFullPathNameA(@as([*]const c_char, c.as_ptr()), 4096, &buf[0], nullptr);
 
       if (got == 0 || got >= 4096) {
         return Result.Err(IoError.last_os_error());
@@ -1309,8 +1304,8 @@ pub struct Fs {
 
       return Result.Ok(String.from(buf[0..@as(usize, got)]));
     } else {
-      let c = cpath(path);
-      const resolved = realpath(@as([*]const char, c.slice(..).ptr), @as([*]char, nullptr));
+      let c = CString.new(path);
+      const resolved = realpath(@as([*]const char, c.as_ptr()), @as([*]char, nullptr));
 
       if (resolved == nullptr) {
         return Result.Err(IoError.last_os_error());
@@ -1331,8 +1326,8 @@ pub struct Fs {
   /// * IoErrorKind.Uncategorized
   pub fn set_permissions(path: []const char, perms: Permissions) Result[void, IoError] {
     @os[windows] {
-      let c = cpath(path);
-      let attrs = GetFileAttributesA(@as([*]const c_char, c.slice(..).ptr));
+      let c = CString.new(path);
+      let attrs = GetFileAttributesA(@as([*]const c_char, c.as_ptr()));
 
       if (attrs == INVALID_FILE_ATTRIBUTES) {
         return Result.Err(IoError.last_os_error());
@@ -1344,16 +1339,16 @@ pub struct Fs {
         attrs = attrs & ~FILE_ATTRIBUTE_READONLY;
       };
 
-      if (SetFileAttributesA(@as([*]const c_char, c.slice(..).ptr), attrs) == 0) {
+      if (SetFileAttributesA(@as([*]const c_char, c.as_ptr()), attrs) == 0) {
         return Result.Err(IoError.last_os_error());
       };
 
       return Result.Ok(.{});
     } else {
-      let c = cpath(path);
+      let c = CString.new(path);
       let st: c_Stat = @uninit();
 
-      if (stat(@as([*]const char, c.slice(..).ptr), &st) != 0) {
+      if (stat(@as([*]const char, c.as_ptr()), &st) != 0) {
         return Result.Err(IoError.last_os_error());
       };
 
@@ -1365,7 +1360,7 @@ pub struct Fs {
         mode = mode | 0o200;
       };
 
-      if (chmod(@as([*]const char, c.slice(..).ptr), @as(c_mode_t, mode)) != 0) {
+      if (chmod(@as([*]const char, c.as_ptr()), @as(c_mode_t, mode)) != 0) {
         return Result.Err(IoError.last_os_error());
       };
 

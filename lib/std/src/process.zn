@@ -1,4 +1,5 @@
 use std.alloc;
+use std.ffi;
 use std.string;
 use std.collections.list;
 use std.io;
@@ -653,14 +654,6 @@ implement Command {
   }
 }
 
-fn cstr(text: []const char) String {
-  let s = String.from(text);
-
-  s.push('\0');
-
-  return s;
-}
-
 fn streq(a: []const char, b: []const char) bool {
   if (a.len != b.len) {
     return false;
@@ -830,9 +823,9 @@ fn merged_env(cmd: *const Command) List[String] {
       candidate.push('/');
       candidate.push_str(program);
 
-      let probe = cstr(candidate.slice(..));
+      let probe = CString.new(candidate.slice(..));
 
-      if (access(@as([*]const char, probe.slice(..).ptr), X_OK) == 0) {
+      if (access(@as([*]const char, probe.as_ptr()), X_OK) == 0) {
         return Option.Some(candidate);
       };
 
@@ -874,9 +867,9 @@ fn merged_env(cmd: *const Command) List[String] {
   }
 
   fn open_null(write: bool) Result[c_int, IoError] {
-    let path = cstr("/dev/null");
+    let path = CString.new("/dev/null");
     const mode = if (write) { O_WRONLY } else { O_RDONLY };
-    const fd = open(@as([*]const char, path.slice(..).ptr), mode, 0);
+    const fd = open(@as([*]const char, path.as_ptr()), mode, 0);
 
     if (fd < 0) {
       return Result.Err(IoError.last_os_error());
@@ -978,17 +971,17 @@ fn merged_env(cmd: *const Command) List[String] {
       return Result.Err(IoError.new(IoErrorKind.NotFound, "program not found in PATH"));
     };
 
-    let prog_path = cstr(prog.unwrap().slice(..));
-    const prog_ptr = @as([*]const char, prog_path.slice(..).ptr);
+    let prog_path = CString.new(prog.unwrap().slice(..));
+    const prog_ptr = @as([*]const char, prog_path.as_ptr());
 
-    let argv_strs = List#[String].new();
+    let argv_strs = List#[CString].new();
 
-    argv_strs.push(prog_path.clone());
+    argv_strs.push(prog_path);
 
     let ai: usize = 0;
 
     while (ai < (*cmd).argv.len()) {
-      argv_strs.push(cstr((*cmd).argv.get_ptr(ai).unwrap().slice(..)));
+      argv_strs.push(CString.new((*cmd).argv.get_ptr(ai).unwrap().slice(..)));
 
       ai += 1;
     };
@@ -997,7 +990,7 @@ fn merged_env(cmd: *const Command) List[String] {
     let aj: usize = 0;
 
     while (aj < argv_strs.len()) {
-      argv.push(@as([*]const char, argv_strs.get_ptr(aj).unwrap().slice(..).ptr));
+      argv.push(@as([*]const char, argv_strs.get_ptr(aj).unwrap().as_ptr()));
 
       aj += 1;
     };
@@ -1007,7 +1000,7 @@ fn merged_env(cmd: *const Command) List[String] {
     const argv_ptr = argv.get_ptr(0).unwrap();
 
     const inherit_env = !cmd_has_env_changes(cmd);
-    let env_strs = List#[String].new();
+    let env_strs = List#[CString].new();
     let envp = List#[[*]const char].new();
 
     if (!inherit_env) {
@@ -1015,7 +1008,7 @@ fn merged_env(cmd: *const Command) List[String] {
       let mi: usize = 0;
 
       while (mi < merged.len()) {
-        env_strs.push(cstr(merged.get_ptr(mi).unwrap().slice(..)));
+        env_strs.push(CString.new(merged.get_ptr(mi).unwrap().slice(..)));
 
         mi += 1;
       };
@@ -1023,7 +1016,7 @@ fn merged_env(cmd: *const Command) List[String] {
       let ei: usize = 0;
 
       while (ei < env_strs.len()) {
-        envp.push(@as([*]const char, env_strs.get_ptr(ei).unwrap().slice(..).ptr));
+        envp.push(@as([*]const char, env_strs.get_ptr(ei).unwrap().as_ptr()));
 
         ei += 1;
       };
@@ -1157,9 +1150,9 @@ fn merged_env(cmd: *const Command) List[String] {
       let _ = close(err_read);
 
       if ((*cmd).has_cwd) {
-        let dir = cstr((*cmd).cwd.slice(..));
+        let dir = CString.new((*cmd).cwd.slice(..));
 
-        if (chdir(@as([*]const char, dir.slice(..).ptr)) != 0) {
+        if (chdir(@as([*]const char, dir.as_ptr())) != 0) {
           const slot = __errno_location();
           let code: c_int = *slot;
           let _ = write(err_write, @as([*]const void, &code), 4);
