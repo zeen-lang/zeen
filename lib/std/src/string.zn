@@ -2,7 +2,7 @@ use std.c.string;
 use std.c.ctype;
 
 use std.alloc;
-use std.strconv;
+use std.fmt;
 use std.collections.list;
 
 /// String initial capacity size (initialization on first push).
@@ -707,37 +707,37 @@ implement String {
   /// Parse the whole string as `i32` (decimal, optional sign).
   /// Outer whitespace is allowed. Overflow and garbage give `None`.
   pub fn parse_i32(*const self) Option[i32] {
-    return parse_i32(self.ptr[0..self._len]);
+    return Fmt.parse_i32(self.ptr[0..self._len]);
   }
 
   /// Parse the whole string as `i64` (decimal, optional sign).
   /// Outer whitespace is allowed. Overflow and garbage give `None`.
   pub fn parse_i64(*const self) Option[i64] {
-    return parse_i64(self.ptr[0..self._len]);
+    return Fmt.parse_i64(self.ptr[0..self._len]);
   }
 
   /// Parse the whole string as `u32` (decimal, optional `+`).
   /// Outer whitespace is allowed. Overflow and garbage give `None`.
   pub fn parse_u32(*const self) Option[u32] {
-    return parse_u32(self.ptr[0..self._len]);
+    return Fmt.parse_u32(self.ptr[0..self._len]);
   }
 
   /// Parse the whole string as `u64` (decimal, optional `+`).
   /// Outer whitespace is allowed. Overflow and garbage give `None`.
   pub fn parse_u64(*const self) Option[u64] {
-    return parse_u64(self.ptr[0..self._len]);
+    return Fmt.parse_u64(self.ptr[0..self._len]);
   }
 
   /// Parse the whole string as `f32` (decimal, optional exponent).
   /// Outer whitespace is allowed. Garbage gives `None`.
   pub fn parse_f32(*const self) Option[f32] {
-    return parse_f32(self.ptr[0..self._len]);
+    return Fmt.parse_f32(self.ptr[0..self._len]);
   }
 
   /// Parse the whole string as `f64` (decimal, optional exponent).
   /// Outer whitespace is allowed. Garbage gives `None`.
   pub fn parse_f64(*const self) Option[f64] {
-    return parse_f64(self.ptr[0..self._len]);
+    return Fmt.parse_f64(self.ptr[0..self._len]);
   }
 }
 
