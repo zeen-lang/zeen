@@ -1,0 +1,65 @@
+use std.pem;
+use std.string;
+use std.testing;
+
+/// @test
+pub fn encode_wraps_at_sixty_four_columns() {
+  let data = String.new();
+
+  let i: usize = 0;
+
+  while (i < 100) {
+    data.push(@as(char, 65 + i % 26));
+    i += 1;
+  };
+
+  const text = Pem.encode("CERTIFICATE", data.slice(..));
+  const lines = text.split('\n');
+
+  assert(lines.len() > 3);
+  assert_eq(String.from(text.slice(0..27)), String.from("-----BEGIN CERTIFICATE-----"));
+  assert_eq(lines.get_ptr(1).unwrap().len(), @as(usize, 64));
+  assert_eq(lines.get_ptr(2).unwrap().len(), @as(usize, 64));
+  assert_eq(lines.get_ptr(3).unwrap().len(), @as(usize, 8));
+  assert_eq(String.from(lines.get_ptr(4).unwrap().slice(0..25)), String.from("-----END CERTIFICATE-----"));
+}
+
+/// @test
+pub fn decode_round_trips_data_and_label() {
+  const text = Pem.encode("PRIVATE KEY", "hello pem");
+  const block = Pem.decode(text.slice(..)).unwrap();
+
+  assert_eq(String.from(block.label()), String.from("PRIVATE KEY"));
+  assert_eq(String.from(block.data()), String.from("hello pem"));
+}
+
+/// @test
+pub fn decode_ignores_whitespace() {
+  const block = Pem.decode("-----BEGIN DATA-----\r\n aGVs\r\nbG8=\r\n-----END DATA-----\r\n").unwrap();
+
+  assert_eq(String.from(block.label()), String.from("DATA"));
+  assert_eq(String.from(block.data()), String.from("hello"));
+}
+
+/// @test
+pub fn decode_all_reads_every_block() {
+  let text = Pem.encode("ONE", "first");
+
+  text.push_string(&Pem.encode("TWO", "second"));
+
+  const blocks = Pem.decode_all(text.slice(..));
+
+  assert_eq(blocks.len(), @as(usize, 2));
+  assert_eq(String.from(blocks.get_ptr(0).unwrap().label()), String.from("ONE"));
+  assert_eq(String.from(blocks.get_ptr(0).unwrap().data()), String.from("first"));
+  assert_eq(String.from(blocks.get_ptr(1).unwrap().label()), String.from("TWO"));
+  assert_eq(String.from(blocks.get_ptr(1).unwrap().data()), String.from("second"));
+}
+
+/// @test
+pub fn decode_rejects_broken_blocks() {
+  assert(Pem.decode("").is_none());
+  assert(Pem.decode("-----BEGIN DATA-----\naGVsbG8=\n").is_none());
+  assert(Pem.decode("-----BEGIN DATA-----\n!!!!\n-----END DATA-----\n").is_none());
+  assert(Pem.decode("-----BEGIN DATA-----\naGVsbG8=\n-----END OTHER-----\n").is_none());
+}

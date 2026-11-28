@@ -1,0 +1,161 @@
+use std.string;
+use std.collections.list;
+use std.encoding.base64;
+
+pub struct PemBlock {
+  _label: String,
+  _data: String,
+}
+
+implement PemBlock {
+  pub fn label(*const self) []const char {
+    return self._label.slice(..);
+  }
+
+  pub fn data(*const self) []const char {
+    return self._data.slice(..);
+  }
+}
+
+pub struct Pem {
+  pub fn encode(label: []const char, data: []const char) String {
+    let out = String.new();
+
+    out.push_str("-----BEGIN ");
+    out.push_str(label);
+    out.push_str("-----\n");
+
+    const text = Base64.encode(data);
+    let i: usize = 0;
+
+    while (i < text.len()) {
+      const end = if (i + 64 < text.len()) { i + 64 } else { text.len() };
+
+      out.push_str(text.slice(i..end));
+      out.push('\n');
+      i = end;
+    };
+
+    out.push_str("-----END ");
+    out.push_str(label);
+    out.push_str("-----\n");
+
+    return out;
+  }
+
+  pub fn decode(text: []const char) Option[PemBlock] {
+    let at: usize = 0;
+
+    return next_block(text, &at);
+  }
+
+  pub fn decode_all(text: []const char) List[PemBlock] {
+    let out = List#[PemBlock].new();
+    let at: usize = 0;
+
+    while (true) {
+      switch (next_block(text, &at)) {
+        .Some(block) => out.push(block),
+        .None => { break; },
+      };
+    };
+
+    return out;
+  }
+}
+
+fn next_block(text: []const char, at: *usize) Option[PemBlock] {
+  const begin = find_from(text, "-----BEGIN ", (*at));
+
+  if (begin.is_none()) {
+    return Option.None;
+  };
+
+  const label_start = begin.unwrap() + 11;
+  const label_end = find_from(text, "-----", label_start);
+
+  if (label_end.is_none()) {
+    return Option.None;
+  };
+
+  const label = text[label_start..label_end.unwrap()];
+  const body_start = label_end.unwrap() + 5;
+  const end_marker = find_from(text, "-----END ", body_start);
+
+  if (end_marker.is_none()) {
+    return Option.None;
+  };
+
+  const end_label_start = end_marker.unwrap() + 9;
+  const end_label_end = find_from(text, "-----", end_label_start);
+
+  if (end_label_end.is_none()) {
+    return Option.None;
+  };
+
+  if (!slice_eql(text[end_label_start..end_label_end.unwrap()], label)) {
+    return Option.None;
+  };
+
+  const body = text[body_start..end_marker.unwrap()];
+  let compact = String.new();
+  let i: usize = 0;
+
+  while (i < body.len) {
+    const c = body.ptr[i];
+
+    if (c != '\n' && c != '\r' && c != ' ' && c != '\t') {
+      compact.push(c);
+    };
+
+    i += 1;
+  };
+
+  const decoded = Base64.decode(compact.slice(..));
+
+  if (decoded.is_none()) {
+    return Option.None;
+  };
+
+  (*at) = end_label_end.unwrap() + 5;
+
+  return Option.Some(PemBlock { ._label = String.from(label), ._data = decoded.unwrap() });
+}
+
+fn find_from(text: []const char, needle: []const char, from: usize) Option[usize] {
+  if (needle.len == 0 || from >= text.len) {
+    return Option.None;
+  };
+
+  let i = from;
+
+  while (i + needle.len <= text.len) {
+    const end = i + needle.len;
+
+    if (slice_eql(text[i..end], needle)) {
+      return Option.Some(i);
+    };
+
+    i += 1;
+  };
+
+  return Option.None;
+}
+
+fn slice_eql(left: []const char, right: []const char) bool {
+  if (left.len != right.len) {
+    return false;
+  };
+
+  let i: usize = 0;
+
+  while (i < left.len) {
+    if (left.ptr[i] != right.ptr[i]) {
+      return false;
+    };
+
+    i += 1;
+  };
+
+  return true;
+}
