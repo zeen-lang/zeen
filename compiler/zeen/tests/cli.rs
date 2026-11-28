@@ -295,3 +295,38 @@ fn unused_mut_warning_only_targets_root_module() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn package_warnings_are_suppressed() {
+    let dir = std::env::temp_dir().join(format!("zeen_pkg_warnings_{}", std::process::id()));
+    let package = dir.join("dep");
+    std::fs::create_dir_all(&package).unwrap();
+
+    std::fs::write(
+        package.join("dep.zn"),
+        "pub fn run() {\n  helper();\n}\n\nfn helper() i32 {\n  return 1;\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.zn"),
+        "use dep.dep;\n\nfn main() {\n  run();\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .arg(dir.join("main.zn"))
+        .arg("--check")
+        .arg("--pkg")
+        .arg(format!("dep={}", package.display()))
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!stderr.contains("unused_expression_result"), "{stderr}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

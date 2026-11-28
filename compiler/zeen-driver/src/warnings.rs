@@ -5,11 +5,11 @@ use miette::NamedSource;
 const MARKER: &[u8] = b"// @no-warnings";
 const CORE_MODULE_PREFIX: &str = "core.";
 
-pub fn source_disables_warnings(source: &NamedSource<Arc<String>>, packages: &[PathBuf]) -> bool {
-    find_marker(source.inner().as_bytes()) || is_quiet_module(source, packages)
+pub fn source_disables_warnings(source: &NamedSource<Arc<String>>, quiet_dirs: &[PathBuf]) -> bool {
+    find_marker(source.inner().as_bytes()) || is_quiet_module(source, quiet_dirs)
 }
 
-fn is_quiet_module(source: &NamedSource<Arc<String>>, packages: &[PathBuf]) -> bool {
+fn is_quiet_module(source: &NamedSource<Arc<String>>, quiet_dirs: &[PathBuf]) -> bool {
     let name = source.name();
 
     if name.starts_with(CORE_MODULE_PREFIX) {
@@ -17,7 +17,7 @@ fn is_quiet_module(source: &NamedSource<Arc<String>>, packages: &[PathBuf]) -> b
     }
 
     let path = Path::new(name);
-    packages.iter().any(|pkg| path.starts_with(pkg))
+    quiet_dirs.iter().any(|dir| path.starts_with(dir))
 }
 
 fn find_marker(data: &[u8]) -> bool {

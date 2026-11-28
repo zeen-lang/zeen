@@ -359,12 +359,16 @@ fn compile(args: cli::Args) {
         warnings: Vec::new(),
     };
 
-    let package_dirs: Vec<std::path::PathBuf> = context
+    let mut quiet_dirs: Vec<std::path::PathBuf> = context
         .paths
         .packages
         .iter()
         .map(|(_, dir)| std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone()))
         .collect();
+
+    if let Some(std_root) = &context.paths.std_root {
+        quiet_dirs.push(std::fs::canonicalize(std_root).unwrap_or_else(|_| std_root.clone()));
+    }
 
     cli::println_info(
         "Building",
@@ -507,14 +511,14 @@ fn compile(args: cli::Args) {
                 let mut warnings = Vec::new();
 
                 for warning in lowered_mir.warnings.iter() {
-                    if warning_module_disables(warning.source_code(), &package_dirs) {
+                    if warning_module_disables(warning.source_code(), &quiet_dirs) {
                         continue;
                     }
 
                     warnings.push(warning as &dyn miette::Diagnostic);
                 }
                 for warning in result.warnings.iter() {
-                    if warning_module_disables(warning.source_code(), &package_dirs) {
+                    if warning_module_disables(warning.source_code(), &quiet_dirs) {
                         continue;
                     }
 

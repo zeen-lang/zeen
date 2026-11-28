@@ -3895,11 +3895,11 @@ mod tests {
         let dir = import_project("builtin-shape");
         std::fs::write(
             dir.join("sub").join("lib.zn"),
-            "implement[T] builtin []T {\n    pub fn first(*const self) T {\n        return (*self)[0];\n    }\n}\n",
+            "implement[T] builtin []T {\n    pub fn head(*const self) T {\n        return (*self)[0];\n    }\n}\n",
         )
         .unwrap();
 
-        let text = "use sub.lib;\n\nfn main() {\n    let nums: [3]i32 = {1, 2, 3};\n    let slice = nums[..];\n    @println(\"{}\", slice.first());\n}\n";
+        let text = "use sub.lib;\n\nfn main() {\n    let nums: [3]i32 = {1, 2, 3};\n    let slice = nums[..];\n    @println(\"{}\", slice.head());\n}\n";
         let uri: tower_lsp_server::ls_types::Uri =
             format!("file://{}", dir.join("main.zn").display())
                 .parse()
@@ -3912,7 +3912,7 @@ mod tests {
             errors
         );
 
-        let probe = text.replacen("slice.first()", "slice.     ()", 1);
+        let probe = text.replacen("slice.head()", "slice.     ()", 1);
         let dot = probe.find("slice.     ()").unwrap() + "slice".len();
         let paths = ResolvePaths {
             dir: Some(dir.as_path()),
@@ -3923,7 +3923,7 @@ mod tests {
         let items = dot_complete(&probe, &output.analysis, dot, paths);
         let names = labels(&items);
 
-        assert!(names.contains(&"first()"));
+        assert!(names.contains(&"head()"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
