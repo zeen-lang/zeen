@@ -73,7 +73,7 @@ implement File {
 
       return Result.Ok(File { .fd = -1, .handle = @as(*void, handle) });
     } else {
-      let c = CString.new(path);
+      const c = CString.new(path);
       const fd = open(@as([*]const char, c.as_ptr()), O_RDONLY, 0);
 
       if (fd < 0) {
@@ -111,7 +111,7 @@ implement File {
 
       return Result.Ok(File { .fd = -1, .handle = @as(*void, handle) });
     } else {
-      let c = CString.new(path);
+      const c = CString.new(path);
       const fd = open(@as([*]const char, c.as_ptr()), O_CREAT | O_WRONLY | O_TRUNC, 0o666);
 
       if (fd < 0) {
@@ -533,7 +533,7 @@ implement OpenOptions {
         flags = flags | O_CREAT | O_EXCL;
       };
 
-      let c = CString.new(path);
+      const c = CString.new(path);
       const fd = open(@as([*]const char, c.as_ptr()), flags, @as(c_mode_t, self._mode));
 
       if (fd < 0) {

@@ -641,15 +641,15 @@ implement Response {
 
   /// Writes the response into the stream.
   pub fn send(*self, stream: *TcpStream) Result[void, IoError] {
-    let head = @format(
+    const head = @format(
       "HTTP/1.1 {} {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
       self.status,
       status_text(self.status),
       self.body.len(),
     );
 
-    (*stream).write_all(head.slice(..))?;
-    (*stream).write_all(self.body.slice(..))?;
+    const _ = stream.write_all(head.slice(..))?;
+    const _ = stream.write_all(self.body.slice(..))?;
 
     return Result.Ok(.{});
   }
@@ -786,10 +786,10 @@ implement Client {
     let stream = TcpStream.connect(&addr)?;
 
     const request = build_request(method, &target, headers, body);
-    stream.write_all(request.slice(..))?;
+    const _ = stream.write_all(request.slice(..))?;
 
     const raw = String.new();
-    stream.read_to_string(&raw)?;
+    const _ = stream.read_to_string(&raw)?;
 
     return parse_response(method, &raw);
   }

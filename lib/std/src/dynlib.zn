@@ -14,7 +14,7 @@ pub struct DynLib {
 
 implement DynLib {
   pub fn open(path: []const char) Option[Self] {
-    let name = CString.new(path);
+    const name = CString.new(path);
 
     @os[windows] {
       const handle = LoadLibraryA(@as([*]const c_char, name.as_ptr()));
@@ -36,7 +36,7 @@ implement DynLib {
   }
 
   pub fn symbol(*const self, name: []const char) Option[*void] {
-    let cname = CString.new(name);
+    const cname = CString.new(name);
 
     @os[windows] {
       const addr = GetProcAddress(@as(WinHANDLE, self._handle), @as([*]const c_char, cname.as_ptr()));
