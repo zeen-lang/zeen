@@ -30,6 +30,25 @@ use std.c.windows.windef;
     pub zero: [8]u8,
   }
 
+  pub struct c_AddrInfoWin {
+    pub flags: c_int,
+    pub family: c_int,
+    pub socktype: c_int,
+    pub protocol: c_int,
+    pub addrlen: usize,
+    pub canonname: [*]c_char,
+    pub addr: *c_SockAddrWin,
+    pub next: *c_AddrInfoWin,
+  }
+
+  pub extern fn getaddrinfo(
+    node: [*]const c_char,
+    service: [*]const c_char,
+    hints: *const c_AddrInfoWin,
+    res: **c_AddrInfoWin,
+  ) c_int;
+  pub extern fn freeaddrinfo(res: *c_AddrInfoWin) void;
+
   pub extern fn WSAStartup(version: c_ushort, data: *void) c_int;
   pub extern fn WSACleanup() c_int;
   pub extern fn WSAGetLastError() c_int;

@@ -585,6 +585,17 @@ implement SocketAddr {
 
     return Result.Ok(Self { ._ip = ntohl(raw), ._port = @as(u16, port) });
   }
+
+  pub fn resolve(host: []const char, port: u16) Result[Self, IoError] {
+    const literal = Ipv4Addr.from_str(host);
+
+    if (literal.is_some()) {
+      const addr = literal.unwrap();
+      return Result.Ok(Self.from_ipv4(&addr, port));
+    };
+
+    return resolve_v4(host, port);
+  }
 }
 
 implement Copy : SocketAddr {}
@@ -640,6 +651,35 @@ implement Display : SocketAddr {
   }
 }
 
+@os[linux | android | darwin | freebsd] {
+  fn resolve_v4(host: []const char, port: u16) Result[SocketAddr, IoError] {
+    const node = CString.new(host);
+    const port_text = @format("{}", port);
+    const service = CString.new(port_text.slice(..));
+
+    let hints: c_AddrInfo = @uninit();
+    hints.ai_flags = 0;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = 0;
+    hints.ai_addrlen = 0;
+    hints.ai_addr = @as(*c_SockAddr, nullptr);
+    hints.ai_canonname = @as([*]c_char, nullptr);
+    hints.ai_next = @as(*c_AddrInfo, nullptr);
+
+    let res: *c_AddrInfo = @uninit();
+
+    if (getaddrinfo(@as([*]const char, node.as_ptr()), @as([*]const char, service.as_ptr()), &hints, &res) != 0) {
+      return Result.Err(IoError.new(IoErrorKind.NotFound, "cannot resolve host"));
+    };
+
+    const addr = read_v4(@as(*const c_SockAddrIn, @as(*const c_SockAddr, (*res).ai_addr)));
+    freeaddrinfo(res);
+
+    return Result.Ok(addr);
+  }
+}
+
 @os[windows] {
   fn fill_v4(addr: *const SocketAddr, sa: *c_SockAddrInWin) void {
     @memset(@as(*[16]u8, sa), 0);
@@ -650,6 +690,45 @@ implement Display : SocketAddr {
 
   fn read_v4_win(sa: *const c_SockAddrInWin) SocketAddr {
     SocketAddr.new(ntohl((*sa).addr), ntohs((*sa).port))
+  }
+
+  fn resolve_v4(host: []const char, port: u16) Result[SocketAddr, IoError] {
+    switch (ensure_wsa()) {
+      .Ok(_) => {},
+      .Err(e) => {
+        return Result.Err(e);
+      },
+    };
+
+    const node = CString.new(host);
+    const port_text = @format("{}", port);
+    const service = CString.new(port_text.slice(..));
+
+    let hints: c_AddrInfoWin = @uninit();
+    hints.flags = 0;
+    hints.family = AF_INET;
+    hints.socktype = SOCK_STREAM;
+    hints.protocol = 0;
+    hints.addrlen = 0;
+    hints.canonname = @as([*]c_char, nullptr);
+    hints.addr = @as(*c_SockAddrWin, nullptr);
+    hints.next = @as(*c_AddrInfoWin, nullptr);
+
+    let res: *c_AddrInfoWin = @uninit();
+
+    if (getaddrinfo(
+      @as([*]const c_char, node.as_ptr()),
+      @as([*]const c_char, service.as_ptr()),
+      &hints,
+      &res,
+    ) != 0) {
+      return Result.Err(IoError.new(IoErrorKind.NotFound, "cannot resolve host"));
+    };
+
+    const addr = read_v4_win(@as(*const c_SockAddrInWin, @as(*const c_SockAddrWin, (*res).addr)));
+    freeaddrinfo(res);
+
+    return Result.Ok(addr);
   }
 }
 
