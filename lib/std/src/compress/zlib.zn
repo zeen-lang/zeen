@@ -1,7 +1,9 @@
 use std.string;
 use std.compress.deflate;
 
+/// Zlib streams (RFC 1950).
 pub struct Zlib {
+  /// Encode `data` in a zlib stream with stored blocks.
   pub fn compress(data: []const char) String {
     let out = String.new();
 
@@ -21,6 +23,7 @@ pub struct Zlib {
     return out;
   }
 
+  /// Decompress a zlib stream, `None` on malformed input.
   pub fn decompress(data: []const char) Option[String] {
     if (data.len < 6) {
       return Option.None;

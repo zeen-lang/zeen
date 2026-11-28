@@ -8,7 +8,9 @@ const CodeLengthOrder: [19]usize = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12,
 
 const MaxStoredBlock: usize = 65535;
 
+/// Raw DEFLATE streams (RFC 1951).
 pub struct Deflate {
+  /// Encode `data` as stored DEFLATE blocks.
   pub fn compress(data: []const char) String {
     let out = String.new();
     let offset: usize = 0;
@@ -48,6 +50,7 @@ pub struct Deflate {
     return out;
   }
 
+  /// Decompress a raw DEFLATE stream, `None` on malformed input.
   pub fn decompress(data: []const char) Option[String] {
     let out = String.new();
     let reader = BitReader.new(data);

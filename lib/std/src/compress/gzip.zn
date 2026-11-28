@@ -2,7 +2,9 @@ use std.string;
 use std.hash;
 use std.compress.deflate;
 
+/// Gzip streams (RFC 1952).
 pub struct Gzip {
+  /// Encode `data` in a gzip stream with stored blocks.
   pub fn compress(data: []const char) String {
     let out = String.new();
 
@@ -40,6 +42,7 @@ pub struct Gzip {
     return out;
   }
 
+  /// Decompress a gzip stream, `None` on malformed input.
   pub fn decompress(data: []const char) Option[String] {
     if (data.len < 18) {
       return Option.None;
