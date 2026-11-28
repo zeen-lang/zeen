@@ -1,49 +1,55 @@
-use std.string;
+use std.collections.list;
 use std.hash;
 use std.compress.deflate;
 
 /// Gzip streams (RFC 1952).
 pub struct Gzip {
-  /// Encode `data` in a gzip stream with stored blocks.
-  pub fn compress(data: []const char) String {
-    let out = String.new();
+  /// Compress `data` into a gzip stream.
+  pub fn compress(data: []const u8) List[u8] {
+    let out = List#[u8].new();
 
-    out.push(@as(char, 31));
-    out.push(@as(char, 139));
-    out.push(@as(char, 8));
-    out.push(@as(char, 0));
+    out.push(31);
+    out.push(139);
+    out.push(8);
+    out.push(0);
 
     let i: usize = 0;
     while (i < 4) {
-      out.push(@as(char, 0));
+      out.push(0);
       i += 1;
     };
 
-    out.push(@as(char, 0));
-    out.push(@as(char, 255));
+    out.push(0);
+    out.push(255);
 
     const body = Deflate.compress(data);
-    out.push_str(body.slice(..));
+    const bytes = body.slice(..);
 
-    const checksum = Crc32.hash(data);
+    let j: usize = 0;
+    while (j < bytes.len) {
+      out.push(bytes[j]);
+      j += 1;
+    };
 
-    out.push(@as(char, @as(u8, checksum & 255)));
-    out.push(@as(char, @as(u8, (checksum >> 8) & 255)));
-    out.push(@as(char, @as(u8, (checksum >> 16) & 255)));
-    out.push(@as(char, @as(u8, (checksum >> 24) & 255)));
+    const checksum = crc32(data);
+
+    out.push(@as(u8, checksum & 255));
+    out.push(@as(u8, (checksum >> 8) & 255));
+    out.push(@as(u8, (checksum >> 16) & 255));
+    out.push(@as(u8, (checksum >> 24) & 255));
 
     const size = @as(u32, data.len);
 
-    out.push(@as(char, @as(u8, size & 255)));
-    out.push(@as(char, @as(u8, (size >> 8) & 255)));
-    out.push(@as(char, @as(u8, (size >> 16) & 255)));
-    out.push(@as(char, @as(u8, (size >> 24) & 255)));
+    out.push(@as(u8, size & 255));
+    out.push(@as(u8, (size >> 8) & 255));
+    out.push(@as(u8, (size >> 16) & 255));
+    out.push(@as(u8, (size >> 24) & 255));
 
     return out;
   }
 
   /// Decompress a gzip stream, `None` on malformed input.
-  pub fn decompress(data: []const char) Option[String] {
+  pub fn decompress(data: []const u8) Option[List[u8]] {
     if (data.len < 18) {
       return Option.None;
     };
@@ -80,7 +86,7 @@ pub struct Gzip {
     };
 
     if ((flags & 8) != 0) {
-      while (pos < data.len && data[pos] != '\0') {
+      while (pos < data.len && data[pos] != 0) {
         pos += 1;
       };
 
@@ -92,7 +98,7 @@ pub struct Gzip {
     };
 
     if ((flags & 16) != 0) {
-      while (pos < data.len && data[pos] != '\0') {
+      while (pos < data.len && data[pos] != 0) {
         pos += 1;
       };
 
@@ -124,7 +130,7 @@ pub struct Gzip {
 
     const out = inflated.unwrap();
 
-    if (Crc32.hash(out.slice(..)) != read_le_u32(data, end)) {
+    if (crc32(out.slice(..)) != read_le_u32(data, end)) {
       return Option.None;
     };
 
@@ -136,7 +142,13 @@ pub struct Gzip {
   }
 }
 
-fn read_le_u32(data: []const char, at: usize) u32 {
+fn crc32(data: []const u8) u32 {
+  const chars = @as([*]const char, data.ptr);
+
+  return Crc32.hash(chars[0..data.len]);
+}
+
+fn read_le_u32(data: []const u8, at: usize) u32 {
   const b0 = @as(u32, data[at]);
   const b1 = @as(u32, data[at + 1]) << 8;
   const b2 = @as(u32, data[at + 2]) << 16;

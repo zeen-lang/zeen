@@ -1,3 +1,4 @@
+use std.collections.list;
 use std.compress.deflate;
 use std.compress.gzip;
 use std.compress.zlib;
@@ -8,8 +9,22 @@ use std.testing;
 const BaseText: []const char = "The quick brown fox jumps over the lazy dog. Zeen is a compiled systems language. Structs, enums, generics, macros and move semantics. Standard library grows. ";
 const Sentence: []const char = "The quick brown fox jumps over the lazy dog. ";
 
-fn from_hex(text: []const char) String {
-  return Hex.decode(text).unwrap();
+fn to_bytes(text: []const char) List[u8] {
+  let out = List#[u8].new();
+  let i: usize = 0;
+
+  while (i < text.len) {
+    out.push(@as(u8, text[i]));
+    i += 1;
+  };
+
+  return out;
+}
+
+fn from_hex(text: []const char) List[u8] {
+  const decoded = Hex.decode(text).unwrap();
+
+  return to_bytes(decoded.slice(..));
 }
 
 fn repeat_text(base: []const char, count: usize) String {
@@ -24,20 +39,70 @@ fn repeat_text(base: []const char, count: usize) String {
   return out;
 }
 
+fn all_bytes() List[u8] {
+  let out = List#[u8].new();
+  let i: usize = 0;
+
+  while (i < 256) {
+    out.push(@as(u8, i));
+    i += 1;
+  };
+
+  return out;
+}
+
 /// @test
 pub fn deflate_round_trip() {
-  const data = String.from("hello hello hello hello world");
+  const data = to_bytes("hello hello hello hello world");
   const packed = Deflate.compress(data.slice(..));
   const unpacked = Deflate.decompress(packed.slice(..)).unwrap();
 
-  assert_eq(unpacked, data);
+  assert(unpacked.slice(..).eql(data.slice(..)));
+}
+
+/// @test
+pub fn deflate_round_trip_binary() {
+  const data = all_bytes();
+  const packed = Deflate.compress(data.slice(..));
+  const unpacked = Deflate.decompress(packed.slice(..)).unwrap();
+
+  assert(unpacked.slice(..).eql(data.slice(..)));
+}
+
+/// @test
+pub fn deflate_round_trip_mixed_blocks() {
+  let data = List#[u8].new();
+  let state: u32 = 2463534242;
+  let i: usize = 0;
+
+  while (i < 65535) {
+    state = state ^ (state << 13);
+    state = state ^ (state >> 17);
+    state = state ^ (state << 5);
+    data.push(@as(u8, state & 255));
+    i += 1;
+  };
+
+  let j: usize = 0;
+  while (j < 4000) {
+    data.push(@as(u8, 97));
+    j += 1;
+  };
+
+  const packed = Deflate.compress(data.slice(..));
+  const unpacked = Deflate.decompress(packed.slice(..)).unwrap();
+
+  assert(packed.len() > 65000);
+  assert(unpacked.slice(..).eql(data.slice(..)));
 }
 
 /// @test
 pub fn deflate_compresses_empty_input() {
-  const packed = Deflate.compress("");
+  const packed = Deflate.compress(to_bytes("").slice(..));
 
-  assert_eq(Hex.encode(packed.slice(..)), String.from("010000ffff"));
+  assert_eq(packed.len(), 2);
+  assert_eq(packed.get(0).unwrap(), @as(u8, 3));
+  assert_eq(packed.get(1).unwrap(), @as(u8, 0));
 }
 
 /// @test
@@ -45,7 +110,7 @@ pub fn zlib_decodes_stored_block() {
   const packed = from_hex("7801011d00e2ff68656c6c6f2068656c6c6f2068656c6c6f2068656c6c6f20776f726c64a38a0af9");
   const unpacked = Zlib.decompress(packed.slice(..)).unwrap();
 
-  assert_eq(unpacked, String.from("hello hello hello hello world"));
+  assert(unpacked.slice(..).eql(to_bytes("hello hello hello hello world").slice(..)));
 }
 
 /// @test
@@ -53,15 +118,17 @@ pub fn zlib_decodes_fixed_huffman() {
   const packed = from_hex("7801cb48cdc9c957c8c020cbf38b725200a38a0af9");
   const unpacked = Zlib.decompress(packed.slice(..)).unwrap();
 
-  assert_eq(unpacked, String.from("hello hello hello hello world"));
+  assert(unpacked.slice(..).eql(to_bytes("hello hello hello hello world").slice(..)));
 }
 
 /// @test
 pub fn zlib_decodes_dynamic_huffman() {
   const packed = from_hex("789cedce4112c2300805d0abfc0338bd8c5db94b138cd1865448d4f6f4e2319c6105c307e6cd37c27394f8c022edcdb8b60feea36e8af62241b7780dc78ed4f2840b11a3280262ab5b59294177ed54d596388f9069c2b9cb885d4f201ed54a262629d1ba1aa234bbe6846adfa15403778b7e47360d92b0964582ecc8a6b1f9ec3ce739cf79ce739ef39ce73ce739ef3f795f0a538199");
   const unpacked = Zlib.decompress(packed.slice(..)).unwrap();
+  const expected = repeat_text(BaseText, 20);
+  const expected_bytes = to_bytes(expected.slice(..));
 
-  assert_eq(unpacked, repeat_text(BaseText, 20));
+  assert(unpacked.slice(..).eql(expected_bytes.slice(..)));
 }
 
 /// @test
@@ -73,20 +140,23 @@ pub fn zlib_decodes_empty_stream() {
 }
 
 /// @test
-pub fn zlib_compress_layout_matches_stored_blocks() {
-  const data = String.from("hello hello hello hello world");
-  const packed = Zlib.compress(data.slice(..));
+pub fn zlib_compresses_repetitive_data() {
+  const data = repeat_text(BaseText, 20);
+  const bytes = to_bytes(data.slice(..));
+  const packed = Zlib.compress(bytes.slice(..));
+  const unpacked = Zlib.decompress(packed.slice(..)).unwrap();
 
-  assert_eq(Hex.encode(packed.slice(..)), String.from("7801011d00e2ff68656c6c6f2068656c6c6f2068656c6c6f2068656c6c6f20776f726c64a38a0af9"));
+  assert(packed.len() < bytes.len());
+  assert(unpacked.slice(..).eql(bytes.slice(..)));
 }
 
 /// @test
 pub fn zlib_round_trip_large_input() {
-  let data = String.new();
+  let data = List#[u8].new();
   let i: usize = 0;
 
   while (i < 100000) {
-    data.push(@as(char, @as(u8, i % 251)));
+    data.push(@as(u8, i % 251));
     i += 1;
   };
 
@@ -94,19 +164,19 @@ pub fn zlib_round_trip_large_input() {
   const unpacked = Zlib.decompress(packed.slice(..)).unwrap();
 
   assert_eq(unpacked.len(), 100000);
-  assert_eq(unpacked, data);
+  assert(unpacked.slice(..).eql(data.slice(..)));
 }
 
 /// @test
 pub fn zlib_rejects_corrupt_input() {
-  assert(Zlib.decompress("").is_none());
-  assert(Zlib.decompress("abc").is_none());
-  assert(Zlib.decompress("7801cb48cdc9c957c8c020cbf38b725200a38a0af8").is_none());
-  assert(Zlib.decompress("783f00000000").is_none());
-  assert(Zlib.decompress("7901cb48cdc9c957c8c020cbf38b725200a38a0af9").is_none());
+  assert(Zlib.decompress(to_bytes("").slice(..)).is_none());
+  assert(Zlib.decompress(to_bytes("abc").slice(..)).is_none());
+  assert(Zlib.decompress(from_hex("7801cb48cdc9c957c8c020cbf38b725200a38a0af8").slice(..)).is_none());
+  assert(Zlib.decompress(from_hex("783f00000000").slice(..)).is_none());
+  assert(Zlib.decompress(from_hex("7901cb48cdc9c957c8c020cbf38b725200a38a0af9").slice(..)).is_none());
 
   let packed = from_hex("7801cb48cdc9c957c8c020cbf38b725200a38a0af9");
-  let _ = packed.set(0, @as(char, 0));
+  let _ = packed.set(0, @as(u8, 0));
 
   assert(Zlib.decompress(packed.slice(..)).is_none());
 
@@ -120,15 +190,17 @@ pub fn gzip_decodes_known_stream() {
   const packed = from_hex("1f8b08000000000002ff4bafca2c5048cecf2d284a2d2e56c84d0500f41a481010000000");
   const unpacked = Gzip.decompress(packed.slice(..)).unwrap();
 
-  assert_eq(unpacked, String.from("gzip compress me"));
+  assert(unpacked.slice(..).eql(to_bytes("gzip compress me").slice(..)));
 }
 
 /// @test
 pub fn gzip_decodes_dynamic_huffman() {
   const packed = from_hex("1f8b08000000000002ff0bc94855282ccd4cce56482aca2fcf5348cbaf50c82acd2d2856c82f4b2d5228014ae72456552aa4e4a7eb29848c2a1e553caa7854f1a8e251c5c34b3100e6c3956408070000");
   const unpacked = Gzip.decompress(packed.slice(..)).unwrap();
+  const expected = repeat_text(Sentence, 40);
+  const expected_bytes = to_bytes(expected.slice(..));
 
-  assert_eq(unpacked, repeat_text(Sentence, 40));
+  assert(unpacked.slice(..).eql(expected_bytes.slice(..)));
 }
 
 /// @test
@@ -136,24 +208,39 @@ pub fn gzip_decodes_optional_header_fields() {
   const name = from_hex("1f8b08080000000000ff6100010300fcff616263c241243503000000");
   const extra = from_hex("1f8b08040000000000ff02007879010300fcff616263c241243503000000");
   const comment = from_hex("1f8b08120000000000ff6e6f7465000000010300fcff616263c241243503000000");
+  const from_name = Gzip.decompress(name.slice(..)).unwrap();
+  const from_extra = Gzip.decompress(extra.slice(..)).unwrap();
+  const from_comment = Gzip.decompress(comment.slice(..)).unwrap();
+  const expected = to_bytes("abc");
 
-  assert_eq(Gzip.decompress(name.slice(..)).unwrap(), String.from("abc"));
-  assert_eq(Gzip.decompress(extra.slice(..)).unwrap(), String.from("abc"));
-  assert_eq(Gzip.decompress(comment.slice(..)).unwrap(), String.from("abc"));
+  assert(from_name.slice(..).eql(expected.slice(..)));
+  assert(from_extra.slice(..).eql(expected.slice(..)));
+  assert(from_comment.slice(..).eql(expected.slice(..)));
 }
 
 /// @test
 pub fn gzip_round_trip() {
   const data = repeat_text(BaseText, 20);
+  const bytes = to_bytes(data.slice(..));
+  const packed = Gzip.compress(bytes.slice(..));
+  const unpacked = Gzip.decompress(packed.slice(..)).unwrap();
+
+  assert(packed.len() < bytes.len());
+  assert(unpacked.slice(..).eql(bytes.slice(..)));
+}
+
+/// @test
+pub fn gzip_round_trip_binary() {
+  const data = all_bytes();
   const packed = Gzip.compress(data.slice(..));
   const unpacked = Gzip.decompress(packed.slice(..)).unwrap();
 
-  assert_eq(unpacked, data);
+  assert(unpacked.slice(..).eql(data.slice(..)));
 }
 
 /// @test
 pub fn gzip_round_trip_empty_input() {
-  const packed = Gzip.compress("");
+  const packed = Gzip.compress(to_bytes("").slice(..));
   const unpacked = Gzip.decompress(packed.slice(..)).unwrap();
 
   assert(unpacked.is_empty());
@@ -167,7 +254,7 @@ pub fn gzip_rejects_corrupt_input() {
   const bad_size = from_hex("1f8b08000000000002ff4bafca2c5048cecf2d284a2d2e56c84d0500f41a481011000000");
   const truncated = from_hex("1f8b08000000000002ff4bafca2c5048cecf2d284a2d2e56c84d0500f41a481010000000");
 
-  assert(Gzip.decompress("").is_none());
+  assert(Gzip.decompress(to_bytes("").slice(..)).is_none());
   assert(Gzip.decompress(bad_magic.slice(..)).is_none());
   assert(Gzip.decompress(bad_method.slice(..)).is_none());
   assert(Gzip.decompress(bad_crc.slice(..)).is_none());
@@ -175,7 +262,7 @@ pub fn gzip_rejects_corrupt_input() {
   assert(Gzip.decompress(truncated.slice(0..truncated.len() - 1)).is_none());
 
   let reserved = from_hex("1f8b08000000000002ff4bafca2c5048cecf2d284a2d2e56c84d0500f41a481010000000");
-  let _ = reserved.set(3, @as(char, 32));
+  let _ = reserved.set(3, @as(u8, 32));
 
   assert(Gzip.decompress(reserved.slice(..)).is_none());
 }

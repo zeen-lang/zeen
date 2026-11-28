@@ -1,4 +1,4 @@
-use std.string;
+use std.collections.list;
 
 const LengthBase: [29]u16 = {3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
 const LengthExtra: [29]u8 = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
@@ -6,13 +6,18 @@ const DistanceBase: [30]u16 = {1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 
 const DistanceExtra: [30]u8 = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 const CodeLengthOrder: [19]usize = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
 
-const MaxStoredBlock: usize = 65535;
+comptime MaxStoredBlock = 65535;
+comptime MaxMatch = 258;
+comptime MaxDistance = 32768;
+comptime HashSize = 16384;
+comptime EmptySlot = 65535;
 
 /// Raw DEFLATE streams (RFC 1951).
 pub struct Deflate {
-  /// Encode `data` as stored DEFLATE blocks.
-  pub fn compress(data: []const char) String {
-    let out = String.new();
+  /// Compress `data` into a raw DEFLATE stream.
+  pub fn compress(data: []const u8) List[u8] {
+    let out = List#[u8].new();
+    let writer = BitWriter.new(&out);
     let offset: usize = 0;
     let remaining = data.len;
 
@@ -20,23 +25,22 @@ pub struct Deflate {
       const size: usize = if (remaining > MaxStoredBlock) MaxStoredBlock else remaining;
       const final = size == remaining;
 
-      let header: char = '\0';
+      const block = List#[u8].new();
+      let block_writer = BitWriter.new(&block);
+
+      let header: u32 = 0;
       if (final) {
-        header = @as(char, 1);
+        header = 1;
       };
 
-      out.push(header);
-      out.push(@as(char, @as(u8, size & 255)));
-      out.push(@as(char, @as(u8, (size >> 8) & 255)));
+      block_writer.write(header, 1);
+      block_writer.write(1, 2);
+      encode_fixed(data, offset, size, &block_writer);
 
-      const complement = 65535 ^ size;
-      out.push(@as(char, @as(u8, complement & 255)));
-      out.push(@as(char, @as(u8, (complement >> 8) & 255)));
-
-      let i: usize = 0;
-      while (i < size) {
-        out.push(data[offset + i]);
-        i += 1;
+      if (block.len() <= size + 5) {
+        writer.append(&block_writer);
+      } else {
+        write_stored(&writer, data, offset, size, final);
       };
 
       offset += size;
@@ -47,12 +51,14 @@ pub struct Deflate {
       };
     };
 
+    writer.align();
+
     return out;
   }
 
   /// Decompress a raw DEFLATE stream, `None` on malformed input.
-  pub fn decompress(data: []const char) Option[String] {
-    let out = String.new();
+  pub fn decompress(data: []const u8) Option[List[u8]] {
+    let out = List#[u8].new();
     let reader = BitReader.new(data);
     let final = false;
 
@@ -81,8 +87,55 @@ pub struct Deflate {
   }
 }
 
+struct BitWriter {
+  pub out: *List[u8],
+  pub buf: u32,
+  pub count: usize,
+}
+
+implement BitWriter {
+  pub fn new(out: *List[u8]) Self {
+    Self {
+      .out = out,
+      .buf = 0,
+      .count = 0,
+    }
+  }
+
+  pub fn write(*self, value: u32, bits: usize) void {
+    self.buf = self.buf | (value << @as(u32, self.count));
+    self.count += bits;
+
+    while (self.count >= 8) {
+      self.out.push(@as(u8, self.buf & 255));
+      self.buf = self.buf >> 8;
+      self.count -= 8;
+    };
+  }
+
+  pub fn align(*self) void {
+    if (self.count > 0) {
+      self.out.push(@as(u8, self.buf & 255));
+      self.buf = 0;
+      self.count = 0;
+    };
+  }
+
+  pub fn append(*self, other: *BitWriter) void {
+    let i: usize = 0;
+    while (i < other.out.len()) {
+      self.write(@as(u32, other.out[i]), 8);
+      i += 1;
+    };
+
+    if (other.count > 0) {
+      self.write(other.buf, other.count);
+    };
+  }
+}
+
 struct BitReader {
-  pub data: []const char,
+  pub data: []const u8,
   pub pos: usize,
   pub buf: u32,
   pub count: usize,
@@ -90,7 +143,7 @@ struct BitReader {
 }
 
 implement BitReader {
-  pub fn new(data: []const char) Self {
+  pub fn new(data: []const u8) Self {
     Self {
       .data = data,
       .pos = 0,
@@ -132,7 +185,7 @@ implement BitReader {
       return 0;
     };
 
-    const value = @as(u8, self.data[self.pos]);
+    const value = self.data[self.pos];
     self.pos += 1;
 
     return value;
@@ -162,6 +215,173 @@ implement Huffman {
       .symbol = {0; 288},
     }
   }
+}
+
+fn encode_fixed(data: []const u8, offset: usize, size: usize, writer: *BitWriter) void {
+  let heads: [HashSize]u16 = {EmptySlot; HashSize};
+  let pos: usize = 0;
+
+  while (pos < size) {
+    let best_length: usize = 0;
+    let best_distance: usize = 0;
+
+    if (pos + 2 < size) {
+      const candidate = heads[hash_at(data, offset, pos)];
+
+      if (candidate != EmptySlot) {
+        const distance = pos - @as(usize, candidate);
+
+        if (distance <= MaxDistance) {
+          const limit: usize = if (size - pos > MaxMatch) MaxMatch else size - pos;
+          let length: usize = 0;
+
+          while (
+            length < limit
+            && data[offset + pos + length] == data[offset + @as(usize, candidate) + length]
+          ) {
+            length += 1;
+          };
+
+          if (length >= 3) {
+            best_length = length;
+            best_distance = distance;
+          };
+        };
+      };
+    };
+
+    if (best_length >= 3) {
+      write_length(writer, best_length);
+      write_distance(writer, best_distance);
+
+      let i: usize = 0;
+      while (i < best_length) {
+        if (pos + i + 2 < size) {
+          heads[hash_at(data, offset, pos + i)] = @as(u16, pos + i);
+        };
+
+        i += 1;
+      };
+
+      pos += best_length;
+    } else {
+      write_literal(writer, @as(usize, data[offset + pos]));
+
+      if (pos + 2 < size) {
+        heads[hash_at(data, offset, pos)] = @as(u16, pos);
+      };
+
+      pos += 1;
+    };
+  };
+
+  write_literal(writer, 256);
+}
+
+fn hash_at(data: []const u8, offset: usize, pos: usize) usize {
+  const first = @as(usize, data[offset + pos]);
+  const second = @as(usize, data[offset + pos + 1]);
+  const third = @as(usize, data[offset + pos + 2]);
+
+  return ((first * 31 + second) * 31 + third) & (HashSize - 1);
+}
+
+fn write_literal(writer: *BitWriter, symbol: usize) void {
+  if (symbol < 144) {
+    write_code(writer, @as(u32, 0x30 + symbol), 8);
+  } else if (symbol < 256) {
+    write_code(writer, @as(u32, 0x190 + (symbol - 144)), 9);
+  } else if (symbol < 280) {
+    write_code(writer, @as(u32, symbol - 256), 7);
+  } else {
+    write_code(writer, @as(u32, 0xC0 + (symbol - 280)), 8);
+  };
+}
+
+fn write_length(writer: *BitWriter, length: usize) void {
+  let index: usize = 28;
+
+  if (length < 258) {
+    let i: usize = 0;
+    while (i < 28) {
+      const base = @as(usize, LengthBase[i]);
+      const span = @as(usize, 1) << @as(usize, LengthExtra[i]);
+
+      if (length >= base && length < base + span) {
+        index = i;
+        break;
+      };
+
+      i += 1;
+    };
+  };
+
+  write_literal(writer, 257 + index);
+
+  const extra = @as(usize, LengthExtra[index]);
+  if (extra > 0) {
+    writer.write(@as(u32, length - @as(usize, LengthBase[index])), extra);
+  };
+}
+
+fn write_distance(writer: *BitWriter, distance: usize) void {
+  let index: usize = 0;
+  let i: usize = 0;
+
+  while (i < 30) {
+    const base = @as(usize, DistanceBase[i]);
+    const span = @as(usize, 1) << @as(usize, DistanceExtra[i]);
+
+    if (distance >= base && distance < base + span) {
+      index = i;
+      break;
+    };
+
+    i += 1;
+  };
+
+  write_code(writer, @as(u32, index), 5);
+
+  const extra = @as(usize, DistanceExtra[index]);
+  if (extra > 0) {
+    writer.write(@as(u32, distance - @as(usize, DistanceBase[index])), extra);
+  };
+}
+
+fn write_code(writer: *BitWriter, code: u32, length: usize) void {
+  let reversed: u32 = 0;
+  let i: usize = 0;
+
+  while (i < length) {
+    reversed = (reversed << 1) | ((code >> @as(u32, i)) & 1);
+    i += 1;
+  };
+
+  writer.write(reversed, length);
+}
+
+fn write_stored(writer: *BitWriter, data: []const u8, offset: usize, size: usize, final: bool) void {
+  let header: u32 = 0;
+  if (final) {
+    header = 1;
+  };
+
+  writer.write(header, 1);
+  writer.write(0, 2);
+  writer.align();
+
+  writer.out.push(@as(u8, size & 255));
+  writer.out.push(@as(u8, (size >> 8) & 255));
+
+  const complement = 65535 ^ size;
+  writer.out.push(@as(u8, complement & 255));
+  writer.out.push(@as(u8, (complement >> 8) & 255));
+
+  let i: usize = 0;
+  while (i < size) {
+    writer.out.push(data[offset + i]);
+    i += 1;
+  };
 }
 
 fn build(tree: *Huffman, lengths: []const u8) bool {
@@ -240,7 +460,7 @@ fn decode(tree: *const Huffman, reader: *BitReader) i32 {
   return -1;
 }
 
-fn inflate_stored(reader: *BitReader, out: *String) bool {
+fn inflate_stored(reader: *BitReader, out: *List[u8]) bool {
   reader.align();
 
   const length = reader.read_u16();
@@ -256,14 +476,14 @@ fn inflate_stored(reader: *BitReader, out: *String) bool {
 
   let i: usize = 0;
   while (i < @as(usize, length)) {
-    out.push(@as(char, reader.read_byte()));
+    out.push(reader.read_byte());
     i += 1;
   };
 
   return !reader.overrun();
 }
 
-fn inflate_fixed(reader: *BitReader, out: *String) bool {
+fn inflate_fixed(reader: *BitReader, out: *List[u8]) bool {
   let literal_lengths: [288]u8 = {0; 288};
 
   let i: usize = 0;
@@ -303,7 +523,7 @@ fn inflate_fixed(reader: *BitReader, out: *String) bool {
   return inflate_codes(reader, out, &literal_tree, &distance_tree);
 }
 
-fn inflate_dynamic(reader: *BitReader, out: *String) bool {
+fn inflate_dynamic(reader: *BitReader, out: *List[u8]) bool {
   const literal_count = @as(usize, reader.bits(5)) + 257;
   const distance_count = @as(usize, reader.bits(5)) + 1;
   const code_count = @as(usize, reader.bits(4)) + 4;
@@ -404,7 +624,7 @@ fn inflate_dynamic(reader: *BitReader, out: *String) bool {
   return inflate_codes(reader, out, &literal_tree, &distance_tree);
 }
 
-fn inflate_codes(reader: *BitReader, out: *String, literals: *const Huffman, distances: *const Huffman) bool {
+fn inflate_codes(reader: *BitReader, out: *List[u8], literals: *const Huffman, distances: *const Huffman) bool {
   while (true) {
     const symbol = decode(literals, reader);
 
@@ -413,7 +633,7 @@ fn inflate_codes(reader: *BitReader, out: *String, literals: *const Huffman, dis
     };
 
     if (symbol < 256) {
-      out.push(@as(char, @as(u8, symbol)));
+      out.push(@as(u8, symbol));
       continue;
     };
 

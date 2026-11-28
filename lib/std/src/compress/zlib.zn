@@ -1,30 +1,36 @@
-use std.string;
+use std.collections.list;
 use std.compress.deflate;
 
 /// Zlib streams (RFC 1950).
 pub struct Zlib {
-  /// Encode `data` in a zlib stream with stored blocks.
-  pub fn compress(data: []const char) String {
-    let out = String.new();
+  /// Compress `data` into a zlib stream.
+  pub fn compress(data: []const u8) List[u8] {
+    let out = List#[u8].new();
 
-    out.push(@as(char, 120));
-    out.push(@as(char, 1));
+    out.push(120);
+    out.push(1);
 
     const body = Deflate.compress(data);
-    out.push_str(body.slice(..));
+    const bytes = body.slice(..);
+
+    let i: usize = 0;
+    while (i < bytes.len) {
+      out.push(bytes[i]);
+      i += 1;
+    };
 
     const checksum = Adler32.hash(data);
 
-    out.push(@as(char, @as(u8, (checksum >> 24) & 255)));
-    out.push(@as(char, @as(u8, (checksum >> 16) & 255)));
-    out.push(@as(char, @as(u8, (checksum >> 8) & 255)));
-    out.push(@as(char, @as(u8, checksum & 255)));
+    out.push(@as(u8, (checksum >> 24) & 255));
+    out.push(@as(u8, (checksum >> 16) & 255));
+    out.push(@as(u8, (checksum >> 8) & 255));
+    out.push(@as(u8, checksum & 255));
 
     return out;
   }
 
   /// Decompress a zlib stream, `None` on malformed input.
-  pub fn decompress(data: []const char) Option[String] {
+  pub fn decompress(data: []const u8) Option[List[u8]] {
     if (data.len < 6) {
       return Option.None;
     };
@@ -67,7 +73,7 @@ pub struct Zlib {
 }
 
 struct Adler32 {
-  pub fn hash(data: []const char) u32 {
+  pub fn hash(data: []const u8) u32 {
     let a: u32 = 1;
     let b: u32 = 0;
     let i: usize = 0;
@@ -82,7 +88,7 @@ struct Adler32 {
   }
 }
 
-fn read_be_u32(data: []const char, at: usize) u32 {
+fn read_be_u32(data: []const u8, at: usize) u32 {
   const b0 = @as(u32, data[at]) << 24;
   const b1 = @as(u32, data[at + 1]) << 16;
   const b2 = @as(u32, data[at + 2]) << 8;
