@@ -1,0 +1,12 @@
+use std.c.types;
+
+@os[linux | android | darwin | freebsd] {
+  pub const RTLD_LAZY: c_int = 1;
+  pub const RTLD_NOW: c_int = 2;
+  pub const RTLD_LOCAL: c_int = 0;
+
+  pub extern fn dlopen(filename: [*]const char, flags: c_int) *void;
+  pub extern fn dlsym(handle: *void, symbol: [*]const char) *void;
+  pub extern fn dlclose(handle: *void) c_int;
+  pub extern fn dlerror() [*]const char;
+}

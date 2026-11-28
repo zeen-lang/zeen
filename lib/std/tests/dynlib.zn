@@ -1,0 +1,27 @@
+use std.dynlib;
+use std.testing;
+
+/// @test
+pub fn opens_system_library_and_resolves_symbol() {
+  @os[windows] {
+    const lib = DynLib.open("kernel32.dll").unwrap();
+
+    assert(lib.symbol("GetLastError").is_some());
+    assert(lib.symbol("no_such_symbol_zeen").is_none());
+  } else @os[darwin] {
+    const lib = DynLib.open("libSystem.B.dylib").unwrap();
+
+    assert(lib.symbol("strlen").is_some());
+    assert(lib.symbol("no_such_symbol_zeen").is_none());
+  } else {
+    const lib = DynLib.open("libc.so.6").unwrap();
+
+    assert(lib.symbol("strlen").is_some());
+    assert(lib.symbol("no_such_symbol_zeen").is_none());
+  }
+}
+
+/// @test
+pub fn open_reports_missing_library() {
+  assert(DynLib.open("libdefinitely_missing_zeen.so").is_none());
+}

@@ -1,0 +1,73 @@
+use std.ffi;
+use std.c.types;
+
+@os[windows] {
+  use std.c.windows.windef;
+  use std.c.windows.libloaderapi;
+} else {
+  use std.c.posix.dlfcn;
+}
+
+pub struct DynLib {
+  _handle: *void,
+}
+
+implement DynLib {
+  pub fn open(path: []const char) Option[Self] {
+    let name = CString.new(path);
+
+    @os[windows] {
+      const handle = LoadLibraryA(@as([*]const c_char, name.as_ptr()));
+
+      if (handle == nullptr) {
+        return Option.None;
+      };
+
+      return Option.Some(Self { ._handle = @as(*void, handle) });
+    } else {
+      const handle = dlopen(name.as_ptr(), RTLD_NOW);
+
+      if (handle == nullptr) {
+        return Option.None;
+      };
+
+      return Option.Some(Self { ._handle = handle });
+    }
+  }
+
+  pub fn symbol(*const self, name: []const char) Option[*void] {
+    let cname = CString.new(name);
+
+    @os[windows] {
+      const addr = GetProcAddress(@as(WinHANDLE, self._handle), @as([*]const c_char, cname.as_ptr()));
+
+      if (addr == nullptr) {
+        return Option.None;
+      };
+
+      return Option.Some(addr);
+    } else {
+      const addr = dlsym(self._handle, cname.as_ptr());
+
+      if (addr == nullptr) {
+        return Option.None;
+      };
+
+      return Option.Some(addr);
+    }
+  }
+
+  pub fn handle(*const self) *void {
+    return self._handle;
+  }
+}
+
+implement Drop : DynLib {
+  fn drop(self) {
+    @os[windows] {
+      let _ = FreeLibrary(@as(WinHANDLE, self._handle));
+    } else {
+      let _ = dlclose(self._handle);
+    }
+  }
+}
