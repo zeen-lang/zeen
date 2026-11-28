@@ -1,0 +1,64 @@
+use std.string;
+use std.testing;
+use std.url;
+
+fn query_of(url: *const Url) String {
+  return switch (url.query()) {
+    .Some(value) => String.from(value),
+    .None => String.from(""),
+  };
+}
+
+fn fragment_of(url: *const Url) String {
+  return switch (url.fragment()) {
+    .Some(value) => String.from(value),
+    .None => String.from(""),
+  };
+}
+
+/// @test
+pub fn parse_splits_every_part() {
+  const url = Url.parse("https://example.com:8443/a/b?x=1&y=2#top").unwrap();
+
+  assert_eq(String.from(url.scheme()), String.from("https"));
+  assert_eq(String.from(url.host()), String.from("example.com"));
+  assert_eq(url.port().unwrap(), @as(u16, 8443));
+  assert_eq(String.from(url.path()), String.from("/a/b"));
+  assert_eq(query_of(&url), String.from("x=1&y=2"));
+  assert_eq(fragment_of(&url), String.from("top"));
+  assert_eq(
+    @format("{}", url),
+    String.from("https://example.com:8443/a/b?x=1&y=2#top"),
+  );
+}
+
+/// @test
+pub fn parse_defaults_missing_parts() {
+  const url = Url.parse("http://example.com").unwrap();
+
+  assert_eq(String.from(url.path()), String.from("/"));
+  assert(url.port().is_none());
+  assert(url.query().is_none());
+  assert(url.fragment().is_none());
+  assert_eq(@format("{}", url), String.from("http://example.com/"));
+}
+
+/// @test
+pub fn parse_handles_ipv6_host() {
+  const url = Url.parse("http://[::1]:8080/x").unwrap();
+
+  assert_eq(String.from(url.host()), String.from("[::1]"));
+  assert_eq(url.port().unwrap(), @as(u16, 8080));
+  assert_eq(@format("{}", url), String.from("http://[::1]:8080/x"));
+}
+
+/// @test
+pub fn parse_rejects_bad_urls() {
+  assert(Url.parse("example.com").is_none());
+  assert(Url.parse("1http://example.com").is_none());
+  assert(Url.parse("http://").is_none());
+  assert(Url.parse("http://example.com:99999/").is_none());
+  assert(Url.parse("http://example.com:/").is_none());
+  assert(Url.parse("http://example.com:80x/").is_none());
+  assert(Url.parse("http://[::1/").is_none());
+}

@@ -1,0 +1,262 @@
+use std.string;
+use std.fmt;
+
+pub struct Url {
+  _scheme: String,
+  _host: String,
+  _port: Option[u16],
+  _path: String,
+  _query: Option[String],
+  _fragment: Option[String],
+}
+
+implement Url {
+  pub fn parse(text: []const char) Option[Self] {
+    const scheme_end = find_str(text, "://", 0);
+
+    if (scheme_end.is_none()) {
+      return Option.None;
+    };
+
+    const scheme = text[0..scheme_end.unwrap()];
+
+    if (!valid_scheme(scheme)) {
+      return Option.None;
+    };
+
+    const host_start = scheme_end.unwrap() + 3;
+    let at = host_start;
+    let host_end = host_start;
+
+    if (at < text.len && text.ptr[at] == '[') {
+      const close = find_char(text, ']', at);
+
+      if (close.is_none()) {
+        return Option.None;
+      };
+
+      host_end = close.unwrap() + 1;
+      at = host_end;
+    } else {
+      while (host_end < text.len) {
+        const c = text.ptr[host_end];
+
+        if (c == ':' || c == '/' || c == '?' || c == '#') {
+          break;
+        };
+
+        host_end += 1;
+      };
+
+      at = host_end;
+    };
+
+    if (host_end <= host_start) {
+      return Option.None;
+    };
+
+    const host = text[host_start..host_end];
+    let port: Option[u16] = Option.None;
+
+    if (at < text.len && text.ptr[at] == ':') {
+      at += 1;
+
+      let value: u32 = 0;
+      let digits: usize = 0;
+
+      while (at < text.len) {
+        const c = text.ptr[at];
+
+        if (!c.is_ascii_digit()) {
+          break;
+        };
+
+        value = value * 10 + c.to_digit(10).unwrap();
+        digits += 1;
+
+        if (value > 65535) {
+          return Option.None;
+        };
+
+        at += 1;
+      };
+
+      if (digits == 0) {
+        return Option.None;
+      };
+
+      port = Option.Some(@as(u16, value));
+    };
+
+    let path_end = text.len;
+    let query: Option[String] = Option.None;
+    let fragment: Option[String] = Option.None;
+    const hash = find_char(text, '#', at);
+
+    if (hash.is_some()) {
+      const fragment_start = hash.unwrap() + 1;
+
+      fragment = Option.Some(String.from(text[fragment_start..text.len]));
+      path_end = hash.unwrap();
+    };
+
+    const question = find_char(text, '?', at);
+
+    if (question.is_some() && question.unwrap() < path_end) {
+      const query_start = question.unwrap() + 1;
+
+      query = Option.Some(String.from(text[query_start..path_end]));
+      path_end = question.unwrap();
+    };
+
+    const raw_path = text[at..path_end];
+
+    if (raw_path.len > 0 && raw_path.ptr[0] != '/') {
+      return Option.None;
+    };
+
+    const path = if (raw_path.len == 0) { String.from("/") } else { String.from(raw_path) };
+
+    return Option.Some(Self {
+      ._scheme = String.from(scheme),
+      ._host = String.from(host),
+      ._port = port,
+      ._path = path,
+      ._query = query,
+      ._fragment = fragment,
+    });
+  }
+
+  pub fn scheme(*const self) []const char {
+    return self._scheme.slice(..);
+  }
+
+  pub fn host(*const self) []const char {
+    return self._host.slice(..);
+  }
+
+  pub fn port(*const self) Option[u16] {
+    return self._port;
+  }
+
+  pub fn path(*const self) []const char {
+    return self._path.slice(..);
+  }
+
+  pub fn query(*const self) Option[[]const char] {
+    return switch (self._query) {
+      .Some(&value) => Option.Some(value.slice(..)),
+      .None => Option.None,
+    };
+  }
+
+  pub fn fragment(*const self) Option[[]const char] {
+    return switch (self._fragment) {
+      .Some(&value) => Option.Some(value.slice(..)),
+      .None => Option.None,
+    };
+  }
+}
+
+implement Display : Url {
+  fn display[W: StrWriter](*const self, out: *W) void {
+    (*out).write_str(self._scheme.slice(..));
+    (*out).write_str("://");
+    (*out).write_str(self._host.slice(..));
+
+    if (self._port.is_some()) {
+      (*out).write_str_single(':');
+      Fmt.write_uint(out, @as(u64, self._port.unwrap()));
+    };
+
+    (*out).write_str(self._path.slice(..));
+
+    switch (self._query) {
+      .Some(&value) => {
+        (*out).write_str_single('?');
+        (*out).write_str(value.slice(..));
+      },
+      .None => {},
+    };
+
+    switch (self._fragment) {
+      .Some(&value) => {
+        (*out).write_str_single('#');
+        (*out).write_str(value.slice(..));
+      },
+      .None => {},
+    };
+  }
+}
+
+fn valid_scheme(scheme: []const char) bool {
+  if (scheme.len == 0) {
+    return false;
+  };
+
+  const first = scheme.ptr[0];
+
+  if (!first.is_ascii_alphabetic()) {
+    return false;
+  };
+
+  let i: usize = 1;
+
+  while (i < scheme.len) {
+    const c = scheme.ptr[i];
+    const ok = c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.';
+
+    if (!ok) {
+      return false;
+    };
+
+    i += 1;
+  };
+
+  return true;
+}
+
+fn find_char(text: []const char, needle: char, from: usize) Option[usize] {
+  let i = from;
+
+  while (i < text.len) {
+    if (text.ptr[i] == needle) {
+      return Option.Some(i);
+    };
+
+    i += 1;
+  };
+
+  return Option.None;
+}
+
+fn find_str(text: []const char, needle: []const char, from: usize) Option[usize] {
+  if (needle.len == 0 || from >= text.len) {
+    return Option.None;
+  };
+
+  let i = from;
+
+  while (i + needle.len <= text.len) {
+    const end = i + needle.len;
+    let same = true;
+    let k: usize = 0;
+
+    while (k < needle.len) {
+      if (text.ptr[i + k] != needle.ptr[k]) {
+        same = false;
+        break;
+      };
+
+      k += 1;
+    };
+
+    if (same) {
+      return Option.Some(i);
+    };
+
+    i += 1;
+  };
+
+  return Option.None;
+}
