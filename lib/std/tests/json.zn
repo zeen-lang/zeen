@@ -97,3 +97,128 @@ pub fn json_stringify_roundtrip() {
   assert(!scalar.is_num());
   assert_eq(scalar.as_str().unwrap().len(), 2);
 }
+
+struct Person {
+  pub name: String,
+  pub age: i32,
+  pub tags: List[String],
+}
+
+fn member(value: *const JsonValue, key: []const char) Result[*const JsonValue, JsonError] {
+  const found = value.get(key);
+  if (found.is_none()) {
+    return Result.Err(JsonError.missing_field());
+  };
+  return Result.Ok(found.unwrap());
+}
+
+implement JsonEncode : Person {
+  fn encode_json(*const self, out: *String) {
+    let obj = JsonObjectWriter.begin(out);
+    obj.field_value("name", &self.name);
+    obj.field_value("age", &self.age);
+    obj.field_value("tags", &self.tags);
+    obj.end();
+  }
+}
+
+implement JsonDecode : Person {
+  fn decode_json(value: *const JsonValue) Result[Person, JsonError] {
+    const name = String.decode_json(member(value, "name")?)?;
+    const age = i32.decode_json(member(value, "age")?)?;
+    const tags = List#[String].decode_json(member(value, "tags")?)?;
+    return Result.Ok(Person { .name = name, .age = age, .tags = tags });
+  }
+}
+
+/// @test
+pub fn json_typed_encodes_values() {
+  const flag = true;
+  assert_eq(Json.encode(&flag), String.from("true"));
+
+  const count: i32 = -42;
+  assert_eq(Json.encode(&count), String.from("-42"));
+
+  const big: u64 = 1234567890123;
+  assert_eq(Json.encode(&big), String.from("1234567890123"));
+
+  const ratio: f64 = 1.5;
+  assert_eq(Json.encode(&ratio), String.from("1.500000"));
+
+  const nan = f64.nan();
+  assert_eq(Json.encode(&nan), String.from("null"));
+
+  const text = String.from("a\"b");
+  assert_eq(Json.encode(&text), String.from("\"a\\\"b\""));
+
+  const slice: []const char = "hi";
+  assert_eq(Json.encode(&slice), String.from("\"hi\""));
+
+  const nothing: Option[i32] = Option.None;
+  assert_eq(Json.encode(&nothing), String.from("null"));
+
+  const some: Option[i32] = Option.Some(7);
+  assert_eq(Json.encode(&some), String.from("7"));
+
+  let items = List#[i32].new();
+  items.push(1);
+  items.push(2);
+  assert_eq(Json.encode(&items), String.from("[1,2]"));
+}
+
+/// @test
+pub fn json_typed_decodes_values() {
+  assert(Json.decode#[bool]("true").unwrap());
+
+  assert_eq(Json.decode#[i32]("-42").unwrap(), -42);
+  assert_eq(Json.decode#[u64]("1234567890123").unwrap(), 1234567890123);
+  assert(Json.decode#[f64]("2.5").unwrap() == 2.5);
+
+  const text = Json.decode#[String]("\"hi\"").unwrap();
+  assert_eq(text.len(), 2);
+
+  const nothing = Json.decode#[Option[i32]]("null").unwrap();
+  assert(nothing.is_none());
+
+  const some = Json.decode#[Option[i32]]("7").unwrap();
+  assert_eq(some.unwrap(), 7);
+
+  const items = Json.decode#[List[i32]]("[1,2,3]").unwrap();
+  assert_eq(items.len(), 3);
+  assert_eq(*items.get_ptr(2).unwrap(), 3);
+}
+
+/// @test
+pub fn json_typed_roundtrips_struct() {
+  let tags = List#[String].new();
+  tags.push(String.from("rust"));
+  tags.push(String.from("zeen"));
+  const person = Person { .name = String.from("Ada"), .age = 36, .tags = tags };
+
+  const encoded = Json.encode(&person);
+  assert_eq(String.from(encoded.slice(..)), String.from("{\"name\":\"Ada\",\"age\":36,\"tags\":[\"rust\",\"zeen\"]}"));
+
+  const decoded = Json.decode#[Person](encoded.slice(..)).unwrap();
+  assert_eq(String.from(decoded.name.slice(..)), String.from("Ada"));
+  assert_eq(decoded.age, 36);
+  assert_eq(decoded.tags.len(), 2);
+  assert_eq(String.from(decoded.tags.get_ptr(0).unwrap().slice(..)), String.from("rust"));
+}
+
+/// @test
+pub fn json_typed_reports_errors() {
+  const wrong: Result[i32, JsonError] = Json.decode#[i32]("\"nope\"");
+  assert(wrong.is_err());
+  assert_eq(wrong.unwrap_err().kind == JsonErrorKind.TypeMismatch, true);
+
+  const overflow: Result[u8, JsonError] = Json.decode#[u8]("300");
+  assert(overflow.is_err());
+
+  const missing: Result[Person, JsonError] = Json.decode#[Person]("{\"name\":\"Ada\",\"age\":1}");
+  assert(missing.is_err());
+  assert_eq(missing.unwrap_err().kind == JsonErrorKind.MissingField, true);
+
+  const trailing: Result[i32, JsonError] = Json.decode#[i32]("1 x");
+  assert(trailing.is_err());
+  assert_eq(trailing.unwrap_err().kind == JsonErrorKind.TrailingData, true);
+}

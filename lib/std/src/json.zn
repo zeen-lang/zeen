@@ -1,4 +1,5 @@
 use std.string;
+use std.fmt;
 use std.collections.list;
 use std.collections.map;
 
@@ -23,6 +24,8 @@ pub enum JsonErrorKind {
   DepthExceeded,
   InvalidNumber,
   InvalidEscape,
+  TypeMismatch,
+  MissingField,
 }
 
 /// JSON value, numbers kept as raw text.
@@ -164,6 +167,15 @@ implement JsonValue {
     return text.unwrap().parse_i64();
   }
 
+  /// Unsigned integer value, `None` when the text is no integer.
+  pub fn as_u64(*const self) Option[u64] {
+    const text = self.as_num();
+    if (text.is_none()) {
+      return Option.None;
+    };
+    return text.unwrap().parse_u64();
+  }
+
   /// Floating point value, `None` when the text is no number.
   pub fn as_f64(*const self) Option[f64] {
     const text = self.as_num();
@@ -220,14 +232,14 @@ implement JsonValue {
   }
 
   /// Writes `text` as a quoted JSON string into `out`.
-  pub fn write_string(out: *String, text: *String) {
+  pub fn write_text(out: *String, text: []const char) {
     const hex: []const char = "0123456789abcdef";
     const backslash = @as(char, 92);
     out.push('"');
 
     let i: usize = 0;
-    while (i < text.len()) {
-      const c = text.get(i).unwrap();
+    while (i < text.len) {
+      const c = text[i];
       if (c == '"') {
         out.push(backslash);
         out.push('"');
@@ -263,6 +275,11 @@ implement JsonValue {
     }
 
     out.push('"');
+  }
+
+  /// Writes `text` as a quoted JSON string into `out`.
+  pub fn write_string(out: *String, text: *String) {
+    JsonValue.write_text(out, text.slice(..));
   }
 }
 
@@ -712,5 +729,427 @@ implement JsonParser {
   fn is_digit(c: char) bool {
     const code = @as(u32, c);
     return code >= @as(u32, '0') && code <= @as(u32, '9');
+  }
+}
+
+implement JsonError {
+  /// Error for a value of the wrong JSON kind.
+  pub fn type_mismatch() Self {
+    return JsonError { .kind = JsonErrorKind.TypeMismatch, .pos = 0 };
+  }
+
+  /// Error for an absent object member.
+  pub fn missing_field() Self {
+    return JsonError { .kind = JsonErrorKind.MissingField, .pos = 0 };
+  }
+}
+
+/// Typed JSON encoder.
+pub interface JsonEncode {
+  /// Writes `self` as compact JSON into `out`.
+  pub fn encode_json(*const self, out: *String);
+}
+
+/// Typed JSON decoder.
+pub interface JsonDecode {
+  /// Reads `Self` from a parsed JSON value.
+  pub fn decode_json(value: *const JsonValue) Result[Self, JsonError];
+}
+
+/// Writer for one JSON object.
+pub struct JsonObjectWriter {
+  out: *String,
+  first: bool,
+}
+
+implement JsonObjectWriter {
+  /// Starts an object in `out`.
+  pub fn begin(out: *String) Self {
+    out.push('{');
+    return JsonObjectWriter { .out = out, .first = true };
+  }
+
+  /// Writes a member name.
+  pub fn field(*self, name: []const char) {
+    if (!self.first) {
+      self.out.push(',');
+    };
+    self.first = false;
+    JsonValue.write_text(self.out, name);
+    self.out.push(':');
+  }
+
+  /// Writes a member name and an encoded value.
+  pub fn field_value[T: JsonEncode](*self, name: []const char, value: *const T) {
+    self.field(name);
+    value.encode_json(self.out);
+  }
+
+  /// Closes the object.
+  pub fn end(*self) {
+    self.out.push('}');
+  }
+}
+
+/// Typed JSON entry points.
+pub struct Json {}
+
+implement Json {
+  /// Encodes `value` into compact JSON.
+  pub fn encode[T: JsonEncode](value: *const T) String {
+    let out = String.new();
+    value.encode_json(&out);
+    return out;
+  }
+
+  /// Parses `text` and decodes it into `T`.
+  pub fn decode[T: JsonDecode](text: []const char) Result[T, JsonError] {
+    const parsed = JsonValue.parse(text)?;
+    return T.decode_json(&parsed);
+  }
+}
+
+implement JsonEncode : builtin bool {
+  fn encode_json(*const self, out: *String) {
+    if (*self) {
+      out.push_str("true");
+    } else {
+      out.push_str("false");
+    };
+  }
+}
+
+implement JsonEncode : builtin i8 {
+  fn encode_json(*const self, out: *String) {
+    Fmt.write_int(out, @as(i64, (*self)));
+  }
+}
+
+implement JsonEncode : builtin i16 {
+  fn encode_json(*const self, out: *String) {
+    Fmt.write_int(out, @as(i64, (*self)));
+  }
+}
+
+implement JsonEncode : builtin i32 {
+  fn encode_json(*const self, out: *String) {
+    Fmt.write_int(out, @as(i64, (*self)));
+  }
+}
+
+implement JsonEncode : builtin i64 {
+  fn encode_json(*const self, out: *String) {
+    Fmt.write_int(out, (*self));
+  }
+}
+
+implement JsonEncode : builtin isize {
+  fn encode_json(*const self, out: *String) {
+    Fmt.write_int(out, @as(i64, (*self)));
+  }
+}
+
+implement JsonEncode : builtin u8 {
+  fn encode_json(*const self, out: *String) {
+    Fmt.write_uint(out, @as(u64, (*self)));
+  }
+}
+
+implement JsonEncode : builtin u16 {
+  fn encode_json(*const self, out: *String) {
+    Fmt.write_uint(out, @as(u64, (*self)));
+  }
+}
+
+implement JsonEncode : builtin u32 {
+  fn encode_json(*const self, out: *String) {
+    Fmt.write_uint(out, @as(u64, (*self)));
+  }
+}
+
+implement JsonEncode : builtin u64 {
+  fn encode_json(*const self, out: *String) {
+    Fmt.write_uint(out, (*self));
+  }
+}
+
+implement JsonEncode : builtin usize {
+  fn encode_json(*const self, out: *String) {
+    Fmt.write_uint(out, @as(u64, (*self)));
+  }
+}
+
+implement JsonEncode : builtin f32 {
+  fn encode_json(*const self, out: *String) {
+    if (!(*self).is_finite()) {
+      out.push_str("null");
+      return;
+    };
+    (*self).display(out);
+  }
+}
+
+implement JsonEncode : builtin f64 {
+  fn encode_json(*const self, out: *String) {
+    if (!(*self).is_finite()) {
+      out.push_str("null");
+      return;
+    };
+    (*self).display(out);
+  }
+}
+
+implement JsonEncode : builtin []const char {
+  fn encode_json(*const self, out: *String) {
+    JsonValue.write_text(out, (*self));
+  }
+}
+
+implement JsonEncode : String {
+  fn encode_json(*const self, out: *String) {
+    JsonValue.write_text(out, self.slice(..));
+  }
+}
+
+implement[T: JsonEncode] JsonEncode : Option[T] {
+  fn encode_json(*const self, out: *String) {
+    switch (*self) {
+      .None => {
+        out.push_str("null");
+      },
+      .Some(&value) => {
+        value.encode_json(out);
+      },
+    };
+  }
+}
+
+implement[T: JsonEncode] JsonEncode : List[T] {
+  fn encode_json(*const self, out: *String) {
+    out.push('[');
+    let i: usize = 0;
+    while (i < self.len()) {
+      if (i != 0) {
+        out.push(',');
+      };
+      const item = self.get_ptr(i).unwrap();
+      item.encode_json(out);
+      i += 1;
+    };
+    out.push(']');
+  }
+}
+
+implement JsonDecode : builtin bool {
+  fn decode_json(value: *const JsonValue) Result[bool, JsonError] {
+    const found = value.as_bool();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(found.unwrap());
+  }
+}
+
+implement JsonDecode : builtin i8 {
+  fn decode_json(value: *const JsonValue) Result[i8, JsonError] {
+    const found = value.as_i64();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    const number = found.unwrap();
+    if (number < -128 || number > 127) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(@as(i8, number));
+  }
+}
+
+implement JsonDecode : builtin i16 {
+  fn decode_json(value: *const JsonValue) Result[i16, JsonError] {
+    const found = value.as_i64();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    const number = found.unwrap();
+    if (number < -32768 || number > 32767) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(@as(i16, number));
+  }
+}
+
+implement JsonDecode : builtin i32 {
+  fn decode_json(value: *const JsonValue) Result[i32, JsonError] {
+    const found = value.as_i64();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    const number = found.unwrap();
+    if (number < -2147483648 || number > 2147483647) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(@as(i32, number));
+  }
+}
+
+implement JsonDecode : builtin i64 {
+  fn decode_json(value: *const JsonValue) Result[i64, JsonError] {
+    const found = value.as_i64();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(found.unwrap());
+  }
+}
+
+implement JsonDecode : builtin isize {
+  fn decode_json(value: *const JsonValue) Result[isize, JsonError] {
+    const found = value.as_i64();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    const number = found.unwrap();
+    const limit = @as(i64, @as(isize, 0) - 1);
+    if (number < -limit - 1 || number > limit) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(@as(isize, number));
+  }
+}
+
+implement JsonDecode : builtin u8 {
+  fn decode_json(value: *const JsonValue) Result[u8, JsonError] {
+    const found = value.as_u64();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    const number = found.unwrap();
+    if (number > 255) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(@as(u8, number));
+  }
+}
+
+implement JsonDecode : builtin u16 {
+  fn decode_json(value: *const JsonValue) Result[u16, JsonError] {
+    const found = value.as_u64();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    const number = found.unwrap();
+    if (number > 65535) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(@as(u16, number));
+  }
+}
+
+implement JsonDecode : builtin u32 {
+  fn decode_json(value: *const JsonValue) Result[u32, JsonError] {
+    const found = value.as_u64();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    const number = found.unwrap();
+    if (number > 4294967295) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(@as(u32, number));
+  }
+}
+
+implement JsonDecode : builtin u64 {
+  fn decode_json(value: *const JsonValue) Result[u64, JsonError] {
+    const found = value.as_u64();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(found.unwrap());
+  }
+}
+
+implement JsonDecode : builtin usize {
+  fn decode_json(value: *const JsonValue) Result[usize, JsonError] {
+    const found = value.as_u64();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    const number = found.unwrap();
+    const limit = @as(u64, @as(usize, 0) - 1);
+    if (number > limit) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(@as(usize, number));
+  }
+}
+
+implement JsonDecode : builtin f32 {
+  fn decode_json(value: *const JsonValue) Result[f32, JsonError] {
+    const found = value.as_f64();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    const number = @as(f32, found.unwrap());
+    if (!number.is_finite()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(number);
+  }
+}
+
+implement JsonDecode : builtin f64 {
+  fn decode_json(value: *const JsonValue) Result[f64, JsonError] {
+    const found = value.as_f64();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    const number = found.unwrap();
+    if (!number.is_finite()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(number);
+  }
+}
+
+implement JsonDecode : String {
+  fn decode_json(value: *const JsonValue) Result[String, JsonError] {
+    const found = value.as_str();
+    if (found.is_none()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    return Result.Ok(found.unwrap());
+  }
+}
+
+implement[T: JsonDecode] JsonDecode : Option[T] {
+  fn decode_json(value: *const JsonValue) Result[Option[T], JsonError] {
+    if (value.is_null()) {
+      return Result.Ok(Option.None);
+    };
+    const inner = T.decode_json(value);
+    if (inner.is_err()) {
+      return Result.Err(inner.unwrap_err());
+    };
+    return Result.Ok(Option.Some(inner.unwrap()));
+  }
+}
+
+implement[T: JsonDecode] JsonDecode : List[T] {
+  fn decode_json(value: *const JsonValue) Result[List[T], JsonError] {
+    if (!value.is_array()) {
+      return Result.Err(JsonError.type_mismatch());
+    };
+    let out = List#[T].new();
+    let i: usize = 0;
+    while (i < value.len()) {
+      const item = T.decode_json(value.at(i).unwrap());
+      if (item.is_err()) {
+        return Result.Err(item.unwrap_err());
+      };
+      out.push(item.unwrap());
+      i += 1;
+    };
+    return Result.Ok(out);
   }
 }
